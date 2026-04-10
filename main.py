@@ -5,6 +5,8 @@ import asyncio
 from dotenv import load_dotenv
 import logging
 from datetime import datetime
+from flask import Flask, jsonify
+from threading import Thread
 
 # Load environment variables
 load_dotenv()
@@ -31,7 +33,7 @@ class Miles(commands.Bot):
         super().__init__(
             command_prefix=['!', 'm!'],
             intents=intents,
-            help_command=None,  # We'll create a custom help command
+            help_command=None,
             case_insensitive=True,
             activity=discord.Activity(
                 type=discord.ActivityType.watching,
@@ -74,32 +76,48 @@ class Miles(commands.Bot):
         logger.info(f"👥 Serving {len(self.users)} users")
         logger.info("=" * 50)
 
-async def on_command_error(self, ctx, error):
-    """Global error handler"""
-    if isinstance(error, commands.CommandNotFound):
-        return
-    elif isinstance(error, commands.MissingRequiredArgument):
-        try:
+    async def on_command_error(self, ctx, error):
+        """Global error handler"""
+        if isinstance(error, commands.CommandNotFound):
+            return
+        elif isinstance(error, commands.MissingRequiredArgument):
             await ctx.send(f"❌ Missing argument: `{error.param.name}`")
-        except:
-            pass
-    elif isinstance(error, commands.CommandOnCooldown):
-        try:
+        elif isinstance(error, commands.CommandOnCooldown):
             await ctx.send(f"⏰ Slow down! Try again in {error.retry_after:.1f}s")
-        except:
-            pass
-    else:
-        logger.error(f"Error in command {ctx.command}: {error}")
-        # Don't try to send error message if interaction already acknowledged
-        if hasattr(ctx, 'interaction') and ctx.interaction:
-            if not ctx.interaction.response.is_done():
-                try:
-                    await ctx.send(f"❌ Something went wrong: {str(error)}")
-                except:
-                    pass
+        else:
+            logger.error(f"Error in command {ctx.command}: {error}")
+            await ctx.send(f"❌ Something went wrong: {str(error)}")
 
 # Create bot instance
 bot = Miles()
+
+# ------------------------------------------------------------------
+# Keep-alive web server for Render (so bot stays alive 24/7)
+# ------------------------------------------------------------------
+app = Flask('')
+
+@app.route('/')
+def home():
+    return "🤖 Miles is online and running!"
+
+@app.route('/health')
+def health():
+    return jsonify({
+        "status": "online",
+        "bot": str(bot.user) if bot.is_ready() else "starting...",
+        "guilds": len(bot.guilds) if bot.is_ready() else 0,
+        "uptime": str(datetime.utcnow() - bot.start_time) if bot.is_ready() else "unknown"
+    })
+
+def run_web():
+    app.run(host='0.0.0.0', port=8080, debug=False, use_reloader=False)
+
+def keep_alive():
+    """Start the Flask web server in a background thread"""
+    t = Thread(target=run_web, daemon=True)
+    t.start()
+    logger.info("🌐 Keep-alive web server started on port 8080")
+# ------------------------------------------------------------------
 
 # Custom help command with embeds
 @bot.hybrid_command(name="help", description="Show all available commands")
@@ -274,6 +292,9 @@ if __name__ == "__main__":
     if not token:
         logger.error("❌ DISCORD_TOKEN not found in environment variables!")
         exit(1)
+    
+    # Start the keep-alive web server (so Render/UptimeRobot can ping it)
+    keep_alive()
     
     try:
         bot.run(token)
