@@ -52,7 +52,13 @@ class Miles(commands.Bot):
             'cogs.ai_chat',
             'cogs.productivity',
             'cogs.leaderboard',
-            'cogs.music'
+            'cogs.music',
+            'cogs.moderation',        # NEW
+            'cogs.welcome',           # NEW
+            'cogs.leveling',          # NEW
+            'cogs.games',             # NEW
+            'cogs.enhanced_shop',     # NEW
+            'cogs.server_stats'       # NEW
         ]
         
         for cog in cogs:
@@ -217,6 +223,79 @@ async def help_command(ctx):
             "`/uptime` - How long I've been running\n"
             "`/avatar [user]` - Show avatar\n"
             "`/serverinfo` - Server information"
+        ),
+        inline=False
+    )
+    
+    # Moderation Commands (NEW)
+    embed.add_field(
+        name="🛡️ Moderation",
+        value=(
+            "`/kick <user> [reason]` - Kick a member\n"
+            "`/ban <user> [reason]` - Ban a member\n"
+            "`/unban <user_id>` - Unban a user\n"
+            "`/timeout <user> <time>` - Timeout member\n"
+            "`/untimeout <user>` - Remove timeout\n"
+            "`/warn <user> <reason>` - Warn a member\n"
+            "`/purge <amount>` - Delete messages\n"
+            "`/modlogs [limit]` - View mod logs"
+        ),
+        inline=False
+    )
+    
+    # Welcome System (NEW)
+    embed.add_field(
+        name="👋 Welcome",
+        value=(
+            "`/welcome_setup` - Configure welcome\n"
+            "`/welcome_test` - Test welcome message\n"
+            "`/goodbye_toggle` - Toggle goodbye msgs"
+        ),
+        inline=False
+    )
+    
+    # Leveling (NEW)
+    embed.add_field(
+        name="⭐ Leveling",
+        value=(
+            "`/level [user]` - Check level\n"
+            "`/leaderboard_levels` - Level leaderboard"
+        ),
+        inline=False
+    )
+    
+    # Games (NEW)
+    embed.add_field(
+        name="🎮 Games",
+        value=(
+            "`/trivia` - Trivia question\n"
+            "`/guess <bet>` - Guess the number\n"
+            "`/slots <bet>` - Slot machine\n"
+            "`/blackjack <bet>` - Play blackjack\n"
+            "`/roulette <bet> <choice>` - Roulette"
+        ),
+        inline=False
+    )
+    
+    # Enhanced Shop (NEW)
+    embed.add_field(
+        name="🛒 Enhanced Shop",
+        value=(
+            "`/shop_view [category]` - View shop\n"
+            "`/buy_item <item>` - Purchase item\n"
+            "`/use_item <item>` - Use an item"
+        ),
+        inline=False
+    )
+    
+    # Server Stats (NEW)
+    embed.add_field(
+        name="📊 Server Stats",
+        value=(
+            "`/serverstats` - Server statistics\n"
+            "`/userinfo [user]` - User information\n"
+            "`/roleinfo <role>` - Role information\n"
+            "`/channelinfo [channel]` - Channel info"
         ),
         inline=False
     )
