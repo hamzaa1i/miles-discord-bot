@@ -10,10 +10,10 @@ __pycache__/
 venv/
 env/
 ENV/
+.venv/
 
 # Data files
-data/
-*.json
+data/*.json
 *.db
 *.log
 

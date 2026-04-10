@@ -8,37 +8,27 @@ from utils.embeds import create_embed
 class AIChat(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.api_url = "https://api.openrouter.ai/api/v1/chat/completions"
-        # Free AI models we can use
-        self.models = [
-            "google/gemini-2.0-flash-exp:free",
-            "meta-llama/llama-3.2-11b-vision-instruct:free"
-        ]
     
-    async def get_ai_response(self, prompt, system_message="You are Miles, a helpful and friendly Discord bot assistant. Keep responses concise and casual."):
+    async def get_ai_response(self, prompt):
         """Get AI response from free API"""
-        headers = {
-            "Content-Type": "application/json",
-        }
-        
-        data = {
-            "model": random.choice(self.models),
-            "messages": [
-                {"role": "system", "content": system_message},
-                {"role": "user", "content": prompt}
-            ]
-        }
+        # Using a simple free API that doesn't require authentication
+        url = "https://api.popcat.xyz/chatbot"
         
         try:
             async with aiohttp.ClientSession() as session:
-                async with session.post(self.api_url, json=data, headers=headers) as response:
+                params = {
+                    "msg": prompt,
+                    "owner": "Miles",
+                    "botname": "Miles"
+                }
+                async with session.get(url, params=params) as response:
                     if response.status == 200:
-                        result = await response.json()
-                        return result['choices'][0]['message']['content']
+                        data = await response.json()
+                        return data.get('response', "I'm having trouble thinking right now!")
                     else:
                         return "Sorry, I'm having trouble thinking right now. Try again later!"
         except Exception as e:
-            return f"Oops! Something went wrong: {str(e)}"
+            return "Oops! My brain is buffering. Try again in a moment!"
     
     @app_commands.command(name="chat", description="Talk to Miles AI")
     async def chat(self, interaction: discord.Interaction, message: str):
@@ -59,36 +49,54 @@ class AIChat(commands.Cog):
     @app_commands.command(name="quote", description="Get an inspiring quote")
     async def quote(self, interaction: discord.Interaction):
         """Generate motivational quote"""
-        await interaction.response.defer()
+        quotes = [
+            "The only way to do great work is to love what you do. - Steve Jobs",
+            "Believe you can and you're halfway there. - Theodore Roosevelt",
+            "Success is not final, failure is not fatal. - Winston Churchill",
+            "The future belongs to those who believe in their dreams. - Eleanor Roosevelt",
+            "Don't watch the clock; do what it does. Keep going. - Sam Levenson",
+            "The secret of getting ahead is getting started. - Mark Twain",
+            "It always seems impossible until it's done. - Nelson Mandela",
+            "You are never too old to set another goal. - C.S. Lewis",
+            "Be yourself; everyone else is already taken. - Oscar Wilde",
+            "Dream big and dare to fail. - Norman Vaughan"
+        ]
         
-        prompt = "Generate one short, original motivational quote. Just the quote, no explanation."
-        response = await self.get_ai_response(prompt)
+        quote = random.choice(quotes)
         
         embed = create_embed(
             title="✨ Quote of the Moment",
-            description=f"*{response}*",
+            description=f"*{quote}*",
             color=discord.Color.purple()
         )
         
-        await interaction.followup.send(embed=embed)
+        await interaction.response.send_message(embed=embed)
     
-    @app_commands.command(name="roast", description="Get a friendly AI roast")
+    @app_commands.command(name="roast", description="Get a friendly roast")
     async def roast(self, interaction: discord.Interaction, user: discord.Member = None):
         """Roast a user (friendly)"""
-        await interaction.response.defer()
-        
         target = user or interaction.user
-        prompt = f"Give a short, funny, friendly roast for someone named {target.name}. Keep it light and playful, not mean."
         
-        response = await self.get_ai_response(prompt)
+        roasts = [
+            f"{target.mention} You're like a software update. Whenever I see you, I think 'Not now.'",
+            f"{target.mention} I'd agree with you, but then we'd both be wrong!",
+            f"{target.mention} You're proof that evolution can go in reverse.",
+            f"{target.mention} I'm jealous of people who haven't met you yet.",
+            f"{target.mention} You're not stupid; you just have bad luck thinking.",
+            f"{target.mention} If I wanted to hear from you, I'd read your error logs.",
+            f"{target.mention} You're like a cloud. When you disappear, it's a beautiful day.",
+            f"{target.mention} I'd explain it to you, but I left my crayons at home."
+        ]
+        
+        roast = random.choice(roasts)
         
         embed = create_embed(
             title=f"🔥 Roasting {target.name}",
-            description=response,
+            description=roast,
             color=discord.Color.orange()
         )
         
-        await interaction.followup.send(embed=embed)
+        await interaction.response.send_message(embed=embed)
 
 async def setup(bot):
     await bot.add_cog(AIChat(bot))
