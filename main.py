@@ -74,17 +74,29 @@ class Miles(commands.Bot):
         logger.info(f"👥 Serving {len(self.users)} users")
         logger.info("=" * 50)
 
-    async def on_command_error(self, ctx, error):
-        """Global error handler"""
-        if isinstance(error, commands.CommandNotFound):
-            return
-        elif isinstance(error, commands.MissingRequiredArgument):
+async def on_command_error(self, ctx, error):
+    """Global error handler"""
+    if isinstance(error, commands.CommandNotFound):
+        return
+    elif isinstance(error, commands.MissingRequiredArgument):
+        try:
             await ctx.send(f"❌ Missing argument: `{error.param.name}`")
-        elif isinstance(error, commands.CommandOnCooldown):
+        except:
+            pass
+    elif isinstance(error, commands.CommandOnCooldown):
+        try:
             await ctx.send(f"⏰ Slow down! Try again in {error.retry_after:.1f}s")
-        else:
-            logger.error(f"Error in command {ctx.command}: {error}")
-            await ctx.send(f"❌ Something went wrong: {str(error)}")
+        except:
+            pass
+    else:
+        logger.error(f"Error in command {ctx.command}: {error}")
+        # Don't try to send error message if interaction already acknowledged
+        if hasattr(ctx, 'interaction') and ctx.interaction:
+            if not ctx.interaction.response.is_done():
+                try:
+                    await ctx.send(f"❌ Something went wrong: {str(error)}")
+                except:
+                    pass
 
 # Create bot instance
 bot = Miles()
