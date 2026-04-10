@@ -126,8 +126,111 @@ def keep_alive():
 # ------------------------------------------------------------------
 
 # Custom help command with embeds
-@bot.hybrid_command(name="help", description="Show all available commands")
+@bot.hybrid_command(name="help", description="Display all available commands")
 async def help_command(ctx):
+    """Professional help command"""
+    embed = discord.Embed(
+        title="Miles - Command Reference",
+        description="A comprehensive bot for server management, economy, and entertainment.",
+        color=discord.Color.blue(),
+        timestamp=datetime.utcnow()
+    )
+    
+    embed.set_thumbnail(url=bot.user.avatar.url if bot.user.avatar else None)
+    embed.set_footer(text=f"Requested by {ctx.author}", icon_url=ctx.author.avatar.url if ctx.author.avatar else None)
+    
+    # Economy Commands
+    embed.add_field(
+        name="Economy",
+        value=(
+            "`/balance` Check your balance\n"
+            "`/daily` Claim daily reward\n"
+            "`/work` Work for coins\n"
+            "`/shop` View the shop\n"
+            "`/buy <item>` Purchase item\n"
+            "`/inventory` View your items\n"
+            "`/pay <user> <amount>` Send coins\n"
+            "`/gamble <amount>` Gamble coins"
+        ),
+        inline=False
+    )
+    
+    # Rankings
+    embed.add_field(
+        name="Rankings",
+        value=(
+            "`/leaderboard` Top users by coins\n"
+            "`/rank` Your current rank\n"
+            "`/stats` Detailed statistics"
+        ),
+        inline=False
+    )
+    
+    # AI Features
+    embed.add_field(
+        name="AI Features",
+        value=(
+            "`@Miles <message>` Natural conversation\n"
+            "`/chat <message>` AI chat\n"
+            "`/ask <question>` Ask questions\n"
+            "`/quote` Inspirational quote\n"
+            "`/clear_chat` Clear conversation history"
+        ),
+        inline=False
+    )
+    
+    # Moderation
+    embed.add_field(
+        name="Moderation",
+        value=(
+            "`/kick <user> [reason]` Kick member\n"
+            "`/ban <user> [reason]` Ban member\n"
+            "`/unban <user_id>` Unban user\n"
+            "`/timeout <user> <duration>` Timeout member\n"
+            "`/warn <user> <reason>` Warn member\n"
+            "`/purge <amount>` Delete messages\n"
+            "`/modlogs [limit]` View logs"
+        ),
+        inline=False
+    )
+    
+    # Leveling
+    embed.add_field(
+        name="Leveling",
+        value=(
+            "`/level [user]` Check level\n"
+            "`/leaderboard_levels` Level rankings"
+        ),
+        inline=False
+    )
+    
+    # Games
+    embed.add_field(
+        name="Games",
+        value=(
+            "`/trivia` Trivia question\n"
+            "`/guess <bet>` Number guessing\n"
+            "`/slots <bet>` Slot machine\n"
+            "`/blackjack <bet>` Blackjack\n"
+            "`/roulette <bet> <choice>` Roulette"
+        ),
+        inline=False
+    )
+    
+    # Utility
+    embed.add_field(
+        name="Utility",
+        value=(
+            "`/ping` Bot latency\n"
+            "`/uptime` Bot uptime\n"
+            "`/serverstats` Server statistics\n"
+            "`/userinfo [user]` User information\n"
+            "`/welcome_setup` Configure welcome messages"
+        ),
+        inline=False
+    )
+    
+    await ctx.send(embed=embed)
     """Beautiful help command with categories"""
     embed = discord.Embed(
         title="🤖 Miles - Command Center",
