@@ -4,25 +4,18 @@ from discord import app_commands
 import os
 import random
 import asyncio
+import aiohttp
 from datetime import datetime, timedelta
-from openai import OpenAI
 from utils.embeds import create_embed
 
 class AIChat(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.client = None
         self.conversation_history = {}
-        self.rate_limits = {}  # Track user cooldowns
-        self.cooldown_seconds = 10  # 10 second cooldown between AI requests
-        
-        # Initialize GitHub Models client
-        token = os.getenv('GITHUB_TOKEN')
-        if token:
-            self.client = OpenAI(
-                base_url="https://models.inference.ai.azure.com",
-                api_key=token
-            )
+        self.rate_limits = {}
+        self.cooldown_seconds = 10
+        self.github_token = os.getenv('GITHUB_TOKEN')
+        self.api_url = "https://models.inference.ai.azure.com/chat/completions"
         
         # Miles personality
         self.system_prompt = """You are Miles, a friendly Discord bot assistant.
@@ -37,8 +30,8 @@ Personality:
 
 Keep it conversational!"""
 
-    def check_rate_limit(self, user_id: int) -> tuple[bool, int]:
-        """Check if user is rate limited. Returns (is_limited, seconds_remaining)"""
+    def check_rate_limit(self, user_id: int) -> tuple:
+        """Check if user is rate limited"""
         if user_id in self.rate_limits:
             time_diff = datetime.utcnow() - self.rate_limits[user_id]
             if time_diff < timedelta(seconds=self.cooldown_seconds):
@@ -51,8 +44,8 @@ Keep it conversational!"""
         self.rate_limits[user_id] = datetime.utcnow()
 
     async def get_ai_response(self, user_id: int, message: str) -> str:
-        """Get AI response from GitHub Models"""
-        if not self.client:
+        """Get AI response from GitHub Models using aiohttp"""
+        if not self.github_token:
             return "My brain isn't connected! Ask the bot owner to add the GITHUB_TOKEN."
         
         try:
@@ -60,42 +53,60 @@ Keep it conversational!"""
             if user_id not in self.conversation_history:
                 self.conversation_history[user_id] = []
             
-            history = self.conversation_history[user_id][-6:]  # Keep only last 6 messages
+            history = self.conversation_history[user_id][-6:]
             
             # Build messages
             messages = [{"role": "system", "content": self.system_prompt}]
             messages.extend(history)
             messages.append({"role": "user", "content": message})
             
-            # Call GitHub Models API with timeout
-            response = await asyncio.wait_for(
-                asyncio.to_thread(
-                    self.client.chat.completions.create,
-                    model="gpt-4o-mini",
-                    messages=messages,
-                    temperature=0.7,
-                    max_tokens=150  # Shorter responses = faster
-                ),
-                timeout=8.0  # 8 second timeout
-            )
+            # API request
+            headers = {
+                "Authorization": f"Bearer {self.github_token}",
+                "Content-Type": "application/json"
+            }
             
-            ai_response = response.choices[0].message.content
+            payload = {
+                "model": "gpt-4o-mini",
+                "messages": messages,
+                "temperature": 0.7,
+                "max_tokens": 150
+            }
             
-            # Save to history
-            self.conversation_history[user_id].append({"role": "user", "content": message})
-            self.conversation_history[user_id].append({"role": "assistant", "content": ai_response})
-            
-            # Trim history
-            if len(self.conversation_history[user_id]) > 12:
-                self.conversation_history[user_id] = self.conversation_history[user_id][-12:]
-            
-            return ai_response
-            
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    self.api_url,
+                    headers=headers,
+                    json=payload,
+                    timeout=aiohttp.ClientTimeout(total=10)
+                ) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        ai_response = data['choices'][0]['message']['content']
+                        
+                        # Save to history
+                        self.conversation_history[user_id].append({"role": "user", "content": message})
+                        self.conversation_history[user_id].append({"role": "assistant", "content": ai_response})
+                        
+                        # Trim history
+                        if len(self.conversation_history[user_id]) > 12:
+                            self.conversation_history[user_id] = self.conversation_history[user_id][-12:]
+                        
+                        return ai_response
+                    elif response.status == 401:
+                        return "My brain token is invalid! Ask the bot owner to check GITHUB_TOKEN."
+                    elif response.status == 429:
+                        return "I'm being rate limited. Try again in a few seconds!"
+                    else:
+                        error_text = await response.text()
+                        print(f"API Error {response.status}: {error_text}")
+                        return "Oops, my brain glitched. Try again?"
+                        
         except asyncio.TimeoutError:
             return "Sorry, I'm thinking too slow right now. Try again?"
         except Exception as e:
-            print(f"GitHub Models Error: {e}")
-            return "Oops, my brain glitched. Try again?"
+            print(f"AI Error: {e}")
+            return "Oops, something went wrong. Try again?"
 
     @commands.Cog.listener()
     async def on_message(self, message):
@@ -154,8 +165,8 @@ Keep it conversational!"""
             await interaction.response.send_message(embed=embed, ephemeral=True)
             return
         
-        # Respond immediately to avoid timeout
-        await interaction.response.send_message("💭 Thinking...", ephemeral=False)
+        # Respond immediately
+        await interaction.response.send_message("💭 Thinking...")
         
         # Update rate limit
         self.update_rate_limit(interaction.user.id)
@@ -192,7 +203,6 @@ Keep it conversational!"""
     @app_commands.command(name="quote", description="Get an inspiring quote")
     async def quote(self, interaction: discord.Interaction):
         """Generate quote"""
-        # Use fallback quotes to avoid rate limits
         quotes = [
             "The only way to do great work is to love what you do. - Steve Jobs",
             "Believe you can and you're halfway there. - Theodore Roosevelt",
@@ -206,11 +216,9 @@ Keep it conversational!"""
             "The future belongs to those who believe in their dreams. - Eleanor Roosevelt"
         ]
         
-        quote = random.choice(quotes)
-        
         embed = create_embed(
             title="✨ Quote of the Moment",
-            description=f"*{quote}*",
+            description=f"*{random.choice(quotes)}*",
             color=discord.Color.purple()
         )
         
@@ -221,7 +229,6 @@ Keep it conversational!"""
         """Friendly roast"""
         target = user or interaction.user
         
-        # Use fallback roasts to avoid rate limits
         roasts = [
             f"{target.mention}, you're like a software update. Whenever I see you, I think 'Not now.'",
             f"{target.mention}, I'd agree with you, but then we'd both be wrong!",
@@ -233,11 +240,9 @@ Keep it conversational!"""
             f"{target.mention}, I'd explain it to you, but I left my crayons at home."
         ]
         
-        roast = random.choice(roasts)
-        
         embed = create_embed(
             title=f"🔥 Roasting {target.display_name}",
-            description=roast,
+            description=random.choice(roasts),
             color=discord.Color.orange()
         )
         
@@ -258,32 +263,44 @@ Keep it conversational!"""
             return
         
         # Respond immediately
-        await interaction.response.send_message("🤔 Let me think...", ephemeral=False)
+        await interaction.response.send_message("🤔 Let me think...")
         
         # Update rate limit
         self.update_rate_limit(interaction.user.id)
         
-        if self.client:
+        # Get response
+        if self.github_token:
             try:
-                response = await asyncio.wait_for(
-                    asyncio.to_thread(
-                        self.client.chat.completions.create,
-                        model="gpt-4o-mini",
-                        messages=[
-                            {"role": "system", "content": "Give clear, accurate, concise answers. Max 3 sentences. If unsure, say so."},
-                            {"role": "user", "content": question}
-                        ],
-                        temperature=0.5,
-                        max_tokens=200
-                    ),
-                    timeout=8.0
-                )
-                answer = response.choices[0].message.content
-            except asyncio.TimeoutError:
-                answer = "Sorry, that's taking too long to answer. Try a simpler question?"
+                headers = {
+                    "Authorization": f"Bearer {self.github_token}",
+                    "Content-Type": "application/json"
+                }
+                
+                payload = {
+                    "model": "gpt-4o-mini",
+                    "messages": [
+                        {"role": "system", "content": "Give clear, accurate, concise answers. Max 3 sentences."},
+                        {"role": "user", "content": question}
+                    ],
+                    "temperature": 0.5,
+                    "max_tokens": 200
+                }
+                
+                async with aiohttp.ClientSession() as session:
+                    async with session.post(
+                        self.api_url,
+                        headers=headers,
+                        json=payload,
+                        timeout=aiohttp.ClientTimeout(total=10)
+                    ) as response:
+                        if response.status == 200:
+                            data = await response.json()
+                            answer = data['choices'][0]['message']['content']
+                        else:
+                            answer = "I couldn't process that question right now."
             except Exception as e:
-                print(f"Error: {e}")
-                answer = "I couldn't process that question right now."
+                print(f"Ask Error: {e}")
+                answer = "Sorry, that's taking too long. Try a simpler question?"
         else:
             answer = "My brain isn't connected! Ask the bot owner to add the GITHUB_TOKEN."
         
