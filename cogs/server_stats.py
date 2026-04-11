@@ -9,11 +9,25 @@ class RolesView(discord.ui.View):
         super().__init__(timeout=60)
         self.guild = guild
 
-    @discord.ui.button(label="View Roles", style=discord.ButtonStyle.primary, emoji="🎭")
-    async def roles_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        roles = [r for r in reversed(self.guild.roles) if r.name != "@everyone"]
+    @discord.ui.button(
+        label="View Roles",
+        style=discord.ButtonStyle.primary,
+        emoji="🎭"
+    )
+    async def roles_button(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
+        roles = [
+            r for r in reversed(self.guild.roles)
+            if r.name != "@everyone"
+        ]
         if not roles:
-            await interaction.response.send_message("No roles found.", ephemeral=True)
+            await interaction.response.send_message(
+                "no roles found.",
+                ephemeral=True
+            )
             return
 
         roles_text = " ".join([r.mention for r in roles[:40]])
@@ -21,11 +35,11 @@ class RolesView(discord.ui.View):
             roles_text += f"\n+{len(roles) - 40} more"
 
         embed = discord.Embed(
-            title=f"Roles — {self.guild.name}",
+            title=f"{self.guild.name} — Roles",
             description=roles_text,
             color=0x1a1a2e
         )
-        embed.set_footer(text=f"Total: {len(roles)} roles")
+        embed.set_footer(text=f"{len(roles)} roles total")
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
@@ -166,32 +180,15 @@ class ServerStats(commands.Cog):
         else:
             return f"{days // 365} years ago"
 
-    @app_commands.command(name="serverinfo", description="Detailed server information")
+    @app_commands.command(name="serverinfo", description="Server information")
     async def serverinfo(self, interaction: discord.Interaction):
         guild = interaction.guild
-        total = guild.member_count
-        bots = sum(1 for m in guild.members if m.bot)
-        humans = total - bots
 
-        verification_map = {
-            discord.VerificationLevel.none: "None",
-            discord.VerificationLevel.low: "Low",
-            discord.VerificationLevel.medium: "Medium",
-            discord.VerificationLevel.high: "High",
-            discord.VerificationLevel.highest: "Highest"
-        }
-
-        embed = discord.Embed(
-            title=guild.name,
-            color=0x1a1a2e,
-            timestamp=datetime.utcnow()
-        )
+        embed = discord.Embed(color=0x1a1a2e)
+        embed.set_author(name=guild.name)
 
         if guild.icon:
             embed.set_thumbnail(url=guild.icon.url)
-
-        if guild.banner:
-            embed.set_image(url=guild.banner.url)
 
         embed.add_field(
             name="Owner",
@@ -200,36 +197,17 @@ class ServerStats(commands.Cog):
         )
         embed.add_field(
             name="Created",
-            value=f"{guild.created_at.strftime('%b %d, %Y')}\n({self.time_ago(guild.created_at)})",
-            inline=True
-        )
-        embed.add_field(
-            name="ID",
-            value=f"`{guild.id}`",
+            value=guild.created_at.strftime("%Y-%m-%d"),
             inline=True
         )
         embed.add_field(
             name="Members",
-            value=f"**{total:,}** total\n{humans:,} humans · {bots} bots",
-            inline=True
-        )
-        embed.add_field(
-            name="Boost",
-            value=f"Level {guild.premium_tier} · {guild.premium_subscription_count} boosts",
-            inline=True
-        )
-        embed.add_field(
-            name="Verification",
-            value=verification_map.get(guild.verification_level, "Unknown"),
+            value=guild.member_count,
             inline=True
         )
         embed.add_field(
             name="Channels",
-            value=(
-                f"{len(guild.text_channels)} text · "
-                f"{len(guild.voice_channels)} voice · "
-                f"{len(guild.categories)} categories"
-            ),
+            value=len(guild.channels),
             inline=True
         )
         embed.add_field(
@@ -239,19 +217,9 @@ class ServerStats(commands.Cog):
         )
         embed.add_field(
             name="Emojis",
-            value=f"{len(guild.emojis)} / {guild.emoji_limit}",
+            value=len(guild.emojis),
             inline=True
         )
-
-        if guild.features:
-            nice = [f.replace('_', ' ').title() for f in guild.features[:5]]
-            embed.add_field(
-                name="Features",
-                value=", ".join(nice),
-                inline=False
-            )
-
-        embed.set_footer(text=f"ID: {guild.id}")
 
         view = RolesView(guild)
         await interaction.response.send_message(embed=embed, view=view)

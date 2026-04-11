@@ -94,16 +94,61 @@ class Leveling(commands.Cog):
         data = self.get_user_data(interaction.guild.id, user.id)
         level, current_xp, xp_needed = self.get_level_from_xp(data.get('total_xp', 0))
         rank, total = await self.get_rank(interaction.guild.id, user.id)
-        progress = (current_xp / xp_needed * 100) if xp_needed > 0 else 0
-        filled = int((progress / 100) * 20)
-        bar = "▰" * filled + "▱" * (20 - filled)
-        embed = discord.Embed(color=0x1a1a2e)
-        embed.set_author(name=user.display_name, icon_url=user.avatar.url if user.avatar else None)
-        embed.add_field(name="Rank", value=f"#{rank} / {total}", inline=True)
-        embed.add_field(name="Level", value=str(level), inline=True)
-        embed.add_field(name="Total XP", value=f"{data.get('total_xp', 0):,}", inline=True)
-        embed.add_field(name=f"Progress to Level {level + 1}", value=f"`{bar}` {current_xp:,} / {xp_needed:,} XP", inline=False)
-        await interaction.response.send_message(embed=embed)
+
+        await interaction.response.defer()
+
+        # Get user status
+        status = str(user.status) if hasattr(user, 'status') else "offline"
+
+        # Get accent color from user's role color
+        role_color = user.color
+        if role_color.value != 0:
+            accent = (role_color.r, role_color.g, role_color.b)
+        else:
+            accent = (99, 102, 241)  # Default indigo
+
+        try:
+            from utils.rank_card import generate_rank_card
+
+            avatar_url = user.avatar.url if user.avatar else user.default_avatar.url
+
+            card_bytes = await generate_rank_card(
+                username=user.display_name,
+                discriminator=user.discriminator if hasattr(user, 'discriminator') else "0",
+                avatar_url=avatar_url,
+                level=level,
+                current_xp=current_xp,
+                required_xp=xp_needed,
+                rank=rank,
+                total_users=total,
+                status=status,
+                accent_color=accent
+            )
+
+            file = discord.File(card_bytes, filename="rank.png")
+            await interaction.followup.send(file=file)
+
+        except Exception as e:
+            print(f"Rank card error: {e}")
+            # Fallback to embed
+            progress = (current_xp / xp_needed * 100) if xp_needed > 0 else 0
+            filled = int((progress / 100) * 20)
+            bar = "▰" * filled + "▱" * (20 - filled)
+
+            embed = discord.Embed(color=0x1a1a2e)
+            embed.set_author(
+                name=user.display_name,
+                icon_url=user.avatar.url if user.avatar else None
+            )
+            embed.add_field(name="Rank", value=f"#{rank} / {total}", inline=True)
+            embed.add_field(name="Level", value=str(level), inline=True)
+            embed.add_field(name="XP", value=f"{current_xp:,} / {xp_needed:,}", inline=True)
+            embed.add_field(
+                name="Progress",
+                value=f"`{bar}` {progress:.1f}%",
+                inline=False
+            )
+            await interaction.followup.send(embed=embed)
 
     @app_commands.command(name="leaderboard_levels", description="XP leaderboard")
     async def leaderboard_levels(self, interaction: discord.Interaction):
