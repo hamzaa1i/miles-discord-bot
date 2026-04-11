@@ -67,7 +67,6 @@ class AoBot(commands.Bot):
             'cogs.fun',
             'cogs.ai_chat',
             'cogs.productivity',
-            'cogs.leaderboard',
             'cogs.music',
             'cogs.moderation',
             'cogs.welcome',
