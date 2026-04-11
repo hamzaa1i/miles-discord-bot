@@ -33,18 +33,17 @@ class BotStatus(commands.Cog):
     def cog_unload(self):
         self.status_rotation.cancel()
 
-    def build_activity(self, activity_type: str, text: str) -> discord.Activity:
-        """Build a proper discord.Activity object"""
-        type_map = {
-            "playing": discord.ActivityType.playing,
-            "watching": discord.ActivityType.watching,
-            "listening": discord.ActivityType.listening,
-            "competing": discord.ActivityType.competing,
-        }
-        return discord.Activity(
-            type=type_map.get(activity_type, discord.ActivityType.playing),
-            name=text
-        )
+    def build_activity(self, activity_type: str, text: str):
+        """Build proper activity using specific classes"""
+        if activity_type == "watching":
+            return discord.Activity(type=discord.ActivityType.watching, name=text)
+        elif activity_type == "listening":
+            return discord.Activity(type=discord.ActivityType.listening, name=text)
+        elif activity_type == "competing":
+            return discord.Activity(type=discord.ActivityType.competing, name=text)
+        else:
+            # "playing" uses discord.Game
+            return discord.Game(name=text)
 
     def get_type_display(self, activity_type: str) -> str:
         """Get human readable type"""
@@ -57,25 +56,38 @@ class BotStatus(commands.Cog):
         return display_map.get(activity_type, activity_type.title())
 
     async def apply_status(self, activity_type: str, text: str):
-        """Apply status to bot with proper presence"""
+        """Apply status to bot"""
         activity = self.build_activity(activity_type, text)
         await self.bot.change_presence(
             status=discord.Status.online,
             activity=activity
         )
 
+    @commands.Cog.listener()
+    async def on_ready(self):
+        """Set status when bot is ready"""
+        config = self.db.get('config', {})
+        
+        if config.get('pinned_status'):
+            pinned = config['pinned_status']
+            await self.apply_status(pinned['type'], pinned['text'])
+        else:
+            status_data = self.default_statuses[0]
+            await self.apply_status(status_data['type'], status_data['text'])
+        
+        if not self.status_rotation.is_running():
+            self.status_rotation.start()
+
     @tasks.loop(minutes=5)
     async def status_rotation(self):
         """Rotate status every 5 minutes"""
         config = self.db.get('config', {})
         
-        # If pinned, always use pinned status
         if config.get('pinned_status'):
             pinned = config['pinned_status']
             await self.apply_status(pinned['type'], pinned['text'])
             return
         
-        # Otherwise rotate
         saved_extras = config.get('custom_statuses', [])
         all_statuses = self.default_statuses + saved_extras
         status_data = random.choice(all_statuses)
@@ -84,27 +96,6 @@ class BotStatus(commands.Cog):
     @status_rotation.before_loop
     async def before_status_rotation(self):
         await self.bot.wait_until_ready()
-        # Small delay to ensure bot is fully ready
-        await discord.utils.sleep_until(
-            discord.utils.utcnow() + discord.utils.timedelta(seconds=3)
-        )
-
-    @commands.Cog.listener()
-    async def on_ready(self):
-        """Set status immediately when bot is ready"""
-        config = self.db.get('config', {})
-        
-        if config.get('pinned_status'):
-            pinned = config['pinned_status']
-            await self.apply_status(pinned['type'], pinned['text'])
-        else:
-            # Set first default status immediately
-            status_data = self.default_statuses[0]
-            await self.apply_status(status_data['type'], status_data['text'])
-        
-        # Start rotation after setting initial status
-        if not self.status_rotation.is_running():
-            self.status_rotation.start()
 
     @app_commands.command(name="setstatus", description="Set a custom pinned bot status")
     @app_commands.describe(
@@ -127,7 +118,6 @@ class BotStatus(commands.Cog):
         }
         self.db.set('config', config)
         
-        # Apply immediately
         await self.apply_status(status_type.value, text)
         
         type_display = self.get_type_display(status_type.value)
@@ -141,7 +131,7 @@ class BotStatus(commands.Cog):
             value=f"`{type_display} {text}`",
             inline=False
         )
-        embed.set_footer(text="Pinned — won't rotate. Use /resetstatus to rotate again.")
+        embed.set_footer(text="Pinned. Use /resetstatus to rotate again.")
         
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
@@ -155,7 +145,6 @@ class BotStatus(commands.Cog):
             del config['pinned_status']
             self.db.set('config', config)
         
-        # Apply random default immediately
         status_data = random.choice(self.default_statuses)
         await self.apply_status(status_data['type'], status_data['text'])
         
@@ -208,17 +197,15 @@ class BotStatus(commands.Cog):
             color=0x1a1a2e
         )
         
-        # Pinned status
         if config.get('pinned_status'):
             pinned = config['pinned_status']
             display = self.get_type_display(pinned['type'])
             embed.add_field(
-                name="📌 Pinned",
+                name="Pinned",
                 value=f"`{display} {pinned['text']}`",
                 inline=False
             )
         
-        # Default statuses
         default_list = "\n".join([
             f"`{self.get_type_display(s['type'])} {s['text']}`"
             for s in self.default_statuses
@@ -229,7 +216,6 @@ class BotStatus(commands.Cog):
             inline=False
         )
         
-        # Custom added
         custom_statuses = config.get('custom_statuses', [])
         if custom_statuses:
             custom_list = "\n".join([
@@ -244,7 +230,7 @@ class BotStatus(commands.Cog):
         
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-    @app_commands.command(name="clearstatuses", description="Remove all custom statuses from rotation")
+    @app_commands.command(name="clearstatuses", description="Remove all custom statuses")
     @app_commands.checks.has_permissions(administrator=True)
     async def clearstatuses(self, interaction: discord.Interaction):
         """Clear custom statuses"""
@@ -253,7 +239,7 @@ class BotStatus(commands.Cog):
         self.db.set('config', config)
         
         embed = discord.Embed(
-            description="All custom statuses cleared from rotation.",
+            description="All custom statuses cleared.",
             color=0x1a1a2e
         )
         await interaction.response.send_message(embed=embed, ephemeral=True)
