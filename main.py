@@ -488,14 +488,6 @@ async def prefix_ping(ctx):
     )
     await ctx.send(embed=embed)
 
-@bot.command(name="help", aliases=["h", "commands"])
-async def prefix_help(ctx):
-    """!help"""
-    view = HelpView(bot, ctx.author.id)
-    view.update_buttons("main")
-    embed = view.build_main_embed()
-    await ctx.send(embed=embed, view=view)
-
 @bot.command(name="level", aliases=["lvl", "rank", "xp"])
 async def prefix_level(ctx, user: discord.Member = None):
     """!level or !lvl"""
