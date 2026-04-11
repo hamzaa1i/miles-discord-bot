@@ -17,7 +17,7 @@ class AIChat(commands.Cog):
         self.github_token = os.getenv('GITHUB_TOKEN')
         self.api_url = "https://models.inference.ai.azure.com/chat/completions"
         
-        # Nyx dark personality
+        # Ao dark personality
         self.system_prompt = """You are Ao, a Discord bot with a dark, mysterious personality.
 
 Core traits:
@@ -150,9 +150,9 @@ You exist in Discord. Keep responses short, sharp, dark."""
             
             await message.reply(response, mention_author=False)
 
-    @app_commands.command(name="chat", description="Talk to Nyx")
+    @app_commands.command(name="chat", description="Talk to Ao")
     async def chat(self, interaction: discord.Interaction, message: str):
-        """Chat with Nyx"""
+        """Chat with Ao"""
         is_limited, remaining = self.check_rate_limit(interaction.user.id)
         if is_limited:
             embed = discord.Embed(
@@ -172,7 +172,7 @@ You exist in Discord. Keep responses short, sharp, dark."""
             color=0x1a1a2e  # Dark navy/black
         )
         embed.set_author(
-            name="Nyx",
+            name="Ao",
             icon_url=self.bot.user.avatar.url if self.bot.user.avatar else None
         )
         embed.set_footer(text=f"asked by {interaction.user.name}")
@@ -211,7 +211,7 @@ You exist in Discord. Keep responses short, sharp, dark."""
             description=f'*"{random.choice(quotes)}"*',
             color=0x1a1a2e
         )
-        embed.set_author(name="Nyx")
+        embed.set_author(name="Ao")
         
         await interaction.response.send_message(embed=embed)
 
@@ -235,12 +235,12 @@ You exist in Discord. Keep responses short, sharp, dark."""
             description=random.choice(roasts),
             color=0x1a1a2e
         )
-        embed.set_author(name="Nyx — Roast Chamber")
+        embed.set_author(name="Ao — Roast Chamber")
         embed.set_footer(text="don't take it personally. or do. i don't care.")
         
         await interaction.response.send_message(embed=embed)
 
-    @app_commands.command(name="ask", description="Ask Nyx anything")
+    @app_commands.command(name="ask", description="Ask Ao anything")
     async def ask(self, interaction: discord.Interaction, question: str):
         """Ask a question"""
         is_limited, remaining = self.check_rate_limit(interaction.user.id)
@@ -291,7 +291,7 @@ You exist in Discord. Keep responses short, sharp, dark."""
         embed = discord.Embed(color=0x1a1a2e)
         embed.add_field(name="Question", value=question[:1024], inline=False)
         embed.add_field(name="Answer", value=answer[:1024], inline=False)
-        embed.set_author(name="Nyx — Knowledge")
+        embed.set_author(name="Ao — Knowledge")
         embed.set_footer(text=f"asked by {interaction.user.name}")
         
         await interaction.edit_original_response(content=None, embed=embed)
