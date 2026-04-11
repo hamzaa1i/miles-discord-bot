@@ -4,17 +4,16 @@ from discord import app_commands
 from datetime import datetime, timezone
 from utils.database import Database
 
-class ServerInfoView(discord.ui.View):
-    def __init__(self, guild: discord.Guild, bot):
+class RolesView(discord.ui.View):
+    def __init__(self, guild: discord.Guild):
         super().__init__(timeout=60)
         self.guild = guild
-        self.bot = bot
 
-    @discord.ui.button(label="Roles", style=discord.ButtonStyle.secondary, emoji="🎭")
+    @discord.ui.button(label="View Roles", style=discord.ButtonStyle.primary, emoji="🎭")
     async def roles_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         roles = [r for r in reversed(self.guild.roles) if r.name != "@everyone"]
         if not roles:
-            await interaction.response.send_message("no roles found.", ephemeral=True)
+            await interaction.response.send_message("No roles found.", ephemeral=True)
             return
 
         roles_text = " ".join([r.mention for r in roles[:40]])
@@ -26,133 +25,7 @@ class ServerInfoView(discord.ui.View):
             description=roles_text,
             color=0x1a1a2e
         )
-        embed.set_footer(text=f"total: {len(roles)} roles")
-        await interaction.response.send_message(embed=embed, ephemeral=True)
-
-    @discord.ui.button(label="Members", style=discord.ButtonStyle.secondary, emoji="👥")
-    async def members_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        guild = self.guild
-        total = guild.member_count
-        bots = sum(1 for m in guild.members if m.bot)
-        humans = total - bots
-        online = sum(1 for m in guild.members if m.status != discord.Status.offline and not m.bot)
-        idle = sum(1 for m in guild.members if m.status == discord.Status.idle and not m.bot)
-        dnd = sum(1 for m in guild.members if m.status == discord.Status.dnd and not m.bot)
-        offline = sum(1 for m in guild.members if m.status == discord.Status.offline and not m.bot)
-
-        embed = discord.Embed(
-            title=f"Members — {guild.name}",
-            color=0x1a1a2e
-        )
-        embed.add_field(name="Total", value=f"{total:,}", inline=True)
-        embed.add_field(name="Humans", value=f"{humans:,}", inline=True)
-        embed.add_field(name="Bots", value=f"{bots:,}", inline=True)
-        embed.add_field(name="🟢 Online", value=f"{online:,}", inline=True)
-        embed.add_field(name="🟡 Idle", value=f"{idle:,}", inline=True)
-        embed.add_field(name="🔴 DND", value=f"{dnd:,}", inline=True)
-        embed.add_field(name="⚫ Offline", value=f"{offline:,}", inline=True)
-
-        await interaction.response.send_message(embed=embed, ephemeral=True)
-
-    @discord.ui.button(label="Channels", style=discord.ButtonStyle.secondary, emoji="💬")
-    async def channels_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        guild = self.guild
-        text = guild.text_channels
-        voice = guild.voice_channels
-        categories = guild.categories
-        stage = guild.stage_channels
-        forums = guild.forums if hasattr(guild, 'forums') else []
-
-        embed = discord.Embed(
-            title=f"Channels — {guild.name}",
-            color=0x1a1a2e
-        )
-        embed.add_field(name="Text", value=len(text), inline=True)
-        embed.add_field(name="Voice", value=len(voice), inline=True)
-        embed.add_field(name="Categories", value=len(categories), inline=True)
-        embed.add_field(name="Stage", value=len(stage), inline=True)
-        embed.add_field(name="Forums", value=len(forums), inline=True)
-        embed.add_field(
-            name="Total",
-            value=len(text) + len(voice) + len(stage),
-            inline=True
-        )
-
-        await interaction.response.send_message(embed=embed, ephemeral=True)
-
-    @discord.ui.button(label="Emojis", style=discord.ButtonStyle.secondary, emoji="😄")
-    async def emojis_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        guild = self.guild
-        emojis = guild.emojis
-        static = [e for e in emojis if not e.animated]
-        animated = [e for e in emojis if e.animated]
-
-        embed = discord.Embed(
-            title=f"Emojis — {guild.name}",
-            color=0x1a1a2e
-        )
-
-        if static:
-            static_text = " ".join([str(e) for e in static[:20]])
-            if len(static) > 20:
-                static_text += f" +{len(static) - 20} more"
-            embed.add_field(
-                name=f"Static ({len(static)})",
-                value=static_text,
-                inline=False
-            )
-
-        if animated:
-            anim_text = " ".join([str(e) for e in animated[:20]])
-            if len(animated) > 20:
-                anim_text += f" +{len(animated) - 20} more"
-            embed.add_field(
-                name=f"Animated ({len(animated)})",
-                value=anim_text,
-                inline=False
-            )
-
-        if not emojis:
-            embed.description = "no custom emojis."
-
-        embed.set_footer(text=f"total: {len(emojis)} / {guild.emoji_limit}")
-        await interaction.response.send_message(embed=embed, ephemeral=True)
-
-    @discord.ui.button(label="Boosts", style=discord.ButtonStyle.secondary, emoji="🚀")
-    async def boosts_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        guild = self.guild
-        boosters = guild.premium_subscribers
-
-        embed = discord.Embed(
-            title=f"Boost Status — {guild.name}",
-            color=0x1a1a2e
-        )
-        embed.add_field(
-            name="Boost Level",
-            value=f"Level {guild.premium_tier}",
-            inline=True
-        )
-        embed.add_field(
-            name="Total Boosts",
-            value=guild.premium_subscription_count,
-            inline=True
-        )
-        embed.add_field(
-            name="Boosters",
-            value=len(boosters),
-            inline=True
-        )
-
-        if boosters:
-            booster_text = "\n".join([m.mention for m in boosters[:15]])
-            if len(boosters) > 15:
-                booster_text += f"\n+{len(boosters) - 15} more"
-            embed.add_field(
-                name="Current Boosters",
-                value=booster_text,
-                inline=False
-            )
-
+        embed.set_footer(text=f"Total: {len(roles)} roles")
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
@@ -225,7 +98,7 @@ class WhoisView(discord.ui.View):
 
         if not roles:
             await interaction.response.send_message(
-                "this user has no roles.",
+                "This user has no roles.",
                 ephemeral=True
             )
             return
@@ -239,7 +112,7 @@ class WhoisView(discord.ui.View):
             description=roles_text,
             color=self.member.color if self.member.color.value else 0x1a1a2e
         )
-        embed.set_footer(text=f"total: {len(roles)} roles")
+        embed.set_footer(text=f"Total: {len(roles)} roles")
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @discord.ui.button(label="Avatar", style=discord.ButtonStyle.secondary, emoji="🖼️")
@@ -322,7 +195,7 @@ class ServerStats(commands.Cog):
 
         embed.add_field(
             name="Owner",
-            value=f"{guild.owner.mention}",
+            value=guild.owner.mention,
             inline=True
         )
         embed.add_field(
@@ -380,7 +253,7 @@ class ServerStats(commands.Cog):
 
         embed.set_footer(text=f"ID: {guild.id}")
 
-        view = ServerInfoView(guild, self.bot)
+        view = RolesView(guild)
         await interaction.response.send_message(embed=embed, view=view)
 
     @app_commands.command(name="whois", description="Complete info about a user")
@@ -652,7 +525,7 @@ class ServerStats(commands.Cog):
 
         if not members:
             await interaction.response.send_message(
-                f"no members have {role.mention}",
+                f"No members have {role.mention}",
                 ephemeral=True
             )
             return
@@ -724,7 +597,7 @@ class ServerStats(commands.Cog):
         roles = [r for r in reversed(interaction.guild.roles) if r.name != "@everyone"]
 
         if not roles:
-            await interaction.response.send_message("no roles found.", ephemeral=True)
+            await interaction.response.send_message("No roles found.", ephemeral=True)
             return
 
         roles_text = " ".join([r.mention for r in roles[:30]])
@@ -736,7 +609,7 @@ class ServerStats(commands.Cog):
             description=roles_text,
             color=0x1a1a2e
         )
-        embed.set_footer(text=f"total: {len(roles)} roles")
+        embed.set_footer(text=f"Total: {len(roles)} roles")
         await interaction.response.send_message(embed=embed)
 
     @app_commands.command(name="emojis", description="List all server emojis")
@@ -745,7 +618,7 @@ class ServerStats(commands.Cog):
 
         if not emojis:
             await interaction.response.send_message(
-                "no custom emojis.",
+                "No custom emojis.",
                 ephemeral=True
             )
             return
@@ -771,7 +644,7 @@ class ServerStats(commands.Cog):
                 inline=False
             )
 
-        embed.set_footer(text=f"total: {len(emojis)} / {interaction.guild.emoji_limit}")
+        embed.set_footer(text=f"Total: {len(emojis)} / {interaction.guild.emoji_limit}")
         await interaction.response.send_message(embed=embed)
 
     @app_commands.command(name="firstmessage", description="Get link to first message in channel")
@@ -786,7 +659,7 @@ class ServerStats(commands.Cog):
         async for message in channel.history(limit=1, oldest_first=True):
             embed = discord.Embed(
                 title="First Message",
-                description=message.content or "*no text*",
+                description=message.content or "*No text*",
                 color=0x1a1a2e,
                 timestamp=message.created_at
             )
@@ -796,12 +669,12 @@ class ServerStats(commands.Cog):
             )
             embed.add_field(
                 name="Jump",
-                value=f"[click here]({message.jump_url})"
+                value=f"[Click here]({message.jump_url})"
             )
             await interaction.followup.send(embed=embed)
             return
 
-        await interaction.followup.send("no messages found.")
+        await interaction.followup.send("No messages found.")
 
 
 async def setup(bot):

@@ -135,186 +135,235 @@ class HelpView(discord.ui.View):
 
         self.categories = {
             "economy": {
-                "name": "💰 Economy",
-                "desc": "Earn, spend, and manage coins",
+                "emoji": "💰",
+                "name": "Economy",
+                "desc": "Earn, spend and manage your coins",
                 "commands": [
-                    ("/balance [user]", "Check wallet & bank"),
+                    ("/balance", "Check wallet & bank"),
                     ("/daily", "Daily reward + streak bonus"),
                     ("/work", "Work for coins (1h cooldown)"),
-                    ("/fish", "Go fishing 🎣 (needs rod)"),
-                    ("/hunt", "Go hunting 🔫 (needs rifle)"),
-                    ("/mine", "Mine for gems ⛏️ (needs pickaxe)"),
-                    ("/beg", "Beg for coins"),
-                    ("/crime", "Attempt a crime"),
-                    ("/rob <user>", "Rob someone"),
-                    ("/deposit <amount>", "Deposit to bank"),
-                    ("/withdraw <amount>", "Withdraw from bank"),
-                    ("/pay <user> <amount>", "Send coins"),
-                    ("/shop", "Browse the shop"),
-                    ("/buy <item>", "Buy an item"),
+                    ("/pay <user> <amount>", "Send coins to someone"),
+                    ("/shop", "Browse the item shop"),
+                    ("/buy <item>", "Purchase an item"),
                     ("/inventory", "View your items"),
-                    ("/profile", "Economy profile"),
-                    ("/streak", "Daily streak info"),
-                    ("/richest", "Top 10 richest"),
-                    ("/setmoney", "Set balance (Admin)"),
-                    ("/addmoney", "Add coins (Admin)"),
-                    ("/removemoney", "Remove coins (Admin)"),
+                    ("/profile", "Your full economy profile"),
+                    ("/richest", "Top 10 richest users"),
+                    ("/earn fish", "Go fishing 🎣"),
+                    ("/earn hunt", "Go hunting 🔫"),
+                    ("/earn mine", "Mine for gems ⛏️"),
+                    ("/earn beg", "Beg for coins"),
+                    ("/earn crime", "Attempt a crime"),
+                    ("/earn rob <user>", "Rob someone"),
+                    ("/bank deposit <amount>", "Deposit coins to bank"),
+                    ("/bank withdraw <amount>", "Withdraw from bank"),
+                    ("/eco_admin set", "Set balance (Admin)"),
+                    ("/eco_admin add", "Add coins (Admin)"),
+                    ("/eco_admin remove", "Remove coins (Admin)"),
+                    ("/eco_admin reset", "Reset user economy (Admin)"),
                 ]
             },
             "fun": {
-                "name": "🎮 Fun",
-                "desc": "Entertainment commands",
+                "emoji": "🎮",
+                "name": "Fun",
+                "desc": "Entertainment and games",
                 "commands": [
                     ("/roll [sides]", "Roll a dice"),
                     ("/flip", "Flip a coin"),
-                    ("/8ball <question>", "Magic 8-ball"),
+                    ("/8ball <question>", "Ask the magic 8-ball"),
                     ("/rps <choice>", "Rock Paper Scissors"),
                     ("/meme", "Random meme"),
-                    ("/joke", "Dark joke"),
-                    ("/fact", "Random fact"),
-                    ("/ship <u1> <u2>", "Ship two users"),
-                    ("/rate <thing>", "Rate anything"),
+                    ("/joke", "Random dark joke"),
+                    ("/fact", "Random interesting fact"),
+                    ("/ship <u1> <u2>", "Ship compatibility"),
+                    ("/rate <thing>", "Rate anything out of 10"),
                     ("/reverse <text>", "Reverse text"),
                     ("/mock <text>", "Mock text"),
-                    ("/choose <a> <b>", "Bot chooses"),
-                    ("/topic", "Conversation starter"),
+                    ("/choose <a> <b>", "Bot chooses for you"),
+                    ("/topic", "Random conversation topic"),
                     ("/would <a> <b>", "Would you rather"),
                     ("/truth [user]", "Truth question"),
                     ("/dare [user]", "Dare challenge"),
                     ("/tod [user]", "Random truth or dare"),
                     ("/trivia", "Trivia question"),
-                    ("/trivia_stats", "Your trivia stats"),
+                    ("/trivia_stats", "Your trivia statistics"),
                 ]
             },
             "ai": {
-                "name": "🧠 AI",
+                "emoji": "🧠",
+                "name": "AI",
                 "desc": "AI-powered features",
                 "commands": [
-                    ("@ao <message>", "Chat naturally"),
-                    ("/chat <message>", "AI chat"),
-                    ("/ask <question>", "Ask anything"),
-                    ("/quote", "Dark quote"),
-                    ("/roast [user]", "Friendly roast"),
-                    ("/clear_chat", "Clear conversation"),
+                    ("@ao <message>", "Chat naturally with ao"),
+                    ("/chat <message>", "AI conversation"),
+                    ("/ask <question>", "Ask ao anything"),
+                    ("/quote", "Dark quote of the moment"),
+                    ("/roast [user]", "Friendly dark roast"),
+                    ("/clear_chat", "Reset conversation memory"),
                 ]
             },
             "social": {
-                "name": "💕 Social",
+                "emoji": "💕",
+                "name": "Social",
                 "desc": "Social and community features",
                 "commands": [
                     ("/marry <user>", "Propose to someone"),
                     ("/divorce", "End your marriage"),
                     ("/spouse [user]", "View marriage status"),
-                    ("/rep <user>", "Give reputation"),
+                    ("/rep <user>", "Give reputation (+rep)"),
                     ("/repcheck [user]", "Check reputation"),
-                    ("/replb", "Rep leaderboard"),
-                    ("/birthday_set", "Set your birthday"),
-                    ("/birthday [user]", "Check birthday"),
-                    ("/birthdays", "Upcoming birthdays"),
-                    ("/afk [reason]", "Set AFK status"),
+                    ("/replb", "Reputation leaderboard"),
+                    ("/birthday_set <month> <day>", "Set your birthday"),
+                    ("/birthday [user]", "Check someone's birthday"),
+                    ("/birthdays", "Upcoming birthdays list"),
+                    ("/afk [reason]", "Set your AFK status"),
+                    ("/toggledms", "Toggle DMs from ao"),
                 ]
             },
             "leveling": {
-                "name": "⭐ Leveling",
-                "desc": "MEE6-style XP system",
+                "emoji": "⭐",
+                "name": "Leveling",
+                "desc": "MEE6-style XP and leveling system",
                 "commands": [
-                    ("/level [user]", "Check level & XP"),
+                    ("/level [user]", "Check level and XP progress"),
                     ("/leaderboard_levels", "XP leaderboard"),
-                    ("/level_setup", "Set level-up channel (Admin)"),
-                    ("/level_role", "Set level rewards (Admin)"),
-                    ("/level_ignore", "Ignore channel (Admin)"),
-                    ("/level_config", "View leveling config"),
-                    ("/give_xp", "Give XP (Admin)"),
-                    ("/remove_xp", "Remove XP (Admin)"),
-                    ("/reset_xp", "Reset XP (Admin)"),
+                    ("/xp setup <channel>", "Set level-up channel (Admin)"),
+                    ("/xp role <level> <role>", "Set level reward role (Admin)"),
+                    ("/xp ignore <channel>", "Ignore channel from XP (Admin)"),
+                    ("/xp give <user> <amount>", "Give XP to user (Admin)"),
+                    ("/xp remove <user> <amount>", "Remove XP (Admin)"),
+                    ("/xp reset <user>", "Reset user XP (Admin)"),
+                    ("/xp config", "View leveling configuration"),
                 ]
             },
             "moderation": {
-                "name": "🛡️ Moderation",
+                "emoji": "🛡️",
+                "name": "Moderation",
                 "desc": "Server moderation tools",
                 "commands": [
-                    ("/kick <user>", "Kick member"),
-                    ("/ban <user>", "Ban member"),
-                    ("/unban <id>", "Unban user"),
-                    ("/timeout <user>", "Timeout member"),
-                    ("/untimeout <user>", "Remove timeout"),
-                    ("/warn <user>", "Warn member"),
-                    ("/modlogs", "Moderation logs"),
-                    ("/purge <amount>", "Delete messages"),
-                    ("/lock [channel]", "Lock channel"),
-                    ("/unlock [channel]", "Unlock channel"),
-                    ("/slowmode <sec>", "Set slowmode"),
-                    ("/antispam", "Configure anti-spam"),
-                    ("/filter_add <word>", "Add word filter"),
-                    ("/filter_remove <word>", "Remove filter"),
-                    ("/filter_list", "View filters"),
+                    ("/mod kick <user>", "Kick a member"),
+                    ("/mod ban <user>", "Ban a member"),
+                    ("/mod unban <id>", "Unban a user"),
+                    ("/mod timeout <user> <time>", "Timeout a member"),
+                    ("/mod untimeout <user>", "Remove timeout"),
+                    ("/mod warn <user> <reason>", "Warn a member"),
+                    ("/mod purge <amount>", "Delete messages"),
+                    ("/mod logs", "View moderation logs"),
+                    ("/lock [channel]", "Lock a channel"),
+                    ("/unlock [channel]", "Unlock a channel"),
+                    ("/slowmode <seconds>", "Set channel slowmode"),
+                    ("/antispam", "Configure anti-spam (Admin)"),
+                    ("/filter_add <word>", "Add word to filter (Admin)"),
+                    ("/filter_remove <word>", "Remove filtered word"),
+                    ("/filter_list", "View filtered words"),
+                    ("/filter_clear", "Clear all filters (Admin)"),
+                    ("/filter_action", "Set filter action (Admin)"),
                 ]
             },
             "server": {
-                "name": "📊 Server",
+                "emoji": "📊",
+                "name": "Server",
                 "desc": "Server info and management",
                 "commands": [
-                    ("/whois [user]", "Complete user info"),
-                    ("/serverinfo", "Server information"),
-                    ("/roleinfo <role>", "Role details"),
-                    ("/channelinfo", "Channel details"),
-                    ("/avatar [user]", "View avatar"),
-                    ("/banner [user]", "View banner"),
-                    ("/membercount", "Member breakdown"),
-                    ("/inrole <role>", "Members with role"),
-                    ("/permissions", "Check permissions"),
-                    ("/emojis", "List emojis"),
-                    ("/roles", "List all roles"),
-                    ("/logs_setup", "Setup logging (Admin)"),
-                    ("/autorole_add", "Auto role (Admin)"),
-                    ("/reactionrole_add", "Reaction role (Admin)"),
-                    ("/welcome_setup", "Welcome config (Admin)"),
+                    ("/whois [user]", "Complete user information"),
+                    ("/serverinfo", "Detailed server info + roles button"),
+                    ("/roleinfo <role>", "Role details and permissions"),
+                    ("/channelinfo [channel]", "Channel information"),
+                    ("/avatar [user]", "View avatar with download links"),
+                    ("/banner [user]", "View user banner"),
+                    ("/membercount", "Member count breakdown"),
+                    ("/inrole <role>", "List members with a role"),
+                    ("/permissions [user]", "Check channel permissions"),
+                    ("/emojis", "List all server emojis"),
+                    ("/roles", "List all server roles"),
+                    ("/firstmessage", "First message in channel"),
+                    ("/logs_setup <channel>", "Setup server logging (Admin)"),
+                    ("/logs_toggle <event>", "Toggle log events (Admin)"),
+                    ("/logs_ignore <channel>", "Ignore channel from logs"),
+                    ("/autorole_add <role>", "Add auto role on join (Admin)"),
+                    ("/autorole_remove <role>", "Remove auto role (Admin)"),
+                    ("/autorole_list", "View auto roles"),
+                    ("/welcome_setup", "Configure welcome messages (Admin)"),
+                    ("/welcome_test", "Test welcome message"),
+                    ("/goodbye_toggle", "Toggle goodbye messages"),
+                    ("/reactionrole_add", "Add reaction role (Admin)"),
+                    ("/reactionrole_remove", "Remove reaction role (Admin)"),
+                    ("/reactionrole_list", "View reaction roles"),
+                    ("/reactionrole_clear", "Clear reaction roles (Admin)"),
+                ]
+            },
+            "automod": {
+                "emoji": "🔧",
+                "name": "AutoMod",
+                "desc": "Automatic moderation system",
+                "commands": [
+                    ("/antispam", "Configure anti-spam"),
+                    ("/filter_add <word>", "Add word to filter"),
+                    ("/filter_remove <word>", "Remove filtered word"),
+                    ("/filter_list", "View filtered words"),
+                    ("/filter_clear", "Clear all filters"),
+                    ("/filter_action <action>", "Set filter action"),
+                    ("/automod_setup <channel>", "Set automod log channel"),
+                    ("/automod_status", "View automod config"),
+                    ("/slowmode <seconds>", "Set channel slowmode"),
+                    ("/lock [channel]", "Lock a channel"),
+                    ("/unlock [channel]", "Unlock a channel"),
                 ]
             },
             "events": {
-                "name": "🎉 Events",
+                "emoji": "🎉",
+                "name": "Events",
                 "desc": "Community events and activities",
                 "commands": [
-                    ("/poll <question>", "Create poll"),
-                    ("/multipoll", "Multi-option poll"),
-                    ("/giveaway", "Start giveaway"),
-                    ("/suggest <idea>", "Submit suggestion"),
-                    ("/suggest_approve", "Approve suggestion (Mod)"),
-                    ("/suggest_deny", "Deny suggestion (Mod)"),
-                    ("/ticket_setup", "Setup tickets (Admin)"),
-                    ("/counting_setup", "Setup counting (Admin)"),
+                    ("/poll <question>", "Create yes/no poll"),
+                    ("/multipoll <question>", "Create multi-option poll"),
+                    ("/giveaway <prize> <duration>", "Start a giveaway"),
+                    ("/suggest <idea>", "Submit a suggestion"),
+                    ("/suggestion_approve <id>", "Approve suggestion (Mod)"),
+                    ("/suggestion_deny <id>", "Deny suggestion (Mod)"),
+                    ("/suggestions_setup <channel>", "Setup suggestions (Admin)"),
+                    ("/ticket_setup", "Setup ticket system (Admin)"),
+                    ("/ticket_close", "Close current ticket"),
+                    ("/counting_setup <channel>", "Setup counting game (Admin)"),
                     ("/count", "Check current count"),
                     ("/starboard_setup", "Setup starboard (Admin)"),
-                    ("/birthday_setup", "Birthday channel (Admin)"),
-                    ("/dm <user>", "DM a user (Admin)"),
-                    ("/announce", "Mass DM (Admin)"),
+                    ("/starboard_toggle", "Toggle starboard (Admin)"),
+                    ("/birthday_setup <channel>", "Set birthday channel (Admin)"),
                 ]
             },
             "utility": {
-                "name": "⚙️ Utility",
-                "desc": "Useful tools",
+                "emoji": "⚙️",
+                "name": "Utility",
+                "desc": "General utility and tools",
                 "commands": [
-                    ("/ping", "Bot latency"),
+                    ("/ping", "Check bot latency"),
                     ("/uptime", "Bot uptime"),
-                    ("/embed", "Create embed (Mod)"),
-                    ("/embed_advanced", "Advanced embed (Mod)"),
-                    ("/setstatus", "Set status (Admin)"),
-                    ("/resetstatus", "Reset status (Admin)"),
+                    ("/embed create", "Create a custom embed (Mod)"),
+                    ("/embed advanced", "Advanced embed builder (Mod)"),
+                    ("/embed save <name>", "Save embed template (Mod)"),
+                    ("/embed use <name>", "Use saved template (Mod)"),
+                    ("/embed list", "List saved templates"),
+                    ("/embed delete <name>", "Delete template (Mod)"),
+                    ("/setstatus", "Set bot status (Admin)"),
+                    ("/resetstatus", "Reset status rotation (Admin)"),
+                    ("/addstatus", "Add to status rotation (Admin)"),
+                    ("/liststatus", "View all statuses"),
                     ("/modmail_setup", "Setup modmail (Admin)"),
-                    ("/music [user]", "Spotify status"),
-                    ("/remind <time>", "Set reminder"),
-                    ("/note <text>", "Save note"),
-                    ("/notes", "View notes"),
-                    ("/mood <emoji>", "Log mood"),
-                    ("/toggledms", "Toggle DMs from bot"),
+                    ("/modmail_toggle", "Enable/disable modmail (Admin)"),
+                    ("/dm <user> <msg>", "DM a user (Admin)"),
+                    ("/announce <msg>", "Mass DM members (Admin)"),
+                    ("/music [user]", "View Spotify status"),
+                    ("/remind <time> <task>", "Set a reminder"),
+                    ("/note <text>", "Save a quick note"),
+                    ("/notes", "View all your notes"),
+                    ("/mood <emoji>", "Log today's mood"),
                 ]
             }
         }
 
     def build_main_embed(self) -> discord.Embed:
         embed = discord.Embed(
-            title="ao — Command Center",
-            description="pick a category to see commands",
+            title="ao — commands",
+            description="pick a category below to see its commands.",
             color=0x1a1a2e,
             timestamp=datetime.utcnow()
         )
@@ -323,19 +372,23 @@ class HelpView(discord.ui.View):
         for key, cat in self.categories.items():
             count = len(cat['commands'])
             embed.add_field(
-                name=cat['name'],
+                name=f"{cat['emoji']} {cat['name']}",
                 value=f"{cat['desc']}\n`{count} commands`",
                 inline=True
             )
 
         total = sum(len(c['commands']) for c in self.categories.values())
-        embed.set_footer(text=f"ao • {total} total commands • buttons expire in 2 minutes")
+        embed.set_footer(
+            text=f"{total} total commands — buttons expire in 2 minutes",
+            icon_url=self.bot.user.avatar.url if self.bot.user.avatar else None
+        )
         return embed
 
     def build_category_embed(self, key: str) -> discord.Embed:
         cat = self.categories[key]
+
         embed = discord.Embed(
-            title=cat['name'],
+            title=f"{cat['emoji']} {cat['name']}",
             description=cat['desc'],
             color=0x1a1a2e,
             timestamp=datetime.utcnow()
@@ -345,33 +398,35 @@ class HelpView(discord.ui.View):
         for cmd, desc in cat['commands']:
             commands_text += f"`{cmd}`\n{desc}\n\n"
 
-        # Split into fields if too long
-        if len(commands_text) <= 4096:
+        if len(commands_text) <= 4000:
             embed.description = f"{cat['desc']}\n\n{commands_text}"
         else:
             embed.description = cat['desc']
             chunk = ""
-            field_count = 0
+            first = True
             for cmd, desc in cat['commands']:
                 line = f"`{cmd}`\n{desc}\n\n"
                 if len(chunk) + len(line) > 1024:
                     embed.add_field(
-                        name="Commands" if field_count == 0 else "\u200b",
+                        name="Commands" if first else "\u200b",
                         value=chunk,
                         inline=False
                     )
                     chunk = line
-                    field_count += 1
+                    first = False
                 else:
                     chunk += line
             if chunk:
                 embed.add_field(
-                    name="Commands" if field_count == 0 else "\u200b",
+                    name="Commands" if first else "\u200b",
                     value=chunk,
                     inline=False
                 )
 
-        embed.set_footer(text="ao • click Back to return to categories")
+        embed.set_footer(
+            text="click Back to return to categories",
+            icon_url=self.bot.user.avatar.url if self.bot.user.avatar else None
+        )
         return embed
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
@@ -384,19 +439,18 @@ class HelpView(discord.ui.View):
         return True
 
     def update_buttons(self, page: str):
-        """Update button states based on current page"""
         self.clear_items()
 
         if page == "main":
-            # Add category buttons
-            categories_row1 = ["economy", "fun", "ai", "social", "leveling"]
-            categories_row2 = ["moderation", "server", "events", "utility"]
+            keys = list(self.categories.keys())
+            row0 = keys[:5]
+            row1 = keys[5:]
 
-            for i, key in enumerate(categories_row1):
+            for i, key in enumerate(row0):
                 cat = self.categories[key]
                 btn = discord.ui.Button(
-                    label=cat['name'].split(' ')[1],
-                    emoji=cat['name'].split(' ')[0],
+                    label=cat['name'],
+                    emoji=cat['emoji'],
                     style=discord.ButtonStyle.secondary,
                     custom_id=f"cat_{key}",
                     row=0
@@ -404,11 +458,11 @@ class HelpView(discord.ui.View):
                 btn.callback = self.make_category_callback(key)
                 self.add_item(btn)
 
-            for i, key in enumerate(categories_row2):
+            for i, key in enumerate(row1):
                 cat = self.categories[key]
                 btn = discord.ui.Button(
-                    label=cat['name'].split(' ')[1],
-                    emoji=cat['name'].split(' ')[0],
+                    label=cat['name'],
+                    emoji=cat['emoji'],
                     style=discord.ButtonStyle.secondary,
                     custom_id=f"cat_{key}",
                     row=1
@@ -416,12 +470,11 @@ class HelpView(discord.ui.View):
                 btn.callback = self.make_category_callback(key)
                 self.add_item(btn)
         else:
-            # Add back button
             back_btn = discord.ui.Button(
                 label="Back",
                 emoji="◀️",
                 style=discord.ButtonStyle.primary,
-                custom_id="back",
+                custom_id="back_btn",
                 row=0
             )
             back_btn.callback = self.back_callback
@@ -447,7 +500,6 @@ class HelpView(discord.ui.View):
 
 @bot.hybrid_command(name="help", description="Show all commands")
 async def help_command(ctx):
-    """Interactive help with buttons"""
     view = HelpView(bot, ctx.author.id)
     view.update_buttons("main")
     embed = view.build_main_embed()
