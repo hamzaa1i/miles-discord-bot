@@ -222,7 +222,7 @@ class HelpView(discord.ui.View):
             "leveling": {
                 "emoji": "⭐",
                 "name": "Leveling",
-                "desc": "MEE6-style XP and leveling system",
+                "desc": "XP and leveling system",
                 "commands": [
                     ("/level [user]", "Check level and XP progress"),
                     ("/leaderboard_levels", "XP leaderboard"),

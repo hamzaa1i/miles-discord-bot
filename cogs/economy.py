@@ -211,16 +211,55 @@ class Economy(commands.Cog):
     async def profile(self, interaction: discord.Interaction, user: discord.Member = None):
         target = user or interaction.user
         data = self.get_user_data(target.id)
-        embed = discord.Embed(color=0x1a1a2e)
-        embed.set_author(name=f"{target.display_name}'s Profile", icon_url=target.avatar.url if target.avatar else None)
-        embed.add_field(name="Wallet", value=f"${data['balance']:,}", inline=True)
-        embed.add_field(name="Bank", value=f"${data['bank']:,}", inline=True)
-        embed.add_field(name="Net Worth", value=f"${data['balance'] + data['bank']:,}", inline=True)
-        embed.add_field(name="Earned", value=f"${data.get('total_earned', 0):,}", inline=True)
-        embed.add_field(name="Spent", value=f"${data.get('total_spent', 0):,}", inline=True)
-        embed.add_field(name="Streak", value=f"{data.get('daily_streak', 0)} days", inline=True)
-        embed.add_field(name="Gems", value=f"{data.get('gems', 0)} 💎", inline=True)
-        await interaction.response.send_message(embed=embed)
+        await interaction.response.defer()
+
+        all_data = self.db.get_all()
+        sorted_users = sorted(
+            all_data.items(),
+            key=lambda x: x[1].get('balance', 0) + x[1].get('bank', 0),
+            reverse=True
+        )
+        rank = next(
+            (i + 1 for i, (uid, _) in enumerate(sorted_users) if int(uid) == target.id),
+            len(sorted_users)
+        )
+
+        level_db = Database('data/leveling.json')
+        level_data = level_db.get(f"{interaction.guild.id}_{target.id}", {})
+        level = level_data.get('level', 0)
+
+        role_color = target.color
+        accent = (role_color.r, role_color.g, role_color.b) if role_color.value != 0 else (99, 102, 241)
+
+        try:
+            from utils.rank_card import generate_profile_card
+            avatar_url = target.avatar.url if target.avatar else target.default_avatar.url
+
+            card = await generate_profile_card(
+                username=target.display_name,
+                avatar_url=avatar_url,
+                balance=data.get('balance', 0),
+                bank=data.get('bank', 0),
+                total_earned=data.get('total_earned', 0),
+                rank=rank,
+                level=level,
+                streak=data.get('daily_streak', 0),
+                gems=data.get('gems', 0),
+                accent_color=accent
+            )
+            file = discord.File(card, filename="profile.png")
+            await interaction.followup.send(file=file)
+        except Exception as e:
+            print(f"Profile card error: {e}")
+            embed = discord.Embed(color=0x1a1a2e)
+            embed.set_author(name=f"{target.display_name}'s Profile", icon_url=target.avatar.url if target.avatar else None)
+            embed.add_field(name="Wallet", value=f"${data['balance']:,}", inline=True)
+            embed.add_field(name="Bank", value=f"${data['bank']:,}", inline=True)
+            embed.add_field(name="Net Worth", value=f"${data['balance'] + data['bank']:,}", inline=True)
+            embed.add_field(name="Earned", value=f"${data.get('total_earned', 0):,}", inline=True)
+            embed.add_field(name="Streak", value=f"{data.get('daily_streak', 0)} days", inline=True)
+            embed.add_field(name="Gems", value=f"{data.get('gems', 0)} 💎", inline=True)
+            await interaction.followup.send(embed=embed)
 
     # ===== EARN GROUP (fish, hunt, mine, beg, crime, rob) =====
 
@@ -484,23 +523,55 @@ class Economy(commands.Cog):
 
     @app_commands.command(name="richest", description="Top 10 richest")
     async def richest(self, interaction: discord.Interaction):
+        await interaction.response.defer()
+
         all_data = self.db.get_all()
-        sorted_users = sorted(all_data.items(), key=lambda x: x[1].get('balance', 0) + x[1].get('bank', 0), reverse=True)[:10]
+        sorted_users = sorted(
+            all_data.items(),
+            key=lambda x: x[1].get('balance', 0) + x[1].get('bank', 0),
+            reverse=True
+        )[:10]
+
         if not sorted_users:
-            await interaction.response.send_message("no data.", ephemeral=True)
+            await interaction.followup.send("no data yet.")
             return
-        medals = {1: "🥇", 2: "🥈", 3: "🥉"}
-        desc = ""
+
+        users_list = []
         for idx, (uid, d) in enumerate(sorted_users, 1):
             try:
                 u = await self.bot.fetch_user(int(uid))
-                name = u.name
+                name = u.display_name
+                avatar = u.avatar.url if u.avatar else u.default_avatar.url
             except:
                 name = f"User {uid}"
+                avatar = ""
             net = d.get('balance', 0) + d.get('bank', 0)
-            desc += f"{medals.get(idx, f'`#{idx}`')} **{name}** — ${net:,}\n"
-        embed = discord.Embed(title="Richest Users", description=desc, color=0x1a1a2e)
-        await interaction.response.send_message(embed=embed)
+            users_list.append({
+                "name": name,
+                "value": f"${net:,}",
+                "avatar_url": avatar,
+                "rank": idx
+            })
+
+        try:
+            from utils.rank_card import generate_leaderboard_card
+            card = await generate_leaderboard_card(
+                title="Richest Users",
+                users=users_list,
+                accent_color=(99, 102, 241)
+            )
+            file = discord.File(card, filename="leaderboard.png")
+            await interaction.followup.send(file=file)
+        except Exception as e:
+            print(f"Leaderboard card error: {e}")
+            medals = {1: "🥇", 2: "🥈", 3: "🥉"}
+            desc = ""
+            for u in users_list:
+                r = u['rank']
+                medal = medals.get(r, f"`#{r}`")
+                desc += f"{medal} **{u['name']}** — {u['value']}\n"
+            embed = discord.Embed(title="Richest Users", description=desc, color=0x1a1a2e)
+            await interaction.followup.send(embed=embed)
 
 async def setup(bot):
     await bot.add_cog(Economy(bot))

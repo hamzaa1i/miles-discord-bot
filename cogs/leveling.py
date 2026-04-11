@@ -97,80 +97,90 @@ class Leveling(commands.Cog):
 
         await interaction.response.defer()
 
-        # Get user status
         status = str(user.status) if hasattr(user, 'status') else "offline"
-
-        # Get accent color from user's role color
         role_color = user.color
-        if role_color.value != 0:
-            accent = (role_color.r, role_color.g, role_color.b)
-        else:
-            accent = (99, 102, 241)  # Default indigo
+        accent = (role_color.r, role_color.g, role_color.b) if role_color.value != 0 else (99, 102, 241)
 
         try:
             from utils.rank_card import generate_rank_card
-
             avatar_url = user.avatar.url if user.avatar else user.default_avatar.url
 
             card_bytes = await generate_rank_card(
                 username=user.display_name,
-                discriminator=user.discriminator if hasattr(user, 'discriminator') else "0",
                 avatar_url=avatar_url,
                 level=level,
                 current_xp=current_xp,
                 required_xp=xp_needed,
                 rank=rank,
-                total_users=total,
                 status=status,
                 accent_color=accent
             )
-
             file = discord.File(card_bytes, filename="rank.png")
             await interaction.followup.send(file=file)
-
         except Exception as e:
             print(f"Rank card error: {e}")
-            # Fallback to embed
             progress = (current_xp / xp_needed * 100) if xp_needed > 0 else 0
             filled = int((progress / 100) * 20)
             bar = "▰" * filled + "▱" * (20 - filled)
-
             embed = discord.Embed(color=0x1a1a2e)
-            embed.set_author(
-                name=user.display_name,
-                icon_url=user.avatar.url if user.avatar else None
-            )
+            embed.set_author(name=user.display_name, icon_url=user.avatar.url if user.avatar else None)
             embed.add_field(name="Rank", value=f"#{rank} / {total}", inline=True)
             embed.add_field(name="Level", value=str(level), inline=True)
             embed.add_field(name="XP", value=f"{current_xp:,} / {xp_needed:,}", inline=True)
-            embed.add_field(
-                name="Progress",
-                value=f"`{bar}` {progress:.1f}%",
-                inline=False
-            )
+            embed.add_field(name="Progress", value=f"`{bar}` {progress:.1f}%", inline=False)
             await interaction.followup.send(embed=embed)
 
     @app_commands.command(name="leaderboard_levels", description="XP leaderboard")
     async def leaderboard_levels(self, interaction: discord.Interaction):
         await interaction.response.defer()
+
         all_data = self.db.get_all()
-        guild_users = [(int(k.split('_')[1]), d) for k, d in all_data.items() if k.startswith(f"{interaction.guild.id}_")]
+        guild_users = [
+            (int(k.split('_')[1]), d) for k, d in all_data.items()
+            if k.startswith(f"{interaction.guild.id}_")
+        ]
         guild_users.sort(key=lambda x: x[1].get('total_xp', 0), reverse=True)
         top = guild_users[:10]
+
         if not top:
             await interaction.followup.send("no level data yet.")
             return
-        medals = {1: "🥇", 2: "🥈", 3: "🥉"}
-        desc = ""
+
+        users_list = []
         for idx, (uid, d) in enumerate(top, 1):
             try:
                 m = interaction.guild.get_member(uid)
                 name = m.display_name if m else f"User {uid}"
-            except: name = f"User {uid}"
+                avatar = m.avatar.url if m and m.avatar else ""
+            except:
+                name = f"User {uid}"
+                avatar = ""
             level, _, _ = self.get_level_from_xp(d.get('total_xp', 0))
-            desc += f"{medals.get(idx, f'`#{idx}`')} **{name}**\nLevel {level} • {d.get('total_xp', 0):,} XP\n\n"
-        embed = discord.Embed(title=f"XP Leaderboard — {interaction.guild.name}", description=desc, color=0x1a1a2e)
-        await interaction.followup.send(embed=embed)
+            users_list.append({
+                "name": name,
+                "value": f"Level {level} · {d.get('total_xp', 0):,} XP",
+                "avatar_url": avatar,
+                "rank": idx
+            })
+
+        try:
+            from utils.rank_card import generate_leaderboard_card
+            card = await generate_leaderboard_card(
+                title=f"XP Leaderboard — {interaction.guild.name}",
+                users=users_list
+            )
+            file = discord.File(card, filename="xp_leaderboard.png")
+            await interaction.followup.send(file=file)
+        except Exception as e:
+            print(f"XP leaderboard card error: {e}")
+            medals = {1: "🥇", 2: "🥈", 3: "🥉"}
+            desc = ""
+            for u in users_list:
+                r = u['rank']
+                medal = medals.get(r, f"`#{r}`")
+                desc += f"{medal} **{u['name']}** — {u['value']}\n"
+            embed = discord.Embed(title="XP Leaderboard", description=desc, color=0x1a1a2e)
+            await interaction.followup.send(embed=embed)
 
     # Admin group
     xp_admin = app_commands.Group(name="xp", description="XP admin commands")

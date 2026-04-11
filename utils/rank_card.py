@@ -1,189 +1,405 @@
-from PIL import Image, ImageDraw, ImageFont, ImageOps, ImageFilter
-import aiohttp
 import io
-import math
+import aiohttp
+from PIL import Image, ImageDraw, ImageFont, ImageOps
 
-async def fetch_image(url: str) -> Image.Image:
-    """Download image from URL"""
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(str(url)) as response:
-                if response.status == 200:
-                    data = await response.read()
-                    return Image.open(io.BytesIO(data)).convert("RGBA")
-    except:
-        pass
-    return None
+CONFIG = {
+    "canvas": {"width": 934, "height": 282},
+    "card": {"x": 20, "y": 20, "w": 894, "h": 242, "radius": 25, "bg": "#16161e"},
+    "avatar": {"x": 60, "y": 81, "size": 120},
+    "status": {"x": 152, "y": 173, "size": 28},
+    "username": {"x": 210, "y": 95, "font_size": 38, "color": "#ffffff"},
+    "rank_label": {"x": 750, "y": 50, "font_size": 24, "color": "#a0a0aa"},
+    "rank_value": {"x": 815, "y": 42, "font_size": 38, "color": "#ffffff"},
+    "level_label": {"x": 580, "y": 50, "font_size": 24},
+    "level_value": {"x": 650, "y": 42, "font_size": 38, "color": "#ffffff"},
+    "xp_text": {"x": 874, "y": 160, "font_size": 22, "color": "#a0a0aa"},
+    "progress_bar": {"x": 210, "y": 190, "w": 664, "h": 16, "bg": "#28283a", "radius": 8},
+    "percentage": {"x": 542, "y": 215, "font_size": 18, "color": "#a0a0aa"}
+}
 
-def make_circle(image: Image.Image, size: int) -> Image.Image:
-    """Crop image into circle"""
-    image = image.resize((size, size), Image.LANCZOS)
-    mask = Image.new("L", (size, size), 0)
-    draw = ImageDraw.Draw(mask)
-    draw.ellipse((0, 0, size, size), fill=255)
-    output = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-    output.paste(image, (0, 0), mask)
-    return output
+STATUS_COLORS = {
+    "online": "#43b581",
+    "idle": "#faa61a",
+    "dnd": "#f04747",
+    "offline": "#747f8d"
+}
 
-def get_font(size: int):
-    """Get font - uses default if custom not available"""
-    try:
-        return ImageFont.truetype("assets/font.ttf", size)
-    except:
+def get_font(size):
+    paths = [
+        "assets/font.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    ]
+    for path in paths:
         try:
-            return ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", size)
+            return ImageFont.truetype(path, size)
         except:
-            return ImageFont.load_default()
+            continue
+    return ImageFont.load_default()
+
 
 async def generate_rank_card(
     username: str,
-    discriminator: str,
     avatar_url: str,
     level: int,
     current_xp: int,
     required_xp: int,
     rank: int,
-    total_users: int,
     status: str = "online",
     accent_color: tuple = (99, 102, 241)
 ) -> io.BytesIO:
-    """Generate a rank card image"""
+    """Generate rank card image"""
 
-    # Canvas size
-    W, H = 900, 240
+    # Fetch avatar
+    avatar_bytes = None
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(str(avatar_url)) as resp:
+                if resp.status == 200:
+                    avatar_bytes = await resp.read()
+    except:
+        pass
 
-    # Colors
-    BG_DARK = (15, 15, 20)
-    BG_CARD = (22, 22, 30)
-    TEXT_WHITE = (255, 255, 255)
-    TEXT_GRAY = (160, 160, 170)
-    BAR_BG = (40, 40, 50)
-    ACCENT = accent_color
+    # Create canvas
+    base = Image.new("RGBA", (CONFIG["canvas"]["width"], CONFIG["canvas"]["height"]), "#0f0f14")
+    draw = ImageDraw.Draw(base)
 
-    STATUS_COLORS = {
-        "online": (67, 181, 129),
-        "idle": (250, 166, 26),
-        "dnd": (240, 71, 71),
-        "offline": (116, 127, 141),
-        "streaming": (89, 54, 149)
-    }
-    STATUS_COLOR = STATUS_COLORS.get(status, STATUS_COLORS["offline"])
-
-    # Create base image
-    img = Image.new("RGBA", (W, H), BG_DARK)
-    draw = ImageDraw.Draw(img)
-
-    # Background card with slight rounding effect
-    card = Image.new("RGBA", (W - 40, H - 40), BG_CARD)
-    img.paste(card, (20, 20))
-
-    # Accent left bar
-    accent_bar = Image.new("RGBA", (4, H - 60), ACCENT)
-    img.paste(accent_bar, (20, 30))
-
-    # Avatar
-    avatar_size = 130
-    avatar_img = await fetch_image(avatar_url)
-
-    if avatar_img:
-        avatar_circle = make_circle(avatar_img, avatar_size)
-        avatar_x, avatar_y = 45, (H - avatar_size) // 2
-        img.paste(avatar_circle, (avatar_x, avatar_y), avatar_circle)
-
-        # Status indicator circle
-        status_size = 28
-        status_circle = Image.new("RGBA", (status_size, status_size), (0, 0, 0, 0))
-        sdraw = ImageDraw.Draw(status_circle)
-        sdraw.ellipse((2, 2, status_size - 2, status_size - 2), fill=BG_DARK)
-        sdraw.ellipse((5, 5, status_size - 5, status_size - 5), fill=STATUS_COLOR)
-        img.paste(
-            status_circle,
-            (avatar_x + avatar_size - status_size + 5, avatar_y + avatar_size - status_size + 5),
-            status_circle
-        )
-    else:
-        # Fallback circle
-        draw.ellipse(
-            [45, (H - avatar_size) // 2, 45 + avatar_size, (H - avatar_size) // 2 + avatar_size],
-            fill=(50, 50, 60)
-        )
+    # Card background
+    c = CONFIG["card"]
+    draw.rounded_rectangle(
+        [c["x"], c["y"], c["x"] + c["w"], c["y"] + c["h"]],
+        radius=c["radius"],
+        fill=c["bg"]
+    )
 
     # Fonts
-    font_name = get_font(28)
-    font_small = get_font(18)
-    font_xp = get_font(16)
-    font_level = get_font(38)
-    font_rank = get_font(20)
+    font_main = get_font(CONFIG["username"]["font_size"])
+    font_sub = get_font(CONFIG["rank_label"]["font_size"])
+    font_bold = get_font(CONFIG["rank_value"]["font_size"])
+    font_small = get_font(CONFIG["xp_text"]["font_size"])
+    font_pct = get_font(CONFIG["percentage"]["font_size"])
+
+    # Avatar
+    if avatar_bytes:
+        avatar_img = Image.open(io.BytesIO(avatar_bytes)).convert("RGBA")
+        size = CONFIG["avatar"]["size"]
+        avatar_img = avatar_img.resize((size, size), Image.Resampling.LANCZOS)
+
+        mask = Image.new("L", (size, size), 0)
+        ImageDraw.Draw(mask).ellipse((0, 0, size, size), fill=255)
+
+        avatar_final = ImageOps.fit(avatar_img, mask.size, centering=(0.5, 0.5))
+        avatar_final.putalpha(mask)
+        base.paste(avatar_final, (CONFIG["avatar"]["x"], CONFIG["avatar"]["y"]), avatar_final)
+
+    # Status dot
+    s_color = STATUS_COLORS.get(status.lower(), STATUS_COLORS["offline"])
+    sx, sy, ss = CONFIG["status"]["x"], CONFIG["status"]["y"], CONFIG["status"]["size"]
+    draw.ellipse(
+        [sx, sy, sx + ss, sy + ss],
+        fill=s_color,
+        outline=CONFIG["card"]["bg"],
+        width=4
+    )
 
     # Username
-    text_x = 195
-    draw.text((text_x, 45), username, font=font_name, fill=TEXT_WHITE)
+    draw.text(
+        (CONFIG["username"]["x"], CONFIG["username"]["y"]),
+        username,
+        font=font_main,
+        fill=CONFIG["username"]["color"]
+    )
 
-    # XP text (top right)
-    xp_text = f"{current_xp:,} / {required_xp:,} XP"
-    xp_w = draw.textlength(xp_text, font=font_xp)
-    draw.text((W - 50 - xp_w, 50), xp_text, font=font_xp, fill=TEXT_GRAY)
+    # Level
+    draw.text(
+        (CONFIG["level_label"]["x"], CONFIG["level_label"]["y"]),
+        "LEVEL",
+        font=font_sub,
+        fill=accent_color
+    )
+    draw.text(
+        (CONFIG["level_value"]["x"], CONFIG["level_value"]["y"]),
+        str(level),
+        font=font_bold,
+        fill=CONFIG["level_value"]["color"]
+    )
+
+    # Rank
+    draw.text(
+        (CONFIG["rank_label"]["x"], CONFIG["rank_label"]["y"]),
+        "RANK",
+        font=font_sub,
+        fill=CONFIG["rank_label"]["color"]
+    )
+    draw.text(
+        (CONFIG["rank_value"]["x"], CONFIG["rank_value"]["y"]),
+        f"#{rank}",
+        font=font_bold,
+        fill=CONFIG["rank_value"]["color"]
+    )
+
+    # XP text
+    xp_str = f"{current_xp:,} / {required_xp:,} XP"
+    draw.text(
+        (CONFIG["xp_text"]["x"], CONFIG["xp_text"]["y"]),
+        xp_str,
+        font=font_small,
+        fill=CONFIG["xp_text"]["color"],
+        anchor="ra"
+    )
 
     # Progress bar
-    bar_x = text_x
-    bar_y = 95
-    bar_w = W - text_x - 50
-    bar_h = 18
-    bar_radius = 9
-
-    # Bar background
+    pb = CONFIG["progress_bar"]
     draw.rounded_rectangle(
-        [bar_x, bar_y, bar_x + bar_w, bar_y + bar_h],
-        radius=bar_radius,
-        fill=BAR_BG
+        [pb["x"], pb["y"], pb["x"] + pb["w"], pb["y"] + pb["h"]],
+        radius=pb["radius"],
+        fill=pb["bg"]
     )
 
-    # Bar fill
-    progress = min(current_xp / required_xp, 1.0) if required_xp > 0 else 0
-    fill_w = max(int(bar_w * progress), bar_radius * 2) if progress > 0 else 0
+    if required_xp > 0:
+        progress_width = (current_xp / required_xp) * pb["w"]
+        if progress_width > 10:
+            draw.rounded_rectangle(
+                [pb["x"], pb["y"], pb["x"] + progress_width, pb["y"] + pb["h"]],
+                radius=pb["radius"],
+                fill=accent_color
+            )
 
-    if fill_w > 0:
-        draw.rounded_rectangle(
-            [bar_x, bar_y, bar_x + fill_w, bar_y + bar_h],
-            radius=bar_radius,
-            fill=ACCENT
+    # Percentage
+    percentage = int((current_xp / required_xp) * 100) if required_xp > 0 else 0
+    draw.text(
+        (CONFIG["percentage"]["x"], CONFIG["percentage"]["y"]),
+        f"{percentage}%",
+        font=font_pct,
+        fill=CONFIG["percentage"]["color"],
+        anchor="ma"
+    )
+
+    # Return bytes
+    buffer = io.BytesIO()
+    base.save(buffer, "PNG")
+    buffer.seek(0)
+    return buffer
+
+
+async def generate_leaderboard_card(
+    title: str,
+    users: list,
+    accent_color: tuple = (99, 102, 241)
+) -> io.BytesIO:
+    """Generate leaderboard image card
+    
+    users = [
+        {"name": "volc", "value": "$15,000", "avatar_url": "...", "rank": 1},
+        ...
+    ]
+    """
+
+    row_height = 70
+    padding = 20
+    header_height = 80
+    max_users = min(len(users), 10)
+    canvas_height = header_height + (max_users * row_height) + (padding * 2)
+    canvas_width = 700
+
+    base = Image.new("RGBA", (canvas_width, canvas_height), "#0f0f14")
+    draw = ImageDraw.Draw(base)
+
+    # Card background
+    draw.rounded_rectangle(
+        [padding, padding, canvas_width - padding, canvas_height - padding],
+        radius=20,
+        fill="#16161e"
+    )
+
+    # Title
+    font_title = get_font(28)
+    font_name = get_font(22)
+    font_value = get_font(20)
+    font_rank = get_font(18)
+
+    draw.text(
+        (padding + 25, padding + 20),
+        title,
+        font=font_title,
+        fill="#ffffff"
+    )
+
+    # Medal colors
+    medal_colors = {
+        1: (255, 215, 0),     # Gold
+        2: (192, 192, 192),   # Silver
+        3: (205, 127, 50),    # Bronze
+    }
+
+    for i, user_data in enumerate(users[:max_users]):
+        y = header_height + (i * row_height) + padding
+        rank_num = user_data.get("rank", i + 1)
+
+        # Rank circle
+        circle_x = padding + 30
+        circle_y = y + 10
+        circle_size = 40
+
+        circle_color = medal_colors.get(rank_num, (40, 40, 50))
+        draw.ellipse(
+            [circle_x, circle_y, circle_x + circle_size, circle_y + circle_size],
+            fill=circle_color
         )
 
-    # Level text
-    level_text = f"LEVEL {level}"
-    draw.text((text_x, 130), level_text, font=font_rank, fill=ACCENT)
+        # Rank number
+        rank_text = str(rank_num)
+        rank_text_color = "#0f0f14" if rank_num <= 3 else "#a0a0aa"
+        draw.text(
+            (circle_x + circle_size // 2, circle_y + circle_size // 2),
+            rank_text,
+            font=font_rank,
+            fill=rank_text_color,
+            anchor="mm"
+        )
 
-    # Rank text
-    rank_text = f"RANK #{rank}"
-    rank_w = draw.textlength(rank_text, font=font_rank)
-    draw.text((W - 50 - rank_w, 130), rank_text, font=font_rank, fill=TEXT_GRAY)
+        # Avatar (small circle)
+        avatar_x = circle_x + circle_size + 15
+        avatar_size = 40
 
-    # Progress percentage
-    pct = f"{progress * 100:.1f}%"
-    pct_w = draw.textlength(pct, font=font_xp)
-    draw.text(
-        (bar_x + fill_w - pct_w // 2, bar_y + bar_h + 5),
-        pct,
-        font=font_xp,
-        fill=TEXT_GRAY
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(str(user_data.get("avatar_url", ""))) as resp:
+                    if resp.status == 200:
+                        av_bytes = await resp.read()
+                        av_img = Image.open(io.BytesIO(av_bytes)).convert("RGBA")
+                        av_img = av_img.resize((avatar_size, avatar_size), Image.Resampling.LANCZOS)
+                        mask = Image.new("L", (avatar_size, avatar_size), 0)
+                        ImageDraw.Draw(mask).ellipse((0, 0, avatar_size, avatar_size), fill=255)
+                        av_final = ImageOps.fit(av_img, mask.size, centering=(0.5, 0.5))
+                        av_final.putalpha(mask)
+                        base.paste(av_final, (avatar_x, circle_y), av_final)
+                        # Recreate draw after paste
+                        draw = ImageDraw.Draw(base)
+        except:
+            draw.ellipse(
+                [avatar_x, circle_y, avatar_x + avatar_size, circle_y + avatar_size],
+                fill="#28283a"
+            )
+
+        # Username
+        name_x = avatar_x + avatar_size + 15
+        draw.text(
+            (name_x, circle_y + 8),
+            user_data.get("name", "Unknown"),
+            font=font_name,
+            fill="#ffffff"
+        )
+
+        # Value (right aligned)
+        value_text = user_data.get("value", "$0")
+        draw.text(
+            (canvas_width - padding - 30, circle_y + 10),
+            value_text,
+            font=font_value,
+            fill=accent_color,
+            anchor="ra"
+        )
+
+        # Separator line
+        if i < max_users - 1:
+            line_y = y + row_height - 5
+            draw.line(
+                [(padding + 25, line_y), (canvas_width - padding - 25, line_y)],
+                fill="#28283a",
+                width=1
+            )
+
+    buffer = io.BytesIO()
+    base.save(buffer, "PNG")
+    buffer.seek(0)
+    return buffer
+
+
+async def generate_profile_card(
+    username: str,
+    avatar_url: str,
+    balance: int,
+    bank: int,
+    total_earned: int,
+    rank: int,
+    level: int,
+    streak: int,
+    gems: int,
+    accent_color: tuple = (99, 102, 241)
+) -> io.BytesIO:
+    """Generate economy profile card"""
+
+    W, H = 700, 380
+    base = Image.new("RGBA", (W, H), "#0f0f14")
+    draw = ImageDraw.Draw(base)
+
+    # Card background
+    draw.rounded_rectangle(
+        [20, 20, W - 20, H - 20],
+        radius=20,
+        fill="#16161e"
     )
 
-    # Bottom stats
-    stats_y = 175
+    # Fonts
+    font_name = get_font(32)
+    font_label = get_font(16)
+    font_value = get_font(24)
+    font_small = get_font(14)
+
+    # Avatar
+    avatar_size = 90
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(str(avatar_url)) as resp:
+                if resp.status == 200:
+                    av_bytes = await resp.read()
+                    av_img = Image.open(io.BytesIO(av_bytes)).convert("RGBA")
+                    av_img = av_img.resize((avatar_size, avatar_size), Image.Resampling.LANCZOS)
+                    mask = Image.new("L", (avatar_size, avatar_size), 0)
+                    ImageDraw.Draw(mask).ellipse((0, 0, avatar_size, avatar_size), fill=255)
+                    av_final = ImageOps.fit(av_img, mask.size, centering=(0.5, 0.5))
+                    av_final.putalpha(mask)
+                    base.paste(av_final, (50, 45), av_final)
+                    draw = ImageDraw.Draw(base)
+    except:
+        draw.ellipse([50, 45, 50 + avatar_size, 45 + avatar_size], fill="#28283a")
+
+    # Username
+    draw.text((160, 60), username, font=font_name, fill="#ffffff")
+
+    # Rank badge
+    draw.text((160, 100), f"RANK #{rank}", font=font_small, fill="#a0a0aa")
+    draw.text((280, 100), f"LEVEL {level}", font=font_small, fill=accent_color)
+
+    # Divider
+    draw.line([(40, 155), (W - 40, 155)], fill="#28283a", width=1)
+
+    # Stats grid (2x3)
     stats = [
-        ("TOTAL XP", f"{current_xp + sum(5 * (l**2) + 50*l + 100 for l in range(level)):,}"),
-        ("NEXT LEVEL", f"{required_xp - current_xp:,} XP away"),
+        ("WALLET", f"${balance:,}"),
+        ("BANK", f"${bank:,}"),
+        ("NET WORTH", f"${balance + bank:,}"),
+        ("TOTAL EARNED", f"${total_earned:,}"),
+        ("STREAK", f"{streak} days"),
+        ("GEMS", f"{gems} 💎"),
     ]
 
-    stat_x = text_x
-    for label, value in stats:
-        draw.text((stat_x, stats_y), label, font=font_xp, fill=TEXT_GRAY)
-        draw.text((stat_x, stats_y + 20), value, font=font_xp, fill=TEXT_WHITE)
-        stat_x += 230
+    start_x = 50
+    start_y = 175
+    col_width = 210
+    row_height = 80
 
-    # Convert to bytes
-    output = io.BytesIO()
-    img = img.convert("RGB")
-    img.save(output, format="PNG", optimize=True)
-    output.seek(0)
-    return output
+    for i, (label, value) in enumerate(stats):
+        col = i % 3
+        row = i // 3
+        x = start_x + (col * col_width)
+        y = start_y + (row * row_height)
+
+        draw.text((x, y), label, font=font_label, fill="#a0a0aa")
+        draw.text((x, y + 22), value, font=font_value, fill="#ffffff")
+
+    buffer = io.BytesIO()
+    base.save(buffer, "PNG")
+    buffer.seek(0)
+    return buffer
