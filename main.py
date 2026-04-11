@@ -58,8 +58,8 @@ class Miles(commands.Bot):
             'cogs.leveling',          # NEW
             'cogs.games',             # NEW
             'cogs.enhanced_shop',     # NEW
-            'cogs.server_stats'       # NEW
-            'cogs.bot_status'         # NEW
+            'cogs.server_stats',      # NEW
+            'cogs.bot_status',         # NEW
             'cogs.custom_embeds',     # NEW
             'cogs.modmail'            # NEW
         ]
