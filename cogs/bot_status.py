@@ -4,12 +4,12 @@ from discord import app_commands
 import random
 from utils.database import Database
 
-# Dropdown choices
 status_choices = [
     app_commands.Choice(name="🎮 Playing", value="playing"),
     app_commands.Choice(name="👀 Watching", value="watching"),
     app_commands.Choice(name="🎵 Listening to", value="listening"),
     app_commands.Choice(name="🏆 Competing in", value="competing"),
+    app_commands.Choice(name="📺 Streaming", value="streaming"),
 ]
 
 class BotStatus(commands.Cog):
@@ -17,47 +17,26 @@ class BotStatus(commands.Cog):
         self.bot = bot
         self.db = Database('data/bot_config.json')
         
+        # Verb is now INCLUDED in the text
         self.default_statuses = [
-            {"text": "over the shadows", "type": "watching"},
-            {"text": "with the void", "type": "playing"},
-            {"text": "your commands", "type": "listening"},
-            {"text": "the server grow", "type": "watching"},
-            {"text": "in the dark", "type": "playing"},
-            {"text": "your secrets", "type": "listening"},
-            {"text": "the night unfold", "type": "watching"},
-            {"text": "the tournament of chaos", "type": "competing"},
-            {"text": "silence", "type": "listening"},
-            {"text": "ao — /help", "type": "playing"},
+            "Watching over the shadows",
+            "Playing with the void",
+            "Listening to your commands",
+            "Watching the server grow",
+            "Playing in the dark",
+            "Listening to your secrets",
+            "Watching the night unfold",
+            "Competing in the tournament of chaos",
+            "Listening to silence",
+            "Playing ao — /help",
         ]
     
     def cog_unload(self):
         self.status_rotation.cancel()
 
-    def build_activity(self, activity_type: str, text: str):
-        """Build proper activity using specific classes"""
-        if activity_type == "watching":
-            return discord.Activity(type=discord.ActivityType.watching, name=text)
-        elif activity_type == "listening":
-            return discord.Activity(type=discord.ActivityType.listening, name=text)
-        elif activity_type == "competing":
-            return discord.Activity(type=discord.ActivityType.competing, name=text)
-        else:
-            # "playing" uses discord.Game
-            return discord.Game(name=text)
-
-    def get_type_display(self, activity_type: str) -> str:
-        """Get human readable type"""
-        display_map = {
-            "playing": "Playing",
-            "watching": "Watching",
-            "listening": "Listening to",
-            "competing": "Competing in",
-        }
-        return display_map.get(activity_type, activity_type.title())
-
-    async def apply_status(self, activity_type: str, text: str):
-        """Apply status to bot"""
-        activity = self.build_activity(activity_type, text)
+    async def apply_status(self, text: str):
+        """Apply status with text that includes the verb"""
+        activity = discord.Game(name=text)
         await self.bot.change_presence(
             status=discord.Status.online,
             activity=activity
@@ -69,11 +48,9 @@ class BotStatus(commands.Cog):
         config = self.db.get('config', {})
         
         if config.get('pinned_status'):
-            pinned = config['pinned_status']
-            await self.apply_status(pinned['type'], pinned['text'])
+            await self.apply_status(config['pinned_status'])
         else:
-            status_data = self.default_statuses[0]
-            await self.apply_status(status_data['type'], status_data['text'])
+            await self.apply_status(self.default_statuses[0])
         
         if not self.status_rotation.is_running():
             self.status_rotation.start()
@@ -84,14 +61,13 @@ class BotStatus(commands.Cog):
         config = self.db.get('config', {})
         
         if config.get('pinned_status'):
-            pinned = config['pinned_status']
-            await self.apply_status(pinned['type'], pinned['text'])
+            await self.apply_status(config['pinned_status'])
             return
         
         saved_extras = config.get('custom_statuses', [])
         all_statuses = self.default_statuses + saved_extras
-        status_data = random.choice(all_statuses)
-        await self.apply_status(status_data['type'], status_data['text'])
+        status_text = random.choice(all_statuses)
+        await self.apply_status(status_text)
 
     @status_rotation.before_loop
     async def before_status_rotation(self):
@@ -99,8 +75,8 @@ class BotStatus(commands.Cog):
 
     @app_commands.command(name="setstatus", description="Set a custom pinned bot status")
     @app_commands.describe(
-        status_type="Choose the type of status to display",
-        text="The status text to display"
+        status_type="Choose the display prefix",
+        text="The status text after the prefix"
     )
     @app_commands.choices(status_type=status_choices)
     @app_commands.checks.has_permissions(administrator=True)
@@ -111,16 +87,24 @@ class BotStatus(commands.Cog):
         text: str
     ):
         """Pin a custom bot status"""
+        # Build the full status string with verb included
+        type_prefix = {
+            "playing": "Playing",
+            "watching": "Watching",
+            "listening": "Listening to",
+            "competing": "Competing in",
+            "streaming": "Streaming",
+        }.get(status_type.value, "Playing")
+        
+        full_status = f"{type_prefix} {text}"
+        
+        # Save as pinned
         config = self.db.get('config', {})
-        config['pinned_status'] = {
-            'type': status_type.value,
-            'text': text
-        }
+        config['pinned_status'] = full_status
         self.db.set('config', config)
         
-        await self.apply_status(status_type.value, text)
-        
-        type_display = self.get_type_display(status_type.value)
+        # Apply immediately
+        await self.apply_status(full_status)
         
         embed = discord.Embed(
             title="Status Updated",
@@ -128,10 +112,33 @@ class BotStatus(commands.Cog):
         )
         embed.add_field(
             name="Now showing",
-            value=f"`{type_display} {text}`",
+            value=f"`{full_status}`",
             inline=False
         )
         embed.set_footer(text="Pinned. Use /resetstatus to rotate again.")
+        
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @app_commands.command(name="setstatus_custom", description="Set a fully custom status text")
+    @app_commands.describe(text="The exact text to display as status")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def setstatus_custom(
+        self,
+        interaction: discord.Interaction,
+        text: str
+    ):
+        """Set any custom text without prefix dropdown"""
+        config = self.db.get('config', {})
+        config['pinned_status'] = text
+        self.db.set('config', config)
+        
+        await self.apply_status(text)
+        
+        embed = discord.Embed(
+            title="Status Updated",
+            description=f"Now showing: `{text}`",
+            color=0x1a1a2e
+        )
         
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
@@ -145,8 +152,8 @@ class BotStatus(commands.Cog):
             del config['pinned_status']
             self.db.set('config', config)
         
-        status_data = random.choice(self.default_statuses)
-        await self.apply_status(status_data['type'], status_data['text'])
+        status_text = random.choice(self.default_statuses)
+        await self.apply_status(status_text)
         
         embed = discord.Embed(
             description="Pinned status removed. Rotating every 5 minutes.",
@@ -156,8 +163,8 @@ class BotStatus(commands.Cog):
 
     @app_commands.command(name="addstatus", description="Add a status to the rotation pool")
     @app_commands.describe(
-        status_type="Choose the type of status",
-        text="The status text"
+        status_type="Choose the display prefix",
+        text="The status text after the prefix"
     )
     @app_commands.choices(status_type=status_choices)
     @app_commands.checks.has_permissions(administrator=True)
@@ -168,21 +175,24 @@ class BotStatus(commands.Cog):
         text: str
     ):
         """Add to rotation pool"""
+        type_prefix = {
+            "playing": "Playing",
+            "watching": "Watching",
+            "listening": "Listening to",
+            "competing": "Competing in",
+            "streaming": "Streaming",
+        }.get(status_type.value, "Playing")
+        
+        full_status = f"{type_prefix} {text}"
+        
         config = self.db.get('config', {})
         custom_statuses = config.get('custom_statuses', [])
-        
-        custom_statuses.append({
-            'type': status_type.value,
-            'text': text
-        })
-        
+        custom_statuses.append(full_status)
         config['custom_statuses'] = custom_statuses
         self.db.set('config', config)
         
-        type_display = self.get_type_display(status_type.value)
-        
         embed = discord.Embed(
-            description=f"Added to rotation: `{type_display} {text}`",
+            description=f"Added to rotation: `{full_status}`",
             color=0x1a1a2e
         )
         await interaction.response.send_message(embed=embed, ephemeral=True)
@@ -197,31 +207,26 @@ class BotStatus(commands.Cog):
             color=0x1a1a2e
         )
         
+        # Pinned
         if config.get('pinned_status'):
-            pinned = config['pinned_status']
-            display = self.get_type_display(pinned['type'])
             embed.add_field(
-                name="Pinned",
-                value=f"`{display} {pinned['text']}`",
+                name="📌 Pinned",
+                value=f"`{config['pinned_status']}`",
                 inline=False
             )
         
-        default_list = "\n".join([
-            f"`{self.get_type_display(s['type'])} {s['text']}`"
-            for s in self.default_statuses
-        ])
+        # Default
+        default_list = "\n".join([f"`{s}`" for s in self.default_statuses])
         embed.add_field(
             name="Default Rotation",
             value=default_list,
             inline=False
         )
         
+        # Custom
         custom_statuses = config.get('custom_statuses', [])
         if custom_statuses:
-            custom_list = "\n".join([
-                f"`{self.get_type_display(s['type'])} {s['text']}`"
-                for s in custom_statuses
-            ])
+            custom_list = "\n".join([f"`{s}`" for s in custom_statuses])
             embed.add_field(
                 name="Custom Added",
                 value=custom_list,
