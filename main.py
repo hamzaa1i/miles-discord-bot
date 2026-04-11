@@ -77,8 +77,6 @@ class Miles(commands.Bot):
             'cogs.moderation',
             'cogs.welcome',
             'cogs.leveling',
-            'cogs.games',
-            'cogs.enhanced_shop',
             'cogs.server_stats',
             'cogs.bot_status',
             'cogs.custom_embeds',
@@ -284,15 +282,23 @@ async def help_command(ctx):
 
     # Server Stats
     embed.add_field(
-        name="Server Info",
-        value=(
-            "`/serverstats` Server statistics\n"
-            "`/userinfo [user]` User information\n"
-            "`/roleinfo <role>` Role information\n"
-            "`/channelinfo` Channel info"
-        ),
-        inline=False
-    )
+    name="Server Info",
+    value=(
+        "`/whois [user]` Complete user info\n"
+        "`/serverinfo` Detailed server info\n"
+        "`/roleinfo <role>` Role details\n"
+        "`/channelinfo [channel]` Channel details\n"
+        "`/avatar [user]` Show avatar\n"
+        "`/banner [user]` Show banner\n"
+        "`/membercount` Member breakdown\n"
+        "`/inrole <role>` Members with role\n"
+        "`/permissions [user]` Check permissions\n"
+        "`/emojis` List server emojis\n"
+        "`/roles` List all roles\n"
+        "`/firstmessage` First channel message"
+    ),
+    inline=False
+)
 
     # Status
     embed.add_field(
