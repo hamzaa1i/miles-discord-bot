@@ -4,21 +4,19 @@ from discord import app_commands
 import random
 from utils.database import Database
 
-# Status type choices for slash command dropdown
+# Dropdown choices
 status_choices = [
-    app_commands.Choice(name="Playing", value="playing"),
-    app_commands.Choice(name="Watching", value="watching"),
-    app_commands.Choice(name="Listening to", value="listening"),
-    app_commands.Choice(name="Competing in", value="competing"),
+    app_commands.Choice(name="🎮 Playing", value="playing"),
+    app_commands.Choice(name="👀 Watching", value="watching"),
+    app_commands.Choice(name="🎵 Listening to", value="listening"),
+    app_commands.Choice(name="🏆 Competing in", value="competing"),
 ]
 
 class BotStatus(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.db = Database('data/bot_config.json')
-        self.status_rotation.start()
         
-        # Default rotating statuses
         self.default_statuses = [
             {"text": "over the shadows", "type": "watching"},
             {"text": "with the void", "type": "playing"},
@@ -35,48 +33,83 @@ class BotStatus(commands.Cog):
     def cog_unload(self):
         self.status_rotation.cancel()
 
-    def get_activity(self, activity_type: str, text: str) -> discord.Activity:
-        """Convert type string to proper discord Activity"""
+    def build_activity(self, activity_type: str, text: str) -> discord.Activity:
+        """Build a proper discord.Activity object"""
         type_map = {
             "playing": discord.ActivityType.playing,
             "watching": discord.ActivityType.watching,
             "listening": discord.ActivityType.listening,
             "competing": discord.ActivityType.competing,
         }
-        
-        discord_type = type_map.get(activity_type, discord.ActivityType.playing)
-        
-        return discord.Activity(type=discord_type, name=text)
+        return discord.Activity(
+            type=type_map.get(activity_type, discord.ActivityType.playing),
+            name=text
+        )
+
+    def get_type_display(self, activity_type: str) -> str:
+        """Get human readable type"""
+        display_map = {
+            "playing": "Playing",
+            "watching": "Watching",
+            "listening": "Listening to",
+            "competing": "Competing in",
+        }
+        return display_map.get(activity_type, activity_type.title())
+
+    async def apply_status(self, activity_type: str, text: str):
+        """Apply status to bot with proper presence"""
+        activity = self.build_activity(activity_type, text)
+        await self.bot.change_presence(
+            status=discord.Status.online,
+            activity=activity
+        )
 
     @tasks.loop(minutes=5)
     async def status_rotation(self):
         """Rotate status every 5 minutes"""
         config = self.db.get('config', {})
         
-        # If custom status is pinned, don't rotate
+        # If pinned, always use pinned status
         if config.get('pinned_status'):
-            status_data = config['pinned_status']
-            activity = self.get_activity(status_data['type'], status_data['text'])
-            await self.bot.change_presence(activity=activity)
+            pinned = config['pinned_status']
+            await self.apply_status(pinned['type'], pinned['text'])
             return
         
-        # Load any saved custom statuses added via /addstatus
+        # Otherwise rotate
         saved_extras = config.get('custom_statuses', [])
         all_statuses = self.default_statuses + saved_extras
-        
-        # Pick random status
         status_data = random.choice(all_statuses)
-        activity = self.get_activity(status_data['type'], status_data['text'])
-        await self.bot.change_presence(activity=activity)
+        await self.apply_status(status_data['type'], status_data['text'])
 
     @status_rotation.before_loop
     async def before_status_rotation(self):
         await self.bot.wait_until_ready()
+        # Small delay to ensure bot is fully ready
+        await discord.utils.sleep_until(
+            discord.utils.utcnow() + discord.utils.timedelta(seconds=3)
+        )
+
+    @commands.Cog.listener()
+    async def on_ready(self):
+        """Set status immediately when bot is ready"""
+        config = self.db.get('config', {})
+        
+        if config.get('pinned_status'):
+            pinned = config['pinned_status']
+            await self.apply_status(pinned['type'], pinned['text'])
+        else:
+            # Set first default status immediately
+            status_data = self.default_statuses[0]
+            await self.apply_status(status_data['type'], status_data['text'])
+        
+        # Start rotation after setting initial status
+        if not self.status_rotation.is_running():
+            self.status_rotation.start()
 
     @app_commands.command(name="setstatus", description="Set a custom pinned bot status")
     @app_commands.describe(
-        status_type="Choose the type of status",
-        text="What the status should say"
+        status_type="Choose the type of status to display",
+        text="The status text to display"
     )
     @app_commands.choices(status_type=status_choices)
     @app_commands.checks.has_permissions(administrator=True)
@@ -86,10 +119,8 @@ class BotStatus(commands.Cog):
         status_type: app_commands.Choice[str],
         text: str
     ):
-        """Set and pin a custom status"""
+        """Pin a custom bot status"""
         config = self.db.get('config', {})
-        
-        # Save as pinned status
         config['pinned_status'] = {
             'type': status_type.value,
             'text': text
@@ -97,56 +128,47 @@ class BotStatus(commands.Cog):
         self.db.set('config', config)
         
         # Apply immediately
-        activity = self.get_activity(status_type.value, text)
-        await self.bot.change_presence(activity=activity)
+        await self.apply_status(status_type.value, text)
         
-        # Show preview text
-        type_display = {
-            "playing": "Playing",
-            "watching": "Watching",
-            "listening": "Listening to",
-            "competing": "Competing in"
-        }.get(status_type.value, status_type.value.title())
+        type_display = self.get_type_display(status_type.value)
         
         embed = discord.Embed(
             title="Status Updated",
-            description=(
-                f"**Type:** {type_display}\n"
-                f"**Text:** {text}\n\n"
-                f"Preview: `{type_display} {text}`"
-            ),
             color=0x1a1a2e
         )
-        embed.set_footer(text="Status is now pinned. Use /resetstatus to rotate again.")
+        embed.add_field(
+            name="Now showing",
+            value=f"`{type_display} {text}`",
+            inline=False
+        )
+        embed.set_footer(text="Pinned — won't rotate. Use /resetstatus to rotate again.")
         
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-    @app_commands.command(name="resetstatus", description="Remove pinned status and resume rotation")
+    @app_commands.command(name="resetstatus", description="Resume automatic status rotation")
     @app_commands.checks.has_permissions(administrator=True)
     async def resetstatus(self, interaction: discord.Interaction):
-        """Remove pinned status, go back to rotation"""
+        """Remove pinned status"""
         config = self.db.get('config', {})
         
         if 'pinned_status' in config:
             del config['pinned_status']
             self.db.set('config', config)
         
-        # Set a random one immediately
+        # Apply random default immediately
         status_data = random.choice(self.default_statuses)
-        activity = self.get_activity(status_data['type'], status_data['text'])
-        await self.bot.change_presence(activity=activity)
+        await self.apply_status(status_data['type'], status_data['text'])
         
         embed = discord.Embed(
-            description="Pinned status removed. Back to rotating every 5 minutes.",
+            description="Pinned status removed. Rotating every 5 minutes.",
             color=0x1a1a2e
         )
-        
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @app_commands.command(name="addstatus", description="Add a status to the rotation pool")
     @app_commands.describe(
         status_type="Choose the type of status",
-        text="What the status should say"
+        text="The status text"
     )
     @app_commands.choices(status_type=status_choices)
     @app_commands.checks.has_permissions(administrator=True)
@@ -156,30 +178,24 @@ class BotStatus(commands.Cog):
         status_type: app_commands.Choice[str],
         text: str
     ):
-        """Add status to rotation"""
+        """Add to rotation pool"""
         config = self.db.get('config', {})
         custom_statuses = config.get('custom_statuses', [])
         
-        new_status = {
+        custom_statuses.append({
             'type': status_type.value,
             'text': text
-        }
-        custom_statuses.append(new_status)
+        })
+        
         config['custom_statuses'] = custom_statuses
         self.db.set('config', config)
         
-        type_display = {
-            "playing": "Playing",
-            "watching": "Watching",
-            "listening": "Listening to",
-            "competing": "Competing in"
-        }.get(status_type.value, status_type.value.title())
+        type_display = self.get_type_display(status_type.value)
         
         embed = discord.Embed(
             description=f"Added to rotation: `{type_display} {text}`",
             color=0x1a1a2e
         )
-        
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @app_commands.command(name="liststatus", description="View all statuses in rotation")
@@ -187,31 +203,24 @@ class BotStatus(commands.Cog):
         """List all statuses"""
         config = self.db.get('config', {})
         
-        type_display = {
-            "playing": "Playing",
-            "watching": "Watching",
-            "listening": "Listening to",
-            "competing": "Competing in"
-        }
-        
         embed = discord.Embed(
-            title="Status Rotation Pool",
+            title="Status Pool",
             color=0x1a1a2e
         )
         
-        # Show pinned status if exists
+        # Pinned status
         if config.get('pinned_status'):
             pinned = config['pinned_status']
-            display = type_display.get(pinned['type'], pinned['type'].title())
+            display = self.get_type_display(pinned['type'])
             embed.add_field(
-                name="Pinned Status",
+                name="📌 Pinned",
                 value=f"`{display} {pinned['text']}`",
                 inline=False
             )
         
         # Default statuses
         default_list = "\n".join([
-            f"`{type_display.get(s['type'], s['type'].title())} {s['text']}`"
+            f"`{self.get_type_display(s['type'])} {s['text']}`"
             for s in self.default_statuses
         ])
         embed.add_field(
@@ -220,11 +229,11 @@ class BotStatus(commands.Cog):
             inline=False
         )
         
-        # Custom statuses
+        # Custom added
         custom_statuses = config.get('custom_statuses', [])
         if custom_statuses:
             custom_list = "\n".join([
-                f"`{type_display.get(s['type'], s['type'].title())} {s['text']}`"
+                f"`{self.get_type_display(s['type'])} {s['text']}`"
                 for s in custom_statuses
             ])
             embed.add_field(
@@ -235,7 +244,7 @@ class BotStatus(commands.Cog):
         
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-    @app_commands.command(name="clearstatuses", description="Remove all custom added statuses")
+    @app_commands.command(name="clearstatuses", description="Remove all custom statuses from rotation")
     @app_commands.checks.has_permissions(administrator=True)
     async def clearstatuses(self, interaction: discord.Interaction):
         """Clear custom statuses"""
@@ -244,10 +253,9 @@ class BotStatus(commands.Cog):
         self.db.set('config', config)
         
         embed = discord.Embed(
-            description="All custom statuses removed from rotation.",
+            description="All custom statuses cleared from rotation.",
             color=0x1a1a2e
         )
-        
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
 async def setup(bot):

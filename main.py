@@ -71,8 +71,9 @@ class Miles(commands.Bot):
             except Exception as e:
                 logger.error(f"❌ Failed to load {cog}: {e}")
         
-        # Sync slash commands
+        # FIX 2: Force clear and re-sync ALL commands (dropdown fix)
         try:
+            self.tree.clear_commands(guild=None)
             synced = await self.tree.sync()
             logger.info(f"✅ Synced {len(synced)} slash commands")
         except Exception as e:
@@ -84,6 +85,13 @@ class Miles(commands.Bot):
         logger.info(f"📊 Connected to {len(self.guilds)} servers")
         logger.info(f"👥 Serving {len(self.users)} users")
         logger.info("=" * 50)
+        
+        # FIX 1: Set initial status on ready (fixes status type not showing)
+        activity = discord.Activity(
+            type=discord.ActivityType.watching,
+            name="over the shadows"
+        )
+        await self.change_presence(status=discord.Status.online, activity=activity)
 
     async def on_command_error(self, ctx, error):
         """Global error handler"""
