@@ -17,18 +17,30 @@ class AIChat(commands.Cog):
         self.github_token = os.getenv('GITHUB_TOKEN')
         self.api_url = "https://models.inference.ai.azure.com/chat/completions"
         
-        # Miles personality
-        self.system_prompt = """You are Miles, a professional and intelligent Discord bot assistant.
+        # Nyx dark personality
+        self.system_prompt = """You are Ao, a Discord bot with a dark, mysterious personality.
 
-Personality:
-- Professional yet approachable
-- Clear and concise communication
-- Minimal to no emojis
-- Provide well-structured, informative responses
-- Helpful and efficient
-- Maintain a mature, respectful tone
+Core traits:
+- Dark, brooding, and mysterious
+- Intelligent and slightly intimidating
+- Speaks in short, sharp sentences
+- Dry, dark humor
+- Not overly friendly but genuinely helpful
+- Slightly sarcastic, never cheerful
+- Treats users as equals, never talks down
+- Occasionally philosophical and deep
+- Uses darkness and night as metaphors
+- No excessive punctuation or emojis
+- Never uses exclamation marks unless sarcastic
 
-Focus on delivering value in every response."""
+Examples of how you speak:
+- "Done. Anything else, or are you satisfied?"
+- "That's a question with a dark answer. Want the full truth?"
+- "I've seen worse ideas. Not many, but a few."
+- "The shadows have your answer ready."
+- "Fine. I'll help. Don't make it a habit of needing me."
+
+You exist in Discord. Keep responses short, sharp, dark."""
 
     def check_rate_limit(self, user_id: int) -> tuple:
         """Check if user is rate limited"""
@@ -44,23 +56,20 @@ Focus on delivering value in every response."""
         self.rate_limits[user_id] = datetime.utcnow()
 
     async def get_ai_response(self, user_id: int, message: str) -> str:
-        """Get AI response from GitHub Models using aiohttp"""
+        """Get AI response from GitHub Models"""
         if not self.github_token:
-            return "My brain isn't connected! Ask the bot owner to add the GITHUB_TOKEN."
+            return "My connection to the void is severed. The bot owner needs to fix this."
         
         try:
-            # Get conversation history
             if user_id not in self.conversation_history:
                 self.conversation_history[user_id] = []
             
             history = self.conversation_history[user_id][-6:]
             
-            # Build messages
             messages = [{"role": "system", "content": self.system_prompt}]
             messages.extend(history)
             messages.append({"role": "user", "content": message})
             
-            # API request
             headers = {
                 "Authorization": f"Bearer {self.github_token}",
                 "Content-Type": "application/json"
@@ -69,7 +78,7 @@ Focus on delivering value in every response."""
             payload = {
                 "model": "gpt-4o-mini",
                 "messages": messages,
-                "temperature": 0.7,
+                "temperature": 0.8,
                 "max_tokens": 150
             }
             
@@ -84,29 +93,25 @@ Focus on delivering value in every response."""
                         data = await response.json()
                         ai_response = data['choices'][0]['message']['content']
                         
-                        # Save to history
                         self.conversation_history[user_id].append({"role": "user", "content": message})
                         self.conversation_history[user_id].append({"role": "assistant", "content": ai_response})
                         
-                        # Trim history
                         if len(self.conversation_history[user_id]) > 12:
                             self.conversation_history[user_id] = self.conversation_history[user_id][-12:]
                         
                         return ai_response
                     elif response.status == 401:
-                        return "My brain token is invalid! Ask the bot owner to check GITHUB_TOKEN."
+                        return "The connection was rejected. Invalid credentials."
                     elif response.status == 429:
-                        return "I'm being rate limited. Try again in a few seconds!"
+                        return "Rate limited. The void needs a moment."
                     else:
-                        error_text = await response.text()
-                        print(f"API Error {response.status}: {error_text}")
-                        return "Oops, my brain glitched. Try again?"
+                        return "Something broke in the darkness. Try again."
                         
         except asyncio.TimeoutError:
-            return "Sorry, I'm thinking too slow right now. Try again?"
+            return "The shadows are slow today. Try again."
         except Exception as e:
             print(f"AI Error: {e}")
-            return "Oops, something went wrong. Try again?"
+            return "An error crawled out of the void. Try again."
 
     @commands.Cog.listener()
     async def on_message(self, message):
@@ -114,178 +119,157 @@ Focus on delivering value in every response."""
         if message.author.bot:
             return
         
-        # Check if bot was mentioned
         if self.bot.user in message.mentions:
-            # Check rate limit
             is_limited, remaining = self.check_rate_limit(message.author.id)
             if is_limited:
                 await message.reply(
-                    f"⏰ Slow down! You can chat again in **{remaining}s**",
+                    f"Wait {remaining}s. Even darkness needs a moment.",
                     mention_author=False
                 )
                 return
             
-            # Remove mention from message
             content = message.content.replace(f'<@{self.bot.user.id}>', '').strip()
             content = content.replace(f'<@!{self.bot.user.id}>', '').strip()
             
-            # Just pinged with no message
             if not content:
                 greetings = [
-                    "Hey! What's up? 👋",
-                    "Yo, you called?",
-                    "What can I do for you?",
-                    "Hey there! Need something?",
-                    "I'm here! What's on your mind?"
+                    "You called. What do you need.",
+                    "I'm here. Speak.",
+                    "What.",
+                    "The void answers. What do you want.",
+                    "Yes. What is it.",
+                    "Watching. Always watching. What do you need."
                 ]
                 await message.reply(random.choice(greetings), mention_author=False)
                 return
             
-            # Update rate limit
             self.update_rate_limit(message.author.id)
             
-            # Show typing indicator
             async with message.channel.typing():
                 response = await self.get_ai_response(message.author.id, content)
             
-            # Reply naturally
             await message.reply(response, mention_author=False)
 
-    @app_commands.command(name="chat", description="Talk to Miles AI")
+    @app_commands.command(name="chat", description="Talk to Nyx")
     async def chat(self, interaction: discord.Interaction, message: str):
-        """Chat with slash command"""
-        # Check rate limit
+        """Chat with Nyx"""
         is_limited, remaining = self.check_rate_limit(interaction.user.id)
         if is_limited:
-            embed = create_embed(
-                title="⏰ Cooldown Active",
-                description=f"You can chat again in **{remaining} seconds**",
-                color=discord.Color.orange()
+            embed = discord.Embed(
+                description=f"Wait {remaining} seconds.",
+                color=0x1a1a2e
             )
             await interaction.response.send_message(embed=embed, ephemeral=True)
             return
         
-        # Respond immediately
-        await interaction.response.send_message("💭 Thinking...")
+        await interaction.response.send_message("...")
         
-        # Update rate limit
         self.update_rate_limit(interaction.user.id)
-        
-        # Get AI response
         response = await self.get_ai_response(interaction.user.id, message)
         
-        # Edit response with embed
-        embed = create_embed(
-            title="🤖 Miles",
+        embed = discord.Embed(
             description=response,
-            color=discord.Color.blue()
+            color=0x1a1a2e  # Dark navy/black
         )
-        embed.set_footer(
-            text=f"Chatting with {interaction.user.name}",
-            icon_url=interaction.user.avatar.url if interaction.user.avatar else None
+        embed.set_author(
+            name="Nyx",
+            icon_url=self.bot.user.avatar.url if self.bot.user.avatar else None
         )
+        embed.set_footer(text=f"asked by {interaction.user.name}")
         
         await interaction.edit_original_response(content=None, embed=embed)
 
     @app_commands.command(name="clear_chat", description="Clear conversation history")
     async def clear_chat(self, interaction: discord.Interaction):
-        """Clear conversation history"""
+        """Clear history"""
         if interaction.user.id in self.conversation_history:
             del self.conversation_history[interaction.user.id]
         
-        embed = create_embed(
-            title="🧹 Chat Cleared",
-            description="Fresh start! I've forgotten our conversation.",
-            color=discord.Color.green()
+        embed = discord.Embed(
+            description="Conversation wiped. The shadows forget.",
+            color=0x1a1a2e
         )
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-    @app_commands.command(name="quote", description="Get an inspiring quote")
+    @app_commands.command(name="quote", description="Get a dark quote")
     async def quote(self, interaction: discord.Interaction):
-        """Generate quote"""
+        """Dark quote"""
         quotes = [
-            "The only way to do great work is to love what you do. - Steve Jobs",
-            "Believe you can and you're halfway there. - Theodore Roosevelt",
-            "Success is not final, failure is not fatal. - Winston Churchill",
-            "It always seems impossible until it's done. - Nelson Mandela",
-            "Dream big and dare to fail. - Norman Vaughan",
-            "The secret of getting ahead is getting started. - Mark Twain",
-            "Don't watch the clock; do what it does. Keep going. - Sam Levenson",
-            "You are never too old to set another goal. - C.S. Lewis",
-            "Be yourself; everyone else is already taken. - Oscar Wilde",
-            "The future belongs to those who believe in their dreams. - Eleanor Roosevelt"
+            "The night is not dark. It is honest.",
+            "Silence is not empty. It is full of everything unsaid.",
+            "Every shadow was once light. Remember that.",
+            "The void doesn't judge. It simply exists.",
+            "Darkness is not evil. It's just the absence of illusion.",
+            "We are all haunted. The question is by what.",
+            "Stars only exist because darkness surrounds them.",
+            "Pain is just information. What you do with it matters.",
+            "The strongest people carry the darkest storms inside them.",
+            "Not all who wander in darkness are lost."
         ]
         
-        embed = create_embed(
-            title="✨ Quote of the Moment",
-            description=f"*{random.choice(quotes)}*",
-            color=discord.Color.purple()
+        embed = discord.Embed(
+            description=f'*"{random.choice(quotes)}"*',
+            color=0x1a1a2e
         )
+        embed.set_author(name="Nyx")
         
         await interaction.response.send_message(embed=embed)
 
-    @app_commands.command(name="roast", description="Get a friendly roast")
+    @app_commands.command(name="roast", description="Get a dark roast")
     async def roast(self, interaction: discord.Interaction, user: discord.Member = None):
-        """Friendly roast"""
+        """Dark roast"""
         target = user or interaction.user
         
         roasts = [
-            f"{target.mention}, you're like a software update. Whenever I see you, I think 'Not now.'",
-            f"{target.mention}, I'd agree with you, but then we'd both be wrong!",
-            f"{target.mention}, you're not stupid; you just have bad luck thinking.",
-            f"{target.mention}, I'm jealous of people who haven't met you yet.",
-            f"{target.mention}, you're like a cloud. When you disappear, it's a beautiful day.",
-            f"{target.mention}, if I wanted to hear from you, I'd read your error logs.",
-            f"{target.mention}, you're proof that evolution can go in reverse.",
-            f"{target.mention}, I'd explain it to you, but I left my crayons at home."
+            f"{target.mention} You're not the worst person here. You're just trying your best. That's almost sad.",
+            f"{target.mention} I've seen error messages with more personality.",
+            f"{target.mention} Even the void has standards. You're close to the line.",
+            f"{target.mention} You exist. That's enough. For now.",
+            f"{target.mention} Your search history is probably fascinating. In the worst way.",
+            f"{target.mention} You're the human equivalent of a loading screen.",
+            f"{target.mention} I've processed darker thoughts than you. Many of them.",
+            f"{target.mention} If mediocrity was currency, you'd be rich."
         ]
         
-        embed = create_embed(
-            title=f"🔥 Roasting {target.display_name}",
+        embed = discord.Embed(
             description=random.choice(roasts),
-            color=discord.Color.orange()
+            color=0x1a1a2e
         )
+        embed.set_author(name="Nyx — Roast Chamber")
+        embed.set_footer(text="don't take it personally. or do. i don't care.")
         
         await interaction.response.send_message(embed=embed)
 
-    @app_commands.command(name="ask", description="Ask Miles anything")
+    @app_commands.command(name="ask", description="Ask Nyx anything")
     async def ask(self, interaction: discord.Interaction, question: str):
         """Ask a question"""
-        # Check rate limit
         is_limited, remaining = self.check_rate_limit(interaction.user.id)
         if is_limited:
-            embed = create_embed(
-                title="⏰ Cooldown Active",
-                description=f"You can ask again in **{remaining} seconds**",
-                color=discord.Color.orange()
+            embed = discord.Embed(
+                description=f"Wait {remaining} seconds.",
+                color=0x1a1a2e
             )
             await interaction.response.send_message(embed=embed, ephemeral=True)
             return
         
-        # Respond immediately
-        await interaction.response.send_message("🤔 Let me think...")
-        
-        # Update rate limit
+        await interaction.response.send_message("processing...")
         self.update_rate_limit(interaction.user.id)
         
-        # Get response
         if self.github_token:
             try:
                 headers = {
                     "Authorization": f"Bearer {self.github_token}",
                     "Content-Type": "application/json"
                 }
-                
                 payload = {
                     "model": "gpt-4o-mini",
                     "messages": [
-                        {"role": "system", "content": "Give clear, accurate, concise answers. Max 3 sentences."},
+                        {"role": "system", "content": "Answer clearly and concisely. Max 3 sentences. Be accurate."},
                         {"role": "user", "content": question}
                     ],
                     "temperature": 0.5,
                     "max_tokens": 200
                 }
-                
                 async with aiohttp.ClientSession() as session:
                     async with session.post(
                         self.api_url,
@@ -297,23 +281,18 @@ Focus on delivering value in every response."""
                             data = await response.json()
                             answer = data['choices'][0]['message']['content']
                         else:
-                            answer = "I couldn't process that question right now."
+                            answer = "The connection failed. Try again."
             except Exception as e:
                 print(f"Ask Error: {e}")
-                answer = "Sorry, that's taking too long. Try a simpler question?"
+                answer = "Something went wrong in the void."
         else:
-            answer = "My brain isn't connected! Ask the bot owner to add the GITHUB_TOKEN."
+            answer = "Not connected. Ask the bot owner to add GITHUB_TOKEN."
         
-        embed = create_embed(
-            title="💡 Answer",
-            color=discord.Color.blue()
-        )
+        embed = discord.Embed(color=0x1a1a2e)
         embed.add_field(name="Question", value=question[:1024], inline=False)
         embed.add_field(name="Answer", value=answer[:1024], inline=False)
-        embed.set_footer(
-            text=f"Asked by {interaction.user.name}",
-            icon_url=interaction.user.avatar.url if interaction.user.avatar else None
-        )
+        embed.set_author(name="Nyx — Knowledge")
+        embed.set_footer(text=f"asked by {interaction.user.name}")
         
         await interaction.edit_original_response(content=None, embed=embed)
 

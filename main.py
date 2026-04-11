@@ -59,6 +59,9 @@ class Miles(commands.Bot):
             'cogs.games',             # NEW
             'cogs.enhanced_shop',     # NEW
             'cogs.server_stats'       # NEW
+            'cogs.bot_status'         # NEW
+            'cogs.custom_embeds',     # NEW
+            'cogs.modmail'            # NEW
         ]
         
         for cog in cogs:
@@ -130,8 +133,8 @@ def keep_alive():
 async def help_command(ctx):
     """Professional help command"""
     embed = discord.Embed(
-        title="Miles - Command Reference",
-        description="A comprehensive bot for server management, economy, and entertainment.",
+        title="Ao - Command Center",
+        description="Your server's backbone",
         color=discord.Color.blue(),
         timestamp=datetime.utcnow()
     )
