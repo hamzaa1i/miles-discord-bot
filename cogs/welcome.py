@@ -9,37 +9,44 @@ class Welcome(commands.Cog):
         self.bot = bot
         self.db = Database('data/welcome.json')
     
-    @commands.Cog.listener()
-    async def on_member_join(self, member: discord.Member):
-        """Send welcome message when member joins"""
-        config = self.db.get(str(member.guild.id), {})
-        
-        if not config.get('enabled', False):
-            return
-        
-        channel_id = config.get('channel_id')
-        if not channel_id:
-            return
-        
-        channel = member.guild.get_channel(int(channel_id))
-        if not channel:
-            return
-        
-        # Custom message or default
-        message = config.get('message', 'Welcome {user} to {server}! 🎉')
-        message = message.replace('{user}', member.mention)
-        message = message.replace('{server}', member.guild.name)
-        message = message.replace('{count}', str(member.guild.member_count))
-        
-        embed = create_embed(
-            title="👋 Welcome!",
-            description=message,
-            color=discord.Color.green()
-        )
-        embed.set_thumbnail(url=member.avatar.url if member.avatar else member.default_avatar.url)
-        embed.set_footer(text=f"Member #{member.guild.member_count}")
-        
-        await channel.send(embed=embed)
+@commands.Cog.listener()
+async def on_member_join(self, member: discord.Member):
+    """Send welcome message when member joins"""
+    # Add debug log
+    print(f"Member joined: {member.name} in {member.guild.name}")
+    
+    config = self.db.get(str(member.guild.id), {})
+    print(f"Welcome config: {config}")
+    
+    if not config.get('enabled', False):
+        print("Welcome not enabled")
+        return
+    
+    channel_id = config.get('channel_id')
+    if not channel_id:
+        print("No channel ID")
+        return
+    
+    channel = member.guild.get_channel(int(channel_id))
+    if not channel:
+        print("Channel not found")
+        return
+    
+    message = config.get('message', 'Welcome {user} to {server}!')
+    message = message.replace('{user}', member.mention)
+    message = message.replace('{server}', member.guild.name)
+    message = message.replace('{count}', str(member.guild.member_count))
+    
+    embed = discord.Embed(
+        description=message,
+        color=0x1a1a2e
+    )
+    embed.set_thumbnail(
+        url=member.avatar.url if member.avatar else member.default_avatar.url
+    )
+    embed.set_footer(text=f"Member #{member.guild.member_count}")
+    
+    await channel.send(embed=embed)
     
     @commands.Cog.listener()
     async def on_member_remove(self, member: discord.Member):

@@ -179,8 +179,8 @@ class Economy(commands.Cog):
         
         if not item_found:
             embed = create_embed(
-                title="❌ Item Not Found",
-                description="That item doesn't exist in the shop!",
+                title="Item Not Found",
+                description="That item doesn't exist in the shop.",
                 color=discord.Color.red()
             )
             await interaction.response.send_message(embed=embed, ephemeral=True)
@@ -189,28 +189,45 @@ class Economy(commands.Cog):
         item_name, item_data = item_found
         price = item_data['price']
         
-        # Check if user can afford
         if data['balance'] < price:
             embed = create_embed(
-                title="💸 Not Enough Money!",
+                title="Insufficient Funds",
                 description=f"You need **${price:,}** but only have **${data['balance']:,}**",
                 color=discord.Color.red()
             )
             await interaction.response.send_message(embed=embed, ephemeral=True)
             return
         
-        # Process purchase
         data['balance'] -= price
         data['total_spent'] += price
-        data['inventory'].append(item_name)
-        self.save_user_data(interaction.user.id, data)
         
-        embed = create_embed(
-            title="✅ Purchase Successful!",
-            description=f"You bought **{item_name}** for **${price:,}**!",
-            color=discord.Color.green()
-        )
-        embed.add_field(name="New Balance", value=f"${data['balance']:,}")
+        # Handle mystery box specially
+        if "Mystery Box" in item_name:
+            reward = random.randint(500, 5000)
+            data['balance'] += reward
+            data['total_earned'] += reward
+            self.save_user_data(interaction.user.id, data)
+            
+            embed = create_embed(
+                title="Mystery Box Opened!",
+                description=f"You spent **${price:,}** and got **${reward:,}** back!",
+                color=discord.Color.gold() if reward > price else discord.Color.red()
+            )
+            embed.add_field(
+                name="Profit" if reward > price else "Loss",
+                value=f"${reward - price:,}" if reward > price else f"-${price - reward:,}"
+            )
+            embed.add_field(name="New Balance", value=f"${data['balance']:,}")
+        else:
+            data['inventory'].append(item_name)
+            self.save_user_data(interaction.user.id, data)
+            
+            embed = create_embed(
+                title="Purchase Successful",
+                description=f"You bought **{item_name}** for **${price:,}**",
+                color=discord.Color.green()
+            )
+            embed.add_field(name="New Balance", value=f"${data['balance']:,}")
         
         await interaction.response.send_message(embed=embed)
     
@@ -331,6 +348,162 @@ class Economy(commands.Cog):
         embed.add_field(name="New Balance", value=f"${data['balance']:,}")
         
         await interaction.response.send_message(embed=embed)
+    
+    # NEW COMMANDS
+    
+    @app_commands.command(name="deposit", description="Deposit coins into your bank")
+    async def deposit(self, interaction: discord.Interaction, amount: str):
+        """Deposit to bank"""
+        data = self.get_user_data(interaction.user.id)
+        
+        # Handle "all"
+        if amount.lower() == 'all':
+            amount_int = data['balance']
+        else:
+            try:
+                amount_int = int(amount)
+            except ValueError:
+                await interaction.response.send_message("Invalid amount!", ephemeral=True)
+                return
+        
+        if amount_int <= 0:
+            await interaction.response.send_message("Amount must be positive!", ephemeral=True)
+            return
+        
+        if data['balance'] < amount_int:
+            await interaction.response.send_message(
+                f"You only have ${data['balance']:,} in your wallet!",
+                ephemeral=True
+            )
+            return
+        
+        data['balance'] -= amount_int
+        data['bank'] += amount_int
+        self.save_user_data(interaction.user.id, data)
+        
+        embed = create_embed(
+            title="💰 Deposit Successful",
+            description=f"Deposited **${amount_int:,}** into your bank.",
+            color=discord.Color.green()
+        )
+        embed.add_field(name="👛 Wallet", value=f"${data['balance']:,}", inline=True)
+        embed.add_field(name="🏦 Bank", value=f"${data['bank']:,}", inline=True)
+        
+        await interaction.response.send_message(embed=embed)
+    
+    @app_commands.command(name="withdraw", description="Withdraw coins from your bank")
+    async def withdraw(self, interaction: discord.Interaction, amount: str):
+        """Withdraw from bank"""
+        data = self.get_user_data(interaction.user.id)
+        
+        if amount.lower() == 'all':
+            amount_int = data['bank']
+        else:
+            try:
+                amount_int = int(amount)
+            except ValueError:
+                await interaction.response.send_message("Invalid amount!", ephemeral=True)
+                return
+        
+        if amount_int <= 0:
+            await interaction.response.send_message("Amount must be positive!", ephemeral=True)
+            return
+        
+        if data['bank'] < amount_int:
+            await interaction.response.send_message(
+                f"You only have ${data['bank']:,} in your bank!",
+                ephemeral=True
+            )
+            return
+        
+        data['bank'] -= amount_int
+        data['balance'] += amount_int
+        self.save_user_data(interaction.user.id, data)
+        
+        embed = create_embed(
+            title="🏦 Withdrawal Successful",
+            description=f"Withdrew **${amount_int:,}** from your bank.",
+            color=discord.Color.green()
+        )
+        embed.add_field(name="👛 Wallet", value=f"${data['balance']:,}", inline=True)
+        embed.add_field(name="🏦 Bank", value=f"${data['bank']:,}", inline=True)
+        
+        await interaction.response.send_message(embed=embed)
+    
+    @app_commands.command(name="rob", description="Try to rob another user (5 min cooldown)")
+    @app_commands.checks.cooldown(1, 300, key=lambda i: i.user.id)
+    async def rob(self, interaction: discord.Interaction, user: discord.Member):
+        """Rob another user"""
+        if user.id == interaction.user.id:
+            await interaction.response.send_message("❌ You can't rob yourself.", ephemeral=True)
+            return
+        
+        if user.bot:
+            await interaction.response.send_message("❌ You can't rob bots.", ephemeral=True)
+            return
+        
+        robber_data = self.get_user_data(interaction.user.id)
+        victim_data = self.get_user_data(user.id)
+        
+        if victim_data['balance'] < 100:
+            await interaction.response.send_message(
+                f"❌ {user.mention} doesn't have enough coins to rob.",
+                ephemeral=True
+            )
+            return
+        
+        if robber_data['balance'] < 200:
+            await interaction.response.send_message(
+                "❌ You need at least **$200** in your wallet to attempt a robbery.",
+                ephemeral=True
+            )
+            return
+        
+        # 40% success rate
+        success = random.random() < 0.4
+        
+        if success:
+            stolen = random.randint(
+                int(victim_data['balance'] * 0.1),
+                int(victim_data['balance'] * 0.3)
+            )
+            robber_data['balance'] += stolen
+            victim_data['balance'] -= stolen
+            
+            self.save_user_data(interaction.user.id, robber_data)
+            self.save_user_data(user.id, victim_data)
+            
+            embed = create_embed(
+                title="🦹 Robbery Successful!",
+                description=f"You stole **${stolen:,}** from {user.mention}!",
+                color=discord.Color.green()
+            )
+            embed.add_field(name="💰 Your Balance", value=f"${robber_data['balance']:,}")
+        else:
+            fine = random.randint(100, 300)
+            robber_data['balance'] = max(0, robber_data['balance'] - fine)
+            self.save_user_data(interaction.user.id, robber_data)
+            
+            embed = create_embed(
+                title="🚔 Robbery Failed!",
+                description=f"You got caught and paid a **${fine:,}** fine!",
+                color=discord.Color.red()
+            )
+            embed.add_field(name="💰 Your Balance", value=f"${robber_data['balance']:,}")
+        
+        await interaction.response.send_message(embed=embed)
+    
+    @rob.error
+    async def rob_error(self, interaction: discord.Interaction, error):
+        """Handle rob command cooldown"""
+        if isinstance(error, app_commands.CommandOnCooldown):
+            minutes = error.retry_after / 60
+            await interaction.response.send_message(
+                f"⏰ You're on cooldown! Try robbing again in **{minutes:.0f} minutes**.",
+                ephemeral=True
+            )
+        else:
+            await interaction.response.send_message(f"❌ An error occurred: {str(error)}", ephemeral=True)
 
 async def setup(bot):
     await bot.add_cog(Economy(bot))

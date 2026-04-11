@@ -82,6 +82,10 @@ class Miles(commands.Bot):
             'cogs.server_stats',
             'cogs.bot_status',
             'cogs.custom_embeds',
+            'cogs.autorole',      
+            'cogs.polls',        
+            'cogs.afk',            
+            'cogs.giveaway'        
             'cogs.modmail'
         ]
 
