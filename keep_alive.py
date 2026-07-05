@@ -25,9 +25,9 @@ def set_bot(bot):
 @app.route('/')
 def home():
     return f"""<!doctype html>
-<html><head><title>ao</title></head>
+<html><head><title>cyn</title></head>
 <body style="font-family: sans-serif; text-align: center; padding: 60px; background:#0f0f1a; color:#e0e0e0;">
-  <h1 style="font-size: 48px; margin: 0;">ao is online ✅</h1>
+  <h1 style="font-size: 48px; margin: 0;">cyn is online ✅</h1>
   <p style="color:#888;">uptime since {_start_time.isoformat()}</p>
   <p style="color:#666;">{datetime.utcnow().isoformat()} UTC</p>
 </body></html>"""

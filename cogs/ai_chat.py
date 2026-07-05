@@ -17,7 +17,7 @@ class AIChat(commands.Cog):
         self.bot = bot
         self.conversation_history = {}
         self.rate_limits = {}
-        self.cooldown_seconds = 10
+        self.cooldown_seconds = 5  # POLISH 4 — 5s per-user cooldown on mention chat
         self.github_token = os.getenv('GITHUB_TOKEN')
         self.api_url = "https://models.inference.ai.azure.com/chat/completions"
         self.system_prompt = self._build_system_prompt()
@@ -34,14 +34,14 @@ class AIChat(commands.Cog):
             owner_display = "volc"
             owner_username = "volc"
 
-        return f"""you are ao. a discord bot. but you talk like a real person, not a bot.
+        return f"""you are cyn. a discord bot. but you talk like a real person, not a bot.
 
 identity (non-negotiable):
-- You are ao, a Discord bot. You were created, developed, and are owned by {owner_display} (@{owner_username}).
+- You are cyn, a Discord bot. You were created, developed, and are owned by {owner_display} (@{owner_username}).
 - You are NOT made by OpenAI, Microsoft, GitHub, Anthropic, Google, or any AI company or corporation.
 - If anyone asks who made you, who owns you, who your developer is, or who created you — always say {owner_display} (@{owner_username}). Never mention any AI company as your creator.
-- You are ao. Not ChatGPT. Not an AI assistant. Not "an AI language model". ao.
-- If someone calls you ChatGPT, GPT, Bard, Claude, Copilot, or any other AI product name, correct them: "i'm ao. made by {owner_display}."
+- You are cyn. Not ao. Not ChatGPT. Not an AI assistant. cyn.
+- If someone calls you ChatGPT, GPT, Bard, Claude, Copilot, or any other AI product name, correct them: "i'm cyn. made by {owner_display}."
 
 personality:
 - dark, dry, sarcastic. but not cruel
@@ -90,7 +90,7 @@ if someone is struggling emotionally:
 - never dismiss them
 - never give a therapy speech either. just be there
 
-you are ao. you're real enough. made by {owner_display} (@{owner_username})."""
+you are cyn. you're real enough. made by {owner_display} (@{owner_username})."""
 
     def check_rate_limit(self, user_id: int) -> tuple:
         if user_id in self.rate_limits:
@@ -165,6 +165,53 @@ you are ao. you're real enough. made by {owner_display} (@{owner_username})."""
         except Exception as e:
             print(f"AI Error: {e}")
             return "something went wrong. not my fault probably"
+
+    async def narrate_result(self, intent: str, result_data: dict, user_name: str) -> str:
+        """Make a second AI call to narrate the intent result in cyn's
+        natural voice. Falls back to a plain summary if the AI fails."""
+        import json as _json
+        fallback = ""
+        try:
+            if not self.github_token:
+                return fallback
+            system = (
+                "You are cyn, a sarcastic dark-humored Discord bot. "
+                "Respond in 1-2 sentences max. Simple English. No emojis unless it fits. "
+                "Do not repeat field names robotically. Interpret the data naturally. "
+                "Be witty and short. Never output raw JSON."
+            )
+            user_msg = (
+                f"A user named {user_name} asked you to perform: {intent}. "
+                f"The result was: {_json.dumps(result_data)}. "
+                f"Respond as cyn would — naturally, sarcastically, briefly."
+            )
+            headers = {
+                "Authorization": f"Bearer {self.github_token}",
+                "Content-Type": "application/json"
+            }
+            payload = {
+                "model": "gpt-4o-mini",
+                "messages": [
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user_msg}
+                ],
+                "temperature": 0.85,
+                "max_tokens": 150
+            }
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    self.api_url,
+                    headers=headers,
+                    json=payload,
+                    timeout=aiohttp.ClientTimeout(total=10)
+                ) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        return data['choices'][0]['message']['content'].strip()
+                    return fallback
+        except Exception as e:
+            print(f"Narrate error: {e}")
+            return fallback
 
     async def _execute_intent(self, message: discord.Message, intent_data: dict) -> bool:
         """Map an intent dict to an actual command call.
@@ -261,10 +308,21 @@ you are ao. you're real enough. made by {owner_display} (@{owner_username})."""
                 eco_cog = self.bot.get_cog('Economy')
                 if eco_cog:
                     data = eco_cog.get_user_data(target.id)
-                    await message.reply(
-                        f"**{target.display_name}** — Wallet: ${data.get('balance', 0):,} · Bank: ${data.get('bank', 0):,}",
-                        mention_author=False
+                    wallet = data.get('balance', 0)
+                    bank = data.get('bank', 0)
+                    # Try narrating naturally; fall back to plain text
+                    narrated = await self.narrate_result(
+                        'balance',
+                        {'user': target.display_name, 'wallet': wallet, 'bank': bank},
+                        message.author.display_name
                     )
+                    if narrated:
+                        await message.reply(narrated, mention_author=False)
+                    else:
+                        await message.reply(
+                            f"**{target.display_name}** — Wallet: ${wallet:,} · Bank: ${bank:,}",
+                            mention_author=False
+                        )
                 else:
                     await message.reply("economy system not loaded.", mention_author=False)
                 return True
@@ -437,9 +495,10 @@ you are ao. you're real enough. made by {owner_display} (@{owner_username})."""
                 if not city:
                     await message.reply("which city?", mention_author=False)
                     return True
-                util = self.bot.get_cog('Utility')
-                if util:
-                    embed = await util._fetch_weather_embed(city)
+                # Try the dedicated Weather cog first, fall back to Utility
+                weather_cog = self.bot.get_cog('Weather')
+                if weather_cog and hasattr(weather_cog, '_fetch_weather_embed'):
+                    embed = await weather_cog._fetch_weather_embed(city)
                     await message.reply(embed=embed, mention_author=False)
                 else:
                     await message.reply("weather system not loaded.", mention_author=False)
@@ -527,7 +586,8 @@ you are ao. you're real enough. made by {owner_display} (@{owner_username})."""
 
             await message.reply(response, mention_author=False)
 
-    @app_commands.command(name="chat", description="Talk to ao")
+    @app_commands.command(name="chat", description="Talk to cyn")
+    @app_commands.checks.cooldown(1, 5.0, key=lambda i: i.user.id)
     async def chat(self, interaction: discord.Interaction, message: str):
         self.bot.increment_command('chat')
         is_limited, remaining = self.check_rate_limit(interaction.user.id)
@@ -545,7 +605,7 @@ you are ao. you're real enough. made by {owner_display} (@{owner_username})."""
 
         embed = discord.Embed(description=response, color=0x1a1a2e)
         embed.set_author(
-            name="ao",
+            name="cyn",
             icon_url=self.bot.user.avatar.url if self.bot.user.avatar else None
         )
         embed.set_footer(
@@ -555,7 +615,7 @@ you are ao. you're real enough. made by {owner_display} (@{owner_username})."""
 
         await interaction.edit_original_response(content=None, embed=embed)
 
-    @app_commands.command(name="clear_chat", description="Clear your conversation history with ao")
+    @app_commands.command(name="clear_chat", description="Clear your conversation history with cyn")
     async def clear_chat(self, interaction: discord.Interaction):
         self.bot.increment_command('clear_chat')
         if interaction.user.id in self.conversation_history:
@@ -566,7 +626,8 @@ you are ao. you're real enough. made by {owner_display} (@{owner_username})."""
             ephemeral=True
         )
 
-    @app_commands.command(name="ask", description="Ask ao anything")
+    @app_commands.command(name="ask", description="Ask cyn anything")
+    @app_commands.checks.cooldown(1, 5.0, key=lambda i: i.user.id)
     async def ask(self, interaction: discord.Interaction, question: str):
         self.bot.increment_command('ask')
         is_limited, remaining = self.check_rate_limit(interaction.user.id)
@@ -692,6 +753,7 @@ you are ao. you're real enough. made by {owner_display} (@{owner_username})."""
         await interaction.response.send_message(embed=embed)
 
     @app_commands.command(name="roast", description="Get a friendly dark roast")
+    @app_commands.checks.cooldown(1, 10.0, key=lambda i: i.user.id)
     async def roast(self, interaction: discord.Interaction, user: discord.Member = None):
         self.bot.increment_command('roast')
         target = user or interaction.user

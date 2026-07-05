@@ -81,7 +81,7 @@ class Welcome(commands.Cog):
             ),
             color=0x1a1a2e
         )
-        embed.set_footer(text="Type /toggledms to disable future DMs from ao")
+        embed.set_footer(text="Type /toggledms to disable future DMs from cyn")
         try:
             await user.send(embed=embed)
         except:
@@ -247,7 +247,7 @@ class Welcome(commands.Cog):
 
     # ==================== LEGACY COMMANDS (kept for backward compat) ====================
 
-    @app_commands.command(name="toggledms", description="Toggle DMs from ao")
+    @app_commands.command(name="toggledms", description="Toggle DMs from cyn")
     async def toggledms(self, interaction: discord.Interaction):
         prefs = self.dm_prefs_db.get(str(interaction.user.id), {'dms_enabled': True})
         current = prefs.get('dms_enabled', True)
@@ -260,7 +260,7 @@ class Welcome(commands.Cog):
             status = "enabled"
             detail = "you'll get welcome rewards and notifications"
         embed = discord.Embed(
-            description=f"DMs from ao are now **{status}**. {detail}.",
+            description=f"DMs from cyn are now **{status}**. {detail}.",
             color=0x1a1a2e
         )
         await interaction.response.send_message(embed=embed, ephemeral=True)

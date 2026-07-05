@@ -42,7 +42,7 @@ class Music(commands.Cog):
             ),
             color=0x1a1a2e
         )
-        embed.set_footer(text="ao — music module")
+        embed.set_footer(text="cyn — music module")
         await interaction.response.send_message(embed=embed)
 
 

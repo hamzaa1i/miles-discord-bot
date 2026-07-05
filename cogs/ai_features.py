@@ -48,6 +48,7 @@ class AIFeatures(commands.Cog):
             return "something broke on my end. try again."
 
     @app_commands.command(name="summarize", description="Summarize text in 3-5 bullet points")
+    @app_commands.checks.cooldown(1, 15.0, key=lambda i: i.user.id)
     async def summarize(self, interaction: discord.Interaction, text: str):
         self.bot.increment_command('summarize')
         await interaction.response.defer()
@@ -60,6 +61,7 @@ class AIFeatures(commands.Cog):
         await interaction.followup.send(embed=embed)
 
     @app_commands.command(name="translate", description="Translate text to a target language")
+    @app_commands.checks.cooldown(1, 15.0, key=lambda i: i.user.id)
     async def translate(self, interaction: discord.Interaction, language: str, text: str):
         self.bot.increment_command('translate')
         await interaction.response.defer()
@@ -74,6 +76,7 @@ class AIFeatures(commands.Cog):
         await interaction.followup.send(embed=embed)
 
     @app_commands.command(name="explain", description="Explain a topic like you're 12")
+    @app_commands.checks.cooldown(1, 15.0, key=lambda i: i.user.id)
     async def explain(self, interaction: discord.Interaction, topic: str):
         self.bot.increment_command('explain')
         await interaction.response.defer()
@@ -86,6 +89,7 @@ class AIFeatures(commands.Cog):
         await interaction.followup.send(embed=embed)
 
     @app_commands.command(name="code", description="Generate a code snippet")
+    @app_commands.checks.cooldown(1, 30.0, key=lambda i: i.user.id)
     async def code(self, interaction: discord.Interaction, language: str, description: str):
         self.bot.increment_command('code')
         await interaction.response.defer()
@@ -99,6 +103,7 @@ class AIFeatures(commands.Cog):
         await interaction.followup.send(embed=embed)
 
     @app_commands.command(name="debug", description="Find bugs in your code")
+    @app_commands.checks.cooldown(1, 30.0, key=lambda i: i.user.id)
     async def debug(self, interaction: discord.Interaction, code: str):
         self.bot.increment_command('debug')
         await interaction.response.defer()
@@ -113,6 +118,7 @@ class AIFeatures(commands.Cog):
         await interaction.followup.send(embed=embed)
 
     @app_commands.command(name="story", description="AI writes a short story (150-200 words)")
+    @app_commands.checks.cooldown(1, 30.0, key=lambda i: i.user.id)
     async def story(self, interaction: discord.Interaction, prompt: str):
         self.bot.increment_command('story')
         await interaction.response.defer()
@@ -127,6 +133,7 @@ class AIFeatures(commands.Cog):
         await interaction.followup.send(embed=embed)
 
     @app_commands.command(name="poem", description="AI writes a short poem (8-12 lines)")
+    @app_commands.checks.cooldown(1, 30.0, key=lambda i: i.user.id)
     async def poem(self, interaction: discord.Interaction, topic: str):
         self.bot.increment_command('poem')
         await interaction.response.defer()
@@ -140,11 +147,12 @@ class AIFeatures(commands.Cog):
         await interaction.followup.send(embed=embed)
 
     @app_commands.command(name="advice", description="Blunt, sarcastic but actually useful advice")
+    @app_commands.checks.cooldown(1, 15.0, key=lambda i: i.user.id)
     async def advice(self, interaction: discord.Interaction, situation: str):
         self.bot.increment_command('advice')
         await interaction.response.defer()
         result = await self._ai_call(
-            "You are ao, a Discord bot. The user is describing a situation. Give blunt, sarcastic but genuinely useful advice in 3-5 sentences. Lowercase, casual tone. No emojis.",
+            "You are cyn, a Discord bot. The user is describing a situation. Give blunt, sarcastic but genuinely useful advice in 3-5 sentences. Lowercase, casual tone. No emojis.",
             situation,
             temperature=0.85,
             max_tokens=300
@@ -154,6 +162,7 @@ class AIFeatures(commands.Cog):
         await interaction.followup.send(embed=embed)
 
     @app_commands.command(name="define", description="Define a word with etymology + example")
+    @app_commands.checks.cooldown(1, 15.0, key=lambda i: i.user.id)
     async def define(self, interaction: discord.Interaction, word: str):
         self.bot.increment_command('define')
         await interaction.response.defer()
@@ -167,6 +176,7 @@ class AIFeatures(commands.Cog):
         await interaction.followup.send(embed=embed)
 
     @app_commands.command(name="tldr", description="TLDR of the last 15 messages in this channel")
+    @app_commands.checks.cooldown(1, 20.0, key=lambda i: i.user.id)
     async def tldr(self, interaction: discord.Interaction):
         self.bot.increment_command('tldr')
         await interaction.response.defer()
@@ -198,6 +208,7 @@ class AIFeatures(commands.Cog):
         await interaction.followup.send(embed=embed)
 
     @app_commands.command(name="roast_server", description="AI roasts the current server")
+    @app_commands.checks.cooldown(1, 10.0, key=lambda i: i.user.id)
     async def roast_server(self, interaction: discord.Interaction):
         self.bot.increment_command('roast_server')
         await interaction.response.defer()

@@ -356,21 +356,28 @@ class Fun(commands.Cog):
         embed.add_field(name="Answer", value=random.choice(self.ball_responses), inline=False)
         await interaction.response.send_message(embed=embed)
 
-    @app_commands.command(name="meme", description="Random meme")
+    @app_commands.command(name="meme", description="Random meme from r/dankmemes")
     async def meme(self, interaction: discord.Interaction):
         self.bot.increment_command('meme')
         try:
             async with aiohttp.ClientSession() as session:
-                async with session.get('https://meme-api.com/gimme') as r:
+                async with session.get('https://meme-api.com/gimme/dankmemes') as r:
                     if r.status == 200:
                         data = await r.json()
-                        embed = discord.Embed(title=data['title'], color=0x1a1a2e)
-                        embed.set_image(url=data['url'])
-                        embed.set_footer(text=f"r/{data['subreddit']} • 👍 {data['ups']}")
+                        embed = discord.Embed(
+                            title=data.get('title', 'meme'),
+                            url=data.get('postLink', ''),
+                            color=0xe91e63
+                        )
+                        embed.set_image(url=data.get('url', ''))
+                        author = data.get('author', 'unknown')
+                        subreddit = data.get('subreddit', 'dankmemes')
+                        ups = data.get('ups', 0)
+                        embed.set_footer(text=f"u/{author} · r/{subreddit} • 👍 {ups}")
                         await interaction.response.send_message(embed=embed)
                     else:
                         await interaction.response.send_message("Couldn't fetch meme.", ephemeral=True)
-        except:
+        except Exception:
             await interaction.response.send_message("Failed to fetch meme.", ephemeral=True)
 
     @app_commands.command(name="joke", description="Get a random joke")
@@ -392,6 +399,7 @@ class Fun(commands.Cog):
         await interaction.response.send_message(embed=embed)
 
     @app_commands.command(name="ship", description="Ship two users together")
+    @app_commands.checks.cooldown(1, 10.0, key=lambda i: i.user.id)
     async def ship(
         self,
         interaction: discord.Interaction,
@@ -438,11 +446,12 @@ class Fun(commands.Cog):
         await interaction.response.send_message(embed=embed)
 
     @app_commands.command(name="rate", description="Rate anything out of 10 with a sarcastic one-liner")
+    @app_commands.checks.cooldown(1, 10.0, key=lambda i: i.user.id)
     async def rate(self, interaction: discord.Interaction, thing: str):
         self.bot.increment_command('rate')
         score = random.randint(0, 10)
         comment = await self._ai_one_liner(
-            f"You are ao, a sarcastic Discord bot. Rate '{thing}' a {score}/10 with one short sarcastic one-liner. Lowercase, casual, max 20 words. No emojis.",
+            f"You are cyn, a sarcastic Discord bot. Rate '{thing}' a {score}/10 with one short sarcastic one-liner. Lowercase, casual, max 20 words. No emojis.",
             thing
         )
         embed = discord.Embed(
@@ -482,6 +491,7 @@ class Fun(commands.Cog):
         await interaction.response.send_message(result)
 
     @app_commands.command(name="compliment", description="Give a genuine funny compliment")
+    @app_commands.checks.cooldown(1, 10.0, key=lambda i: i.user.id)
     async def compliment(self, interaction: discord.Interaction, user: discord.Member = None):
         self.bot.increment_command('compliment')
         target = user or interaction.user
@@ -500,6 +510,7 @@ class Fun(commands.Cog):
         await interaction.response.send_message(embed=embed)
 
     @app_commands.command(name="roastme", description="Roast yourself")
+    @app_commands.checks.cooldown(1, 10.0, key=lambda i: i.user.id)
     async def roastme(self, interaction: discord.Interaction):
         self.bot.increment_command('roastme')
         target = interaction.user
@@ -539,6 +550,7 @@ class Fun(commands.Cog):
                 pass
 
     @app_commands.command(name="howsmart", description="Check how smart a user is")
+    @app_commands.checks.cooldown(1, 10.0, key=lambda i: i.user.id)
     async def howsmart(self, interaction: discord.Interaction, user: discord.Member = None):
         self.bot.increment_command('howsmart')
         target = user or interaction.user
@@ -640,6 +652,39 @@ class Fun(commands.Cog):
             "What do you think happens after death?",
             "If you could master any one skill instantly, what would it be?",
             "What's a truth most people aren't willing to admit?",
+            "What's the weirdest dream you've ever had?",
+            "If you could have dinner with anyone dead or alive, who would it be?",
+            "What's a movie everyone loves that you can't stand?",
+            "What's the most embarrassing phase you went through?",
+            "If you could relive one day of your life, which would it be?",
+            "What's a small thing that brings you unreasonable joy?",
+            "What's the worst advice you've ever received?",
+            "If you could teleport anywhere right now, where would you go?",
+            "What's a hobby you've always wanted to try but haven't?",
+            "What's the strangest food combination you actually enjoy?",
+            "If you had to teach a college class on any topic, what would it be?",
+            "What's a controversial opinion you stand behind?",
+            "What's the most spontaneous thing you've ever done?",
+            "If you could un-invent one thing, what would it be?",
+            "What's a song that instantly puts you in a good mood?",
+            "What's the best lesson you've learned the hard way?",
+            "If you could swap lives with anyone for a day, who would it be?",
+            "What's something you're irrationally afraid of?",
+            "What's the best gift you've ever received?",
+            "If you could only eat one cuisine for the rest of your life, what would it be?",
+            "What's a trend you never understood?",
+            "What's the most useless talent you have?",
+            "If you could time travel to any era, when would you go?",
+            "What's a book that changed how you think?",
+            "What's the worst haircut you've ever had?",
+            "If you could have any superpower for one day, what would it be?",
+            "What's something you're proud of that you don't talk about?",
+            "What's the most beautiful place you've ever been?",
+            "If you could be fluent in any language instantly, which would you pick?",
+            "What's a small kindness someone did for you that you never forgot?",
+            "What's the craziest thing on your bucket list?",
+            "If you had to describe yourself in three words, what would they be?",
+            "What's a question you wish people asked you more often?",
         ]
         embed = discord.Embed(
             description=random.choice(topics),
@@ -661,6 +706,162 @@ class Fun(commands.Cog):
         msg = await interaction.original_response()
         await msg.add_reaction("🅰️")
         await msg.add_reaction("🅱️")
+
+    # ==================== NEW FUN COMMANDS ====================
+
+    @app_commands.command(name="pp", description="Measure PP size with an AI comment")
+    @app_commands.checks.cooldown(1, 10.0, key=lambda i: i.user.id)
+    async def pp(self, interaction: discord.Interaction, user: discord.Member = None):
+        self.bot.increment_command('pp')
+        target = user or interaction.user
+        size = random.randint(1, 20)
+        bar = "8" + "=" * size + "D"
+        comment = await self._ai_one_liner(
+            "You are cyn, a sarcastic Discord bot. Make a single short funny comment about this PP size measurement. Lowercase, casual, max 15 words. No emojis.",
+            f"{target.display_name} got {size}/20 inches. Bar: {bar}"
+        )
+        embed = discord.Embed(
+            title=f"📏 {target.display_name}'s PP",
+            description=f"```\n{bar}\n```\n**Size:** {size}/20 inches",
+            color=0xe91e63
+        )
+        if comment:
+            embed.set_footer(text=comment)
+        await interaction.response.send_message(embed=embed)
+
+    @app_commands.command(name="iq", description="Measure IQ with an AI comment")
+    @app_commands.checks.cooldown(1, 10.0, key=lambda i: i.user.id)
+    async def iq(self, interaction: discord.Interaction, user: discord.Member = None):
+        self.bot.increment_command('iq')
+        target = user or interaction.user
+        score = random.randint(1, 200)
+        if score < 70:
+            tier = "yikes. that's rough."
+            prompt_tier = "stupid comments"
+        elif score < 120:
+            tier = "average."
+            prompt_tier = "average comments"
+        else:
+            tier = "genius tier."
+            prompt_tier = "genius comments"
+        comment = await self._ai_one_liner(
+            f"You are cyn, a sarcastic Discord bot. Make a single short funny comment about {target.display_name} having an IQ of {score} ({prompt_tier}). Lowercase, casual, max 15 words. No emojis.",
+            f"{target.display_name} IQ: {score}"
+        )
+        embed = discord.Embed(
+            title=f"🧠 {target.display_name}'s IQ",
+            description=f"**{score}** — {tier}",
+            color=0x5865f2
+        )
+        if comment:
+            embed.set_footer(text=comment)
+        await interaction.response.send_message(embed=embed)
+
+    @app_commands.command(name="rizz", description="Get a random rizz line")
+    async def rizz(self, interaction: discord.Interaction):
+        self.bot.increment_command('rizz')
+        rizz_lines = [
+            "are you a magician? because every time i look at you, everyone else disappears.",
+            "do you have a map? i keep getting lost in your eyes.",
+            "is your name google? because you've got everything i've been searching for.",
+            "are you french? because eiffel for you.",
+            "do you have a band-aid? because i just scraped my knee falling for you.",
+            "are you wi-fi? because i'm feeling a connection.",
+            "did the sun come out, or did you just smile at me?",
+            "are you a parking ticket? because you've got 'fine' written all over you.",
+            "if beauty were time, you'd be eternity.",
+            "are you a bank loan? because you got my interest.",
+            "is your dad a baker? because you're a cutie pie.",
+            "do you play soccer? because you're a keeper.",
+            "i'm not a photographer, but i can picture us together.",
+            "if you were a triangle, you'd be acute one.",
+            "are you made of copper and tellurium? because you're cu-te.",
+            "is your name waldo? because someone like you is hard to find.",
+            "did you swallow magnets? because you're attractive.",
+            "are you a keyboard? because you're just my type.",
+            "if i could rearrange the alphabet, i'd put u and i together.",
+            "are you a power outage? because you light up my world.",
+            "do you have a sunburn, or are you always this hot?",
+            "are you a time traveler? because i can see you in my future.",
+            "is your dad an alien? because there's nothing else like you on earth.",
+            "are you a haunted house? because i'm screaming inside.",
+            "did it hurt? when you fell from heaven?",
+            "are you a snowstorm? because you're making me melt.",
+            "are you a cat? because you're purr-fect.",
+            "if you were a fruit, you'd be a fine-apple.",
+            "are you an elevator? because you lift me up.",
+            "do you like star wars? because yoda only one for me.",
+            "are you a volcano? because i lava you.",
+            "i'd say god bless you, but it looks like he already did.",
+            "are you a gardener? because i'd dig you.",
+            "is your name hope? because you're my only one.",
+            "if kisses were snowflakes, i'd send you a blizzard.",
+        ]
+        embed = discord.Embed(
+            title="😏 Rizz",
+            description=random.choice(rizz_lines),
+            color=0xe91e63
+        )
+        await interaction.response.send_message(embed=embed)
+
+    @app_commands.command(name="battle", description="AI narrates a funny battle between you and a target")
+    @app_commands.checks.cooldown(1, 15.0, key=lambda i: i.user.id)
+    async def battle(self, interaction: discord.Interaction, user: discord.Member):
+        self.bot.increment_command('battle')
+        if user.id == interaction.user.id:
+            await interaction.response.send_message("you can't battle yourself. well, you can, but it's sad.", ephemeral=True)
+            return
+        if user.bot:
+            await interaction.response.send_message("bots don't battle. we just judge.", ephemeral=True)
+            return
+        await interaction.response.defer()
+        result = await self._ai_one_liner(
+            f"Write a very short funny battle scene between {interaction.user.display_name} and {user.display_name}. 3-4 sentences. Be creative and absurd. Someone wins at the end. Lowercase, casual tone. No emojis.",
+            f"{interaction.user.display_name} vs {user.display_name}"
+        )
+        if not result:
+            result = f"{interaction.user.mention} swung first. {user.mention} dodged, tripped, and somehow won. weird."
+        embed = discord.Embed(
+            title="⚔️ Battle",
+            description=result,
+            color=0xed4245
+        )
+        embed.set_footer(text=f"{interaction.user.display_name} vs {user.display_name}")
+        await interaction.followup.send(embed=embed)
+
+    @app_commands.command(name="vibe", description="AI describes the current channel vibe")
+    @app_commands.checks.cooldown(1, 20.0, key=lambda i: i.user.id)
+    async def vibe(self, interaction: discord.Interaction):
+        self.bot.increment_command('vibe')
+        await interaction.response.defer()
+        # Fetch last 10 non-bot messages
+        messages = []
+        try:
+            async for m in interaction.channel.history(limit=30):
+                if not m.author.bot and m.content:
+                    messages.append(f"{m.author.display_name}: {m.content}")
+                if len(messages) >= 10:
+                    break
+        except Exception as e:
+            await interaction.followup.send(f"couldn't read messages: {e}")
+            return
+        if not messages:
+            await interaction.followup.send("no recent messages to read the vibe.")
+            return
+        transcript = "\n".join(reversed(messages))
+        result = await self._ai_one_liner(
+            "Based on these Discord messages, describe the current vibe of this chat in one short sarcastic sentence. Lowercase, casual, max 25 words. No emojis.",
+            transcript
+        )
+        if not result:
+            result = "the vibe is... present. that's the best i can say."
+        embed = discord.Embed(
+            title="🔮 Vibe Check",
+            description=result,
+            color=0x9b59b6
+        )
+        embed.set_footer(text=f"based on {len(messages)} recent messages")
+        await interaction.followup.send(embed=embed)
 
 
 async def setup(bot):

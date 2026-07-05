@@ -28,7 +28,7 @@ class BotStatus(commands.Cog):
             "Watching the night unfold",
             "Competing in the tournament of chaos",
             "Listening to silence",
-            "Playing ao — /help",
+            "Playing cyn — /help",
         ]
     
     def cog_unload(self):

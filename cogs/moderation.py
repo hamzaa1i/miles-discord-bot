@@ -2,6 +2,7 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 from datetime import timedelta
+import asyncio
 from utils.database import Database
 
 
@@ -356,6 +357,137 @@ class Moderation(commands.Cog):
         except discord.Forbidden:
             await interaction.response.send_message("i don't have permission.", ephemeral=True)
 
+    # ==================== NEW MODERATION COMMANDS ====================
+
+    @mod.command(name="hide", description="Hide a channel from @everyone")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def mod_hide(self, interaction: discord.Interaction, channel: discord.TextChannel = None):
+        self.bot.increment_command('mod_hide')
+        target = channel or interaction.channel
+        try:
+            overwrite = target.overwrites_for(interaction.guild.default_role)
+            overwrite.view_channel = False
+            await target.set_permissions(
+                interaction.guild.default_role,
+                overwrite=overwrite,
+                reason=f"Channel hidden by {interaction.user}"
+            )
+            embed = discord.Embed(
+                description=f"🙈 {target.mention} is now hidden from @everyone.",
+                color=0xe67e22
+            )
+            await interaction.response.send_message(embed=embed)
+        except discord.Forbidden:
+            try:
+                await interaction.response.send_message("i don't have permission.", ephemeral=True)
+            except discord.InteractionResponded:
+                await interaction.followup.send("i don't have permission.", ephemeral=True)
+
+    @mod.command(name="show", description="Show a channel to @everyone")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def mod_show(self, interaction: discord.Interaction, channel: discord.TextChannel = None):
+        self.bot.increment_command('mod_show')
+        target = channel or interaction.channel
+        try:
+            overwrite = target.overwrites_for(interaction.guild.default_role)
+            overwrite.view_channel = None  # reset to neutral (not True)
+            await target.set_permissions(
+                interaction.guild.default_role,
+                overwrite=overwrite,
+                reason=f"Channel shown by {interaction.user}"
+            )
+            embed = discord.Embed(
+                description=f"👀 {target.mention} is now visible to @everyone.",
+                color=0x57f287
+            )
+            await interaction.response.send_message(embed=embed)
+        except discord.Forbidden:
+            try:
+                await interaction.response.send_message("i don't have permission.", ephemeral=True)
+            except discord.InteractionResponded:
+                await interaction.followup.send("i don't have permission.", ephemeral=True)
+
+    # /mod massrole is a subcommand group (add / remove) — no parent command body needed
+    massrole_sub = app_commands.Group(name="massrole", description="Mass-role management", parent=mod)
+
+    @massrole_sub.command(name="add", description="Add a role to every member of the server")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def massrole_add(self, interaction: discord.Interaction, role: discord.Role):
+        self.bot.increment_command('mod_massrole_add')
+        if role.position >= interaction.guild.me.top_role.position:
+            await interaction.response.send_message(
+                "i can't assign that role — it's above my top role.", ephemeral=True
+            )
+            return
+        await interaction.response.send_message("starting, this will take a while...")
+        count = 0
+        failed = 0
+        for member in interaction.guild.members:
+            if role not in member.roles:
+                try:
+                    await member.add_roles(role, reason=f"Mass-role by {interaction.user}")
+                    count += 1
+                except Exception:
+                    failed += 1
+                await asyncio.sleep(0.5)
+        msg = await interaction.original_response()
+        try:
+            await msg.edit(content=f"done. added {role.mention} to {count} members." + (f" ({failed} failed)" if failed else ""))
+        except Exception:
+            pass
+
+    @massrole_sub.command(name="remove", description="Remove a role from every member of the server")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def massrole_remove(self, interaction: discord.Interaction, role: discord.Role):
+        self.bot.increment_command('mod_massrole_remove')
+        if role.position >= interaction.guild.me.top_role.position:
+            await interaction.response.send_message(
+                "i can't remove that role — it's above my top role.", ephemeral=True
+            )
+            return
+        await interaction.response.send_message("starting, this will take a while...")
+        count = 0
+        failed = 0
+        for member in interaction.guild.members:
+            if role in member.roles:
+                try:
+                    await member.remove_roles(role, reason=f"Mass-role removal by {interaction.user}")
+                    count += 1
+                except Exception:
+                    failed += 1
+                await asyncio.sleep(0.5)
+        msg = await interaction.original_response()
+        try:
+            await msg.edit(content=f"done. removed {role.mention} from {count} members." + (f" ({failed} failed)" if failed else ""))
+        except Exception:
+            pass
+
+    @mod.command(name="case", description="Look up a warning case by number")
+    @app_commands.checks.has_permissions(moderate_members=True)
+    async def mod_case(self, interaction: discord.Interaction, number: int):
+        self.bot.increment_command('mod_case')
+        data = self.db.get(str(interaction.guild.id), {'actions': [], 'warnings': {}})
+        actions = data.get('actions', [])
+        # Cases are 1-indexed in display order
+        if number < 1 or number > len(actions):
+            await interaction.response.send_message(
+                f"no case with that number. only {len(actions)} cases logged.",
+                ephemeral=True
+            )
+            return
+        case = actions[number - 1]
+        embed = discord.Embed(
+            title=f"📋 Case #{number}",
+            color=0xe67e22,
+            timestamp=discord.utils.utcnow()
+        )
+        embed.add_field(name="Action", value=case.get('action', 'unknown').title(), inline=True)
+        embed.add_field(name="Target", value=case.get('target', 'unknown'), inline=True)
+        embed.add_field(name="Moderator", value=case.get('moderator', 'unknown'), inline=True)
+        embed.add_field(name="Reason", value=case.get('reason', 'no reason'), inline=False)
+        embed.add_field(name="Timestamp", value=case.get('timestamp', 'unknown'), inline=False)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
 
 class NukeConfirmView(discord.ui.View):
     def __init__(self, author: discord.Member):
@@ -365,7 +497,13 @@ class NukeConfirmView(discord.ui.View):
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.author.id:
-            await interaction.response.send_message("not your nuke.", ephemeral=True)
+            try:
+                await interaction.response.send_message("not your nuke.", ephemeral=True)
+            except discord.InteractionResponded:
+                try:
+                    await interaction.followup.send("not your nuke.", ephemeral=True)
+                except Exception:
+                    pass
             return False
         return True
 
@@ -374,14 +512,20 @@ class NukeConfirmView(discord.ui.View):
         self.confirmed = True
         for child in self.children:
             child.disabled = True
-        await interaction.response.edit_message(content="nuking...", view=self)
+        try:
+            await interaction.response.edit_message(content="nuking...", view=self)
+        except (discord.NotFound, discord.InteractionResponded):
+            pass
         self.stop()
 
     @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary, row=0)
     async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
         for child in self.children:
             child.disabled = True
-        await interaction.response.edit_message(content="cancelled.", view=self)
+        try:
+            await interaction.response.edit_message(content="cancelled.", view=self)
+        except (discord.NotFound, discord.InteractionResponded):
+            pass
         self.stop()
 
 

@@ -78,7 +78,7 @@ class RPSView(discord.ui.View):
 
         embed = discord.Embed(description=result, color=color)
         embed.add_field(name="You", value=f"{emoji[choice]} {choice.title()}", inline=True)
-        embed.add_field(name="ao", value=f"{emoji[bot_choice]} {bot_choice.title()}", inline=True)
+        embed.add_field(name="cyn", value=f"{emoji[bot_choice]} {bot_choice.title()}", inline=True)
 
         for child in self.children:
             child.disabled = True

@@ -20,7 +20,7 @@ logging.basicConfig(
         logging.StreamHandler()
     ]
 )
-logger = logging.getLogger('ao')
+logger = logging.getLogger('cyn')
 
 # Owner ID from env (used everywhere)
 OWNER_ID = int(os.getenv('OWNER_ID', '0'))
@@ -36,9 +36,9 @@ bot = None  # set after bot is created
 @app.route('/')
 def home():
     return f"""<!doctype html>
-<html><head><title>ao</title></head>
+<html><head><title>cyn</title></head>
 <body style="font-family: sans-serif; text-align: center; padding: 60px; background:#0f0f1a; color:#e0e0e0;">
-  <h1 style="font-size: 48px; margin: 0;">ao is online ✅</h1>
+  <h1 style="font-size: 48px; margin: 0;">cyn is online ✅</h1>
   <p style="color:#888;">uptime since {start_time.isoformat()}</p>
   <p style="color:#666;">{datetime.utcnow().isoformat()} UTC</p>
 </body></html>"""
@@ -90,15 +90,15 @@ intents.members = True
 intents.presences = True
 
 
-# ==================== FIX 1 — Data Directory Auto-Creation ====================
-DATA_FILES = [
+# ==================== FIX 5 — Data Directory and Files ====================
+DEFAULT_DATA_FILES = [
     "economy.json", "levels.json", "welcome.json", "logs.json",
     "autorespond.json", "reaction_roles.json", "afk.json",
     "reminders.json", "notes.json", "todos.json", "warnings.json",
     "tickets.json", "suggestions.json", "giveaways.json",
     "birthdays.json", "starboard.json", "counting.json",
     "reputation.json", "marriages.json", "polls.json",
-    "buttonroles.json",
+    "buttonroles.json", "customcmds.json", "snipe.json",
     # extras that cogs actually use
     "moderation.json", "leveling.json", "level_config.json",
     "server_logs.json", "dm_prefs.json", "giveaway.json",
@@ -112,7 +112,7 @@ def ensure_data_files():
     """Create the /data directory and every default JSON file if missing.
     Runs on import and again in on_ready so it works on cold Render boots."""
     os.makedirs("data", exist_ok=True)
-    for fname in DATA_FILES:
+    for fname in DEFAULT_DATA_FILES:
         path = os.path.join("data", fname)
         if not os.path.exists(path):
             try:
@@ -126,7 +126,7 @@ def ensure_data_files():
 ensure_data_files()
 
 
-class AoBot(commands.Bot):
+class CynBot(commands.Bot):
     def __init__(self):
         super().__init__(
             command_prefix=['!'],
@@ -148,32 +148,32 @@ class AoBot(commands.Bot):
     async def setup_hook(self):
         logger.info("Loading cogs...")
 
-        # Dynamically scan /cogs for every .py file (excluding __init__.py
-        # and any *_disabled.py files) so all current + future cogs are
-        # auto-loaded.
+        # FIX 3 — Cog Loading Visibility: explicit loader with traceback on failure.
+        # Scans /cogs for every .py file, skipping __init__.py and *_disabled.py.
         cogs_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'cogs')
-        cogs = []
-        if os.path.isdir(cogs_dir):
-            for fname in sorted(os.listdir(cogs_dir)):
-                if fname.endswith('.py') and fname != '__init__.py' and not fname.endswith('_disabled.py'):
-                    cogs.append(f'cogs.{fname[:-3]}')
+        if not os.path.isdir(cogs_dir):
+            logger.error("cogs/ directory not found")
+            return
 
-        for cog in cogs:
-            try:
-                await self.load_extension(cog)
-                logger.info(f"✅ Loaded: {cog}")
-            except Exception as e:
-                logger.error(f"❌ Failed to load {cog}: {e}", exc_info=True)
-
-        # Note: command sync happens in on_ready (gated by self.synced) so
-        # we have the proper application ID available.
+        for filename in sorted(os.listdir(cogs_dir)):
+            if filename.endswith(".py") and not filename.endswith("_disabled.py") and filename != "__init__.py":
+                cog_name = filename[:-3]
+                try:
+                    await self.load_extension(f"cogs.{cog_name}")
+                    print(f"✅ Loaded: {filename}")
+                    logger.info(f"✅ Loaded: cogs.{cog_name}")
+                except Exception as e:
+                    import traceback
+                    print(f"❌ Failed to load {filename}: {type(e).__name__}: {e}")
+                    traceback.print_exc()
+                    logger.error(f"❌ Failed to load cogs.{cog_name}: {e}", exc_info=True)
 
     async def on_ready(self):
         logger.info(f"🤖 {self.user} is online!")
         logger.info(f"📊 {len(self.guilds)} servers | {len(self.users)} users")
         logger.info("=" * 50)
 
-        # FIX 1 — make absolutely sure data files exist on every ready
+        # FIX 5 — make absolutely sure data files exist on every ready
         ensure_data_files()
 
         # Fetch owner user object
@@ -200,32 +200,31 @@ class AoBot(commands.Bot):
                 self.synced = True
 
         # Start cycling status every 5 minutes
-        if not self.cycling_status.is_running():
-            self.cycling_status.start()
+        if not self.change_status.is_running():
+            self.change_status.start()
 
+    # POLISH 6 — Status Cycling with real live data
     @tasks.loop(minutes=5)
-    async def cycling_status(self):
-        """Cycle bot status every 5 minutes."""
+    async def change_status(self):
+        """Cycle bot status every 5 minutes using real live guild/user counts."""
         try:
-            guild_count = len(self.guilds)
-            user_count = sum(g.member_count for g in self.guilds)
-            cycle = [
+            statuses = [
                 discord.Activity(type=discord.ActivityType.watching,
-                                 name=f"over {guild_count} servers"),
+                                 name=f"{len(self.guilds)} servers"),
                 discord.Activity(type=discord.ActivityType.listening,
-                                 name="@ao"),
+                                 name="@cyn"),
                 discord.Activity(type=discord.ActivityType.playing,
-                                 name=f"with {user_count} users"),
+                                 name=f"with {sum(g.member_count for g in self.guilds)} users"),
                 discord.Activity(type=discord.ActivityType.competing,
                                  name="being the best bot"),
             ]
-            idx = int((datetime.utcnow() - self.start_time).total_seconds() // 300) % len(cycle)
-            await self.change_presence(activity=cycle[idx], status=discord.Status.online)
+            idx = self.change_status.current_loop % len(statuses)
+            await self.change_presence(activity=statuses[idx])
         except Exception as e:
             logger.error(f"Status cycle error: {e}")
 
-    @cycling_status.before_loop
-    async def before_cycling_status(self):
+    @change_status.before_loop
+    async def before_change_status(self):
         await self.wait_until_ready()
 
     # FIX 6 (part 1) — regular prefix-command error handler
@@ -256,11 +255,10 @@ class AoBot(commands.Bot):
             except:
                 pass
             return
-        # Otherwise log and re-raise so we notice real bugs
         logger.error(f"Error in {ctx.command}: {error}", exc_info=error)
 
 
-bot = AoBot()
+bot = CynBot()
 
 
 # FIX 6 (part 2) — global slash-command error handler
@@ -357,7 +355,7 @@ async def uptime(ctx):
 
     embed = discord.Embed(
         description=f"Running for **{days}d {hours}h {minutes}m {seconds}s**",
-        color=0x1a1a2e
+        color=0x2b2d31
     )
     await ctx.send(embed=embed)
 
@@ -375,7 +373,7 @@ async def botinfo(ctx):
     import discord as _discord
     owner_str = str(bot.owner_user) if bot.owner_user else "volc"
 
-    embed = discord.Embed(title="ao", color=0x1a1a2e)
+    embed = discord.Embed(title="cyn", color=0x2b2d31)
     embed.set_thumbnail(url=bot.user.avatar.url if bot.user.avatar else None)
     embed.add_field(name="Owner", value=owner_str, inline=True)
     embed.add_field(name="Servers", value=f"{len(bot.guilds):,}", inline=True)
@@ -386,7 +384,7 @@ async def botinfo(ctx):
     embed.add_field(name="discord.py", value=_discord.__version__, inline=True)
     embed.add_field(name="Python", value=f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}", inline=True)
     embed.add_field(name="Uptime", value=uptime_str, inline=True)
-    embed.set_footer(text="ao — built by volc")
+    embed.set_footer(text="cyn — built by volc")
     await ctx.send(embed=embed)
 
 

@@ -147,7 +147,7 @@ class ModMail(commands.Cog):
                 ephemeral=True
             )
     
-    @app_commands.command(name="announce", description="Send announcement to all members via DM")
+    @app_commands.command(name="massdm", description="Mass-DM an announcement to all members (or a role)")
     @app_commands.checks.has_permissions(administrator=True)
     async def announce(
         self,
