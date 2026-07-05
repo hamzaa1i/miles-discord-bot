@@ -1,8 +1,19 @@
+"""
+cogs/welcome.py — welcome & goodbye system with command groups + autorole.
+
+Backward-compatibility notes:
+- The existing /welcome_setup, /welcome_test, /goodbye_toggle, /toggledms
+  commands are kept (they were in the old version).
+- New /welcome and /goodbye slash command groups are added per Step 8.
+- /autorole is added to set the role assigned to new members on join.
+- Welcome & goodbye messages are now embeds with the user's avatar as thumbnail.
+"""
 import discord
 from discord.ext import commands
 from discord import app_commands
 from datetime import datetime
 from utils.database import Database
+
 
 class Welcome(commands.Cog):
     def __init__(self, bot):
@@ -11,17 +22,18 @@ class Welcome(commands.Cog):
         self.economy_db = Database('data/economy.json')
         self.dm_prefs_db = Database('data/dm_prefs.json')
 
-        # Track who has been welcomed recently
         self.pending_welcomes = {}
-        # Track who has been notified about safe mode
         self.safe_mode_notified = set()
 
     def get_config(self, guild_id: int) -> dict:
         return self.db.get(str(guild_id), {
             'enabled': False,
             'channel_id': None,
-            'message': 'Welcome {user} to {server}!',
+            'message': 'Welcome {user} to {server}! You are member #{membercount}.',
             'goodbye_enabled': False,
+            'goodbye_channel_id': None,
+            'goodbye_message': "Goodbye {user}, we'll miss you.",
+            'autorole_id': None,
             'welcome_reward': 500,
             'welcomer_reward': 1000
         })
@@ -38,37 +50,27 @@ class Welcome(commands.Cog):
 
     def get_economy_data(self, user_id: int) -> dict:
         return self.economy_db.get(str(user_id), {
-            'balance': 0,
-            'bank': 0,
-            'total_earned': 0,
-            'inventory': []
+            'balance': 0, 'bank': 0, 'total_earned': 0, 'inventory': []
         })
 
     def save_economy_data(self, user_id: int, data: dict):
         self.economy_db.set(str(user_id), data)
 
     def get_total_earned(self, user_id: int) -> int:
-        data = self.get_economy_data(user_id)
-        return data.get('total_earned', 0)
+        return self.get_economy_data(user_id).get('total_earned', 0)
 
-    async def send_safe_mode_notification(
-        self,
-        user: discord.Member,
-        guild: discord.Guild,
-        total_earned: int
-    ):
-        """Send safe mode disabled notification when user earns 10k+"""
-        if user.id in self.safe_mode_notified:
+    def _format_welcome(self, template: str, member: discord.Member) -> str:
+        return template.format(
+            user=member.mention,
+            user_id=member.id,
+            server=member.guild.name,
+            membercount=member.guild.member_count,
+        )
+
+    async def send_safe_mode_notification(self, user, guild, total_earned):
+        if user.id in self.safe_mode_notified or total_earned < 10000 or not self.wants_dms(user.id):
             return
-
-        if total_earned < 10000:
-            return
-
-        if not self.wants_dms(user.id):
-            return
-
         self.safe_mode_notified.add(user.id)
-
         embed = discord.Embed(
             description=(
                 f"Congrats on earning more than ⭐10,000 coins in **{guild.name}**!\n\n"
@@ -79,44 +81,68 @@ class Welcome(commands.Cog):
             ),
             color=0x1a1a2e
         )
-        embed.set_footer(text=f"Type /toggledms to disable future DMs from ao")
-
+        embed.set_footer(text="Type /toggledms to disable future DMs from ao")
         try:
             await user.send(embed=embed)
         except:
             pass
 
+    # ==================== LISTENERS ====================
+
     @commands.Cog.listener()
     async def on_member_join(self, member: discord.Member):
-        """Track when someone joins - wait for others to welcome them"""
         config = self.get_config(member.guild.id)
-        if not config.get('enabled'):
-            return
 
-        channel_id = config.get('channel_id')
-        if not channel_id:
-            return
+        # Autorole assignment
+        autorole_id = config.get('autorole_id')
+        if autorole_id:
+            role = member.guild.get_role(int(autorole_id))
+            if role:
+                try:
+                    await member.add_roles(role, reason="Autorole")
+                except:
+                    pass
 
-        channel = member.guild.get_channel(int(channel_id))
-        if not channel:
-            return
+        # Welcome message
+        if config.get('enabled'):
+            channel_id = config.get('channel_id')
+            if channel_id:
+                channel = member.guild.get_channel(int(channel_id))
+                if channel:
+                    msg_text = self._format_welcome(
+                        config.get('message', 'Welcome {user} to {server}!'),
+                        member
+                    )
+                    embed = discord.Embed(
+                        title=f"Welcome to {member.guild.name}!",
+                        description=msg_text,
+                        color=0x1a1a2e,
+                        timestamp=datetime.utcnow()
+                    )
+                    embed.set_thumbnail(url=member.avatar.url if member.avatar else member.default_avatar.url)
+                    embed.set_footer(text=f"User ID: {member.id}")
+                    try:
+                        await channel.send(embed=embed)
+                    except:
+                        pass
 
-        # Store pending welcome
+        # Pending welcome (for welcomer rewards)
         self.pending_welcomes[member.id] = {
             'guild_id': member.guild.id,
             'joined_at': datetime.utcnow().isoformat(),
             'welcomed_by': [],
-            'channel_id': str(channel_id)
+            'channel_id': config.get('channel_id')
         }
 
-        # Give reward to the new member for joining
+        # Welcome reward for new member
         reward = config.get('welcome_reward', 500)
-        new_user_data = self.get_economy_data(member.id)
-        new_user_data['balance'] = new_user_data.get('balance', 0) + reward
-        new_user_data['total_earned'] = new_user_data.get('total_earned', 0) + reward
-        self.save_economy_data(member.id, new_user_data)
+        if reward:
+            new_data = self.get_economy_data(member.id)
+            new_data['balance'] = new_data.get('balance', 0) + reward
+            new_data['total_earned'] = new_data.get('total_earned', 0) + reward
+            self.save_economy_data(member.id, new_data)
 
-        # DM the new member
+        # DM new member
         if self.wants_dms(member.id):
             try:
                 join_embed = discord.Embed(
@@ -134,59 +160,42 @@ class Welcome(commands.Cog):
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
-        """Detect welcome messages from users"""
         if message.author.bot or not message.guild:
             return
 
-        # Check if message mentions someone who just joined
+        # Welcomer reward logic (kept from original)
         for mentioned in message.mentions:
             if mentioned.id not in self.pending_welcomes:
                 continue
-
             pending = self.pending_welcomes[mentioned.id]
-
             if str(message.guild.id) != str(pending['guild_id']):
                 continue
-
             if message.author.id == mentioned.id:
                 continue
-
             if message.author.id in pending['welcomed_by']:
                 continue
 
-            # Check if message looks like a welcome
-            welcome_words = [
-                'welcome', 'wb', 'hey', 'hello', 'hi ', 'hii',
-                'sup', 'glad', 'join', 'greet', 'wsg', 'wsp'
-            ]
+            welcome_words = ['welcome', 'wb', 'hey', 'hello', 'hi ', 'hii', 'sup', 'glad', 'join', 'greet', 'wsg', 'wsp']
             content_lower = message.content.lower()
-
-            is_welcome = any(word in content_lower for word in welcome_words)
-
-            if not is_welcome:
+            if not any(word in content_lower for word in welcome_words):
                 continue
 
-            # Give reward to welcomer
             config = self.get_config(message.guild.id)
             welcomer_reward = config.get('welcomer_reward', 1000)
-
             welcomer_data = self.get_economy_data(message.author.id)
             welcomer_data['balance'] = welcomer_data.get('balance', 0) + welcomer_reward
             welcomer_data['total_earned'] = welcomer_data.get('total_earned', 0) + welcomer_reward
             total_earned = welcomer_data['total_earned']
             self.save_economy_data(message.author.id, welcomer_data)
 
-            # Mark as welcomed
             pending['welcomed_by'].append(message.author.id)
             self.pending_welcomes[mentioned.id] = pending
 
-            # Add reaction to their message
             try:
                 await message.add_reaction("🎉")
             except:
                 pass
 
-            # DM the welcomer
             if self.wants_dms(message.author.id):
                 try:
                     dm_embed = discord.Embed(
@@ -197,59 +206,51 @@ class Welcome(commands.Cog):
                         ),
                         color=0x1a1a2e
                     )
-                    dm_embed.set_footer(
-                        text="Type /toggledms to disable these notifications"
-                    )
+                    dm_embed.set_footer(text="Type /toggledms to disable these notifications")
                     await message.author.send(embed=dm_embed)
                 except:
                     pass
 
-            # Check safe mode threshold
-            await self.send_safe_mode_notification(
-                message.author,
-                message.guild,
-                total_earned
-            )
+            await self.send_safe_mode_notification(message.author, message.guild, total_earned)
 
     @commands.Cog.listener()
     async def on_member_remove(self, member: discord.Member):
-        """Send goodbye message"""
         config = self.get_config(member.guild.id)
-
         if not config.get('goodbye_enabled'):
             return
-
-        channel_id = config.get('channel_id')
+        channel_id = config.get('goodbye_channel_id') or config.get('channel_id')
         if not channel_id:
             return
-
         channel = member.guild.get_channel(int(channel_id))
         if not channel:
             return
 
-        # Clean up pending welcomes
         if member.id in self.pending_welcomes:
             del self.pending_welcomes[member.id]
 
+        msg_text = self._format_welcome(
+            config.get('goodbye_message', "Goodbye {user}, we'll miss you."),
+            member
+        )
         embed = discord.Embed(
-            description=f"**{member.display_name}** left.",
-            color=0x1a1a2e
+            title=f"Goodbye {member.display_name}",
+            description=msg_text,
+            color=0xff5555,
+            timestamp=datetime.utcnow()
         )
-        embed.set_thumbnail(
-            url=member.avatar.url if member.avatar else member.default_avatar.url
-        )
+        embed.set_thumbnail(url=member.avatar.url if member.avatar else member.default_avatar.url)
+        embed.set_footer(text=f"User ID: {member.id}")
+        try:
+            await channel.send(embed=embed)
+        except:
+            pass
 
-        await channel.send(embed=embed)
+    # ==================== LEGACY COMMANDS (kept for backward compat) ====================
 
     @app_commands.command(name="toggledms", description="Toggle DMs from ao")
     async def toggledms(self, interaction: discord.Interaction):
-        """Toggle DM notifications"""
-        prefs = self.dm_prefs_db.get(
-            str(interaction.user.id),
-            {'dms_enabled': True}
-        )
+        prefs = self.dm_prefs_db.get(str(interaction.user.id), {'dms_enabled': True})
         current = prefs.get('dms_enabled', True)
-
         if current:
             self.disable_dms(interaction.user.id)
             status = "disabled"
@@ -258,14 +259,13 @@ class Welcome(commands.Cog):
             self.enable_dms(interaction.user.id)
             status = "enabled"
             detail = "you'll get welcome rewards and notifications"
-
         embed = discord.Embed(
             description=f"DMs from ao are now **{status}**. {detail}.",
             color=0x1a1a2e
         )
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-    @app_commands.command(name="welcome_setup", description="Configure welcome messages")
+    @app_commands.command(name="welcome_setup", description="Quick-setup welcome (legacy)")
     @app_commands.checks.has_permissions(manage_guild=True)
     async def welcome_setup(
         self,
@@ -279,93 +279,154 @@ class Welcome(commands.Cog):
         config = self.get_config(interaction.guild.id)
         config['enabled'] = enabled
         config['channel_id'] = str(channel.id)
-        config['message'] = message or 'Welcome {user} to {server}!'
+        config['message'] = message or 'Welcome {user} to {server}! You are member #{membercount}.'
         config['welcome_reward'] = welcome_reward
         config['welcomer_reward'] = welcomer_reward
         self.db.set(str(interaction.guild.id), config)
 
-        embed = discord.Embed(
-            title="Welcome System Configured",
-            color=0x1a1a2e
-        )
+        embed = discord.Embed(title="Welcome System Configured", color=0x1a1a2e)
         embed.add_field(name="Channel", value=channel.mention, inline=True)
         embed.add_field(name="Enabled", value=str(enabled), inline=True)
-        embed.add_field(
-            name="New Member Reward",
-            value=f"${welcome_reward:,}",
-            inline=True
-        )
-        embed.add_field(
-            name="Welcomer Reward",
-            value=f"${welcomer_reward:,}",
-            inline=True
-        )
-        embed.add_field(
-            name="Variables",
-            value="`{user}` `{server}` `{count}`",
-            inline=False
-        )
-
+        embed.add_field(name="New Member Reward", value=f"${welcome_reward:,}", inline=True)
+        embed.add_field(name="Welcomer Reward", value=f"${welcomer_reward:,}", inline=True)
+        embed.add_field(name="Variables", value="`{user}` `{server}` `{membercount}` `{user_id}`", inline=False)
         await interaction.response.send_message(embed=embed)
 
     @app_commands.command(name="welcome_test", description="Test welcome message")
     @app_commands.checks.has_permissions(manage_guild=True)
     async def welcome_test(self, interaction: discord.Interaction):
         config = self.get_config(interaction.guild.id)
-
         if not config.get('enabled'):
-            await interaction.response.send_message(
-                "welcome messages not enabled.",
-                ephemeral=True
-            )
+            await interaction.response.send_message("welcome messages not enabled.", ephemeral=True)
             return
-
         channel_id = config.get('channel_id')
         if not channel_id:
-            await interaction.response.send_message(
-                "no channel configured.",
-                ephemeral=True
-            )
+            await interaction.response.send_message("no channel configured.", ephemeral=True)
             return
-
         channel = interaction.guild.get_channel(int(channel_id))
         if not channel:
-            await interaction.response.send_message(
-                "channel not found.",
-                ephemeral=True
-            )
+            await interaction.response.send_message("channel not found.", ephemeral=True)
             return
-
-        # Simulate a welcome message
-        welcomer_reward = config.get('welcomer_reward', 1000)
-
+        msg_text = self._format_welcome(config.get('message', 'Welcome {user} to {server}!'), interaction.user)
         embed = discord.Embed(
-            description=(
-                f"**Test:** {interaction.user.mention} would receive "
-                f"**${welcomer_reward:,}** for welcoming a new member."
-            ),
-            color=0x1a1a2e
+            title=f"Welcome to {interaction.guild.name}! (TEST)",
+            description=msg_text,
+            color=0x1a1a2e,
+            timestamp=datetime.utcnow()
         )
+        embed.set_thumbnail(url=interaction.user.avatar.url if interaction.user.avatar else interaction.user.default_avatar.url)
+        embed.set_footer(text="test welcome message")
         await channel.send(embed=embed)
         await interaction.response.send_message("test sent.", ephemeral=True)
 
-    @app_commands.command(name="goodbye_toggle", description="Toggle goodbye messages")
+    @app_commands.command(name="goodbye_toggle", description="Toggle goodbye messages (legacy)")
     @app_commands.checks.has_permissions(manage_guild=True)
-    async def goodbye_toggle(
-        self,
-        interaction: discord.Interaction,
-        enabled: bool
-    ):
+    async def goodbye_toggle(self, interaction: discord.Interaction, enabled: bool):
         config = self.get_config(interaction.guild.id)
         config['goodbye_enabled'] = enabled
         self.db.set(str(interaction.guild.id), config)
-
         status = "enabled" if enabled else "disabled"
-        embed = discord.Embed(
-            description=f"goodbye messages are now **{status}**",
-            color=0x1a1a2e
-        )
+        embed = discord.Embed(description=f"goodbye messages are now **{status}**", color=0x1a1a2e)
         await interaction.response.send_message(embed=embed)
+
+    # ==================== NEW COMMAND GROUPS ====================
+
+    welcome = app_commands.Group(name="welcome", description="Configure welcome messages")
+    goodbye = app_commands.Group(name="goodbye", description="Configure goodbye messages")
+
+    @welcome.command(name="channel", description="Set the welcome channel")
+    @app_commands.checks.has_permissions(manage_guild=True)
+    async def welcome_channel(self, interaction: discord.Interaction, channel: discord.TextChannel):
+        config = self.get_config(interaction.guild.id)
+        config['channel_id'] = str(channel.id)
+        self.db.set(str(interaction.guild.id), config)
+        await interaction.response.send_message(f"✅ welcome channel set to {channel.mention}")
+
+    @welcome.command(name="message", description="Set the welcome message")
+    @app_commands.checks.has_permissions(manage_guild=True)
+    async def welcome_message(self, interaction: discord.Interaction, message: str):
+        config = self.get_config(interaction.guild.id)
+        config['message'] = message
+        self.db.set(str(interaction.guild.id), config)
+        await interaction.response.send_message(
+            f"✅ welcome message set.\nvariables: `{{user}}` `{{server}}` `{{membercount}}` `{{user_id}}`"
+        )
+
+    @welcome.command(name="toggle", description="Enable/disable welcome messages")
+    @app_commands.checks.has_permissions(manage_guild=True)
+    async def welcome_toggle(self, interaction: discord.Interaction, enabled: bool):
+        config = self.get_config(interaction.guild.id)
+        config['enabled'] = enabled
+        self.db.set(str(interaction.guild.id), config)
+        status = "enabled" if enabled else "disabled"
+        await interaction.response.send_message(f"✅ welcome messages are now **{status}**")
+
+    @welcome.command(name="test", description="Trigger a test welcome message")
+    @app_commands.checks.has_permissions(manage_guild=True)
+    async def welcome_test_cmd(self, interaction: discord.Interaction):
+        config = self.get_config(interaction.guild.id)
+        channel_id = config.get('channel_id')
+        if not channel_id:
+            await interaction.response.send_message("no welcome channel set. use `/welcome channel #channel` first.", ephemeral=True)
+            return
+        channel = interaction.guild.get_channel(int(channel_id))
+        if not channel:
+            await interaction.response.send_message("configured channel not found.", ephemeral=True)
+            return
+        msg_text = self._format_welcome(config.get('message', 'Welcome {user} to {server}!'), interaction.user)
+        embed = discord.Embed(
+            title=f"Welcome to {interaction.guild.name}! (TEST)",
+            description=msg_text,
+            color=0x1a1a2e,
+            timestamp=datetime.utcnow()
+        )
+        embed.set_thumbnail(url=interaction.user.avatar.url if interaction.user.avatar else interaction.user.default_avatar.url)
+        embed.set_footer(text="test welcome message")
+        await channel.send(embed=embed)
+        await interaction.response.send_message("test sent.", ephemeral=True)
+
+    @goodbye.command(name="channel", description="Set the goodbye channel")
+    @app_commands.checks.has_permissions(manage_guild=True)
+    async def goodbye_channel(self, interaction: discord.Interaction, channel: discord.TextChannel):
+        config = self.get_config(interaction.guild.id)
+        config['goodbye_channel_id'] = str(channel.id)
+        self.db.set(str(interaction.guild.id), config)
+        await interaction.response.send_message(f"✅ goodbye channel set to {channel.mention}")
+
+    @goodbye.command(name="message", description="Set the goodbye message")
+    @app_commands.checks.has_permissions(manage_guild=True)
+    async def goodbye_message(self, interaction: discord.Interaction, message: str):
+        config = self.get_config(interaction.guild.id)
+        config['goodbye_message'] = message
+        self.db.set(str(interaction.guild.id), config)
+        await interaction.response.send_message(
+            f"✅ goodbye message set.\nvariables: `{{user}}` `{{server}}` `{{membercount}}` `{{user_id}}`"
+        )
+
+    @goodbye.command(name="toggle", description="Enable/disable goodbye messages")
+    @app_commands.checks.has_permissions(manage_guild=True)
+    async def goodbye_toggle_cmd(self, interaction: discord.Interaction, enabled: bool):
+        config = self.get_config(interaction.guild.id)
+        config['goodbye_enabled'] = enabled
+        self.db.set(str(interaction.guild.id), config)
+        status = "enabled" if enabled else "disabled"
+        await interaction.response.send_message(f"✅ goodbye messages are now **{status}**")
+
+    @app_commands.command(name="autorole", description="Set the role automatically assigned to new members")
+    @app_commands.checks.has_permissions(manage_roles=True)
+    async def autorole(self, interaction: discord.Interaction, role: discord.Role = None):
+        config = self.get_config(interaction.guild.id)
+        if role is None:
+            config['autorole_id'] = None
+            self.db.set(str(interaction.guild.id), config)
+            await interaction.response.send_message("✅ autorole disabled.")
+            return
+        if role.position >= interaction.guild.me.top_role.position:
+            await interaction.response.send_message("i can't assign that role — it's above my top role.", ephemeral=True)
+            return
+        config['autorole_id'] = str(role.id)
+        self.db.set(str(interaction.guild.id), config)
+        await interaction.response.send_message(f"✅ autorole set to {role.mention}")
 
 
 async def setup(bot):

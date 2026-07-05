@@ -1,46 +1,54 @@
+"""
+cogs/reaction_roles.py — reaction roles + button roles.
+
+Backward compatibility:
+- The original commands /reactionrole_add, /reactionrole_remove,
+  /reactionrole_list, /reactionrole_clear are kept.
+- New /reactionrole slash command group added per Step 11.
+- New /buttonrole create + /buttonrole addbutton added.
+- All data persists in data/reaction_roles.json.
+"""
 import discord
 from discord.ext import commands
 from discord import app_commands
 from utils.database import Database
 
+
 class ReactionRoles(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.db = Database('data/reaction_roles.json')
+        # Button role storage: same file, key 'button_roles' -> { message_id_str: [{role_id, label, emoji}] }
 
     def get_config(self, guild_id: int) -> dict:
         return self.db.get(str(guild_id), {})
 
+    def save_config(self, guild_id: int, config: dict):
+        self.db.set(str(guild_id), config)
+
+    # ==================== RAW REACTION LISTENERS ====================
+
     @commands.Cog.listener()
     async def on_raw_reaction_add(self, payload: discord.RawReactionActionEvent):
-        """Give role when reaction added"""
         if payload.user_id == self.bot.user.id:
             return
-
         guild = self.bot.get_guild(payload.guild_id)
         if not guild:
             return
-
         config = self.get_config(guild.id)
         message_id = str(payload.message_id)
-
         if message_id not in config:
             return
-
         emoji_str = str(payload.emoji)
         role_id = config[message_id].get(emoji_str)
-
         if not role_id:
             return
-
         role = guild.get_role(int(role_id))
         if not role:
             return
-
         member = guild.get_member(payload.user_id)
         if not member:
             return
-
         try:
             await member.add_roles(role, reason="Reaction Role")
         except:
@@ -48,43 +56,72 @@ class ReactionRoles(commands.Cog):
 
     @commands.Cog.listener()
     async def on_raw_reaction_remove(self, payload: discord.RawReactionActionEvent):
-        """Remove role when reaction removed"""
         if payload.user_id == self.bot.user.id:
             return
-
         guild = self.bot.get_guild(payload.guild_id)
         if not guild:
             return
-
         config = self.get_config(guild.id)
         message_id = str(payload.message_id)
-
         if message_id not in config:
             return
-
         emoji_str = str(payload.emoji)
         role_id = config[message_id].get(emoji_str)
-
         if not role_id:
             return
-
         role = guild.get_role(int(role_id))
         if not role:
             return
-
         member = guild.get_member(payload.user_id)
         if not member:
             return
-
         try:
             await member.remove_roles(role, reason="Reaction Role Removed")
         except:
             pass
 
-    @app_commands.command(
-        name="reactionrole_add",
-        description="Add a reaction role to a message"
-    )
+    # ==================== BUTTON ROLE INTERACTION ====================
+
+    @commands.Cog.listener()
+    async def on_interaction(self, interaction: discord.Interaction):
+        if not interaction.data or interaction.data.get('component_type') != 2:
+            return
+        custom_id = interaction.data.get('custom_id', '')
+        if not custom_id.startswith('btnrole_'):
+            return
+        # Format: btnrole_<message_id>_<role_id>
+        try:
+            parts = custom_id.split('_')
+            role_id = int(parts[-1])
+        except (ValueError, IndexError):
+            return
+        guild = interaction.guild
+        if not guild:
+            return
+        role = guild.get_role(role_id)
+        if not role:
+            await interaction.response.send_message("role not found.", ephemeral=True)
+            return
+        member = interaction.user
+        if not isinstance(member, discord.Member):
+            await interaction.response.send_message("you must be in a server.", ephemeral=True)
+            return
+        if role in member.roles:
+            try:
+                await member.remove_roles(role, reason="Button role toggle")
+                await interaction.response.send_message(f"removed {role.mention}", ephemeral=True)
+            except:
+                await interaction.response.send_message("i don't have permission to manage that role.", ephemeral=True)
+        else:
+            try:
+                await member.add_roles(role, reason="Button role toggle")
+                await interaction.response.send_message(f"added {role.mention}", ephemeral=True)
+            except:
+                await interaction.response.send_message("i don't have permission to manage that role.", ephemeral=True)
+
+    # ==================== LEGACY COMMANDS ====================
+
+    @app_commands.command(name="reactionrole_add", description="Add a reaction role to a message (legacy)")
     @app_commands.checks.has_permissions(manage_roles=True)
     async def reactionrole_add(
         self,
@@ -94,54 +131,9 @@ class ReactionRoles(commands.Cog):
         role: discord.Role,
         channel: discord.TextChannel = None
     ):
-        """Add reaction role"""
-        target_channel = channel or interaction.channel
+        await self._add_rr(interaction, message_id, emoji, role, channel)
 
-        try:
-            message = await target_channel.fetch_message(int(message_id))
-        except:
-            await interaction.response.send_message(
-                "Message not found. Make sure the ID is correct and I can see the channel.",
-                ephemeral=True
-            )
-            return
-
-        # Add reaction to message
-        try:
-            await message.add_reaction(emoji)
-        except discord.HTTPException:
-            await interaction.response.send_message(
-                "Invalid emoji. Make sure it's a valid emoji I can use.",
-                ephemeral=True
-            )
-            return
-
-        # Save config
-        config = self.get_config(interaction.guild.id)
-        message_id_str = str(message.id)
-
-        if message_id_str not in config:
-            config[message_id_str] = {}
-
-        config[message_id_str][emoji] = str(role.id)
-        self.db.set(str(interaction.guild.id), config)
-
-        embed = discord.Embed(
-            description=f"Reaction role added!\n{emoji} → {role.mention}",
-            color=0x1a1a2e
-        )
-        embed.add_field(
-            name="Message",
-            value=f"[Jump to Message]({message.jump_url})",
-            inline=False
-        )
-
-        await interaction.response.send_message(embed=embed)
-
-    @app_commands.command(
-        name="reactionrole_remove",
-        description="Remove a reaction role from a message"
-    )
+    @app_commands.command(name="reactionrole_remove", description="Remove a reaction role (legacy)")
     @app_commands.checks.has_permissions(manage_roles=True)
     async def reactionrole_remove(
         self,
@@ -150,78 +142,13 @@ class ReactionRoles(commands.Cog):
         emoji: str,
         channel: discord.TextChannel = None
     ):
-        """Remove reaction role"""
-        config = self.get_config(interaction.guild.id)
-        message_id_str = str(message_id)
+        await self._remove_rr(interaction, message_id, emoji, channel)
 
-        if message_id_str not in config or emoji not in config[message_id_str]:
-            await interaction.response.send_message(
-                "No reaction role found for that message and emoji.",
-                ephemeral=True
-            )
-            return
-
-        del config[message_id_str][emoji]
-        if not config[message_id_str]:
-            del config[message_id_str]
-
-        self.db.set(str(interaction.guild.id), config)
-
-        # Remove reaction from message
-        try:
-            target_channel = channel or interaction.channel
-            message = await target_channel.fetch_message(int(message_id))
-            await message.clear_reaction(emoji)
-        except:
-            pass
-
-        embed = discord.Embed(
-            description=f"Reaction role removed: {emoji}",
-            color=0x1a1a2e
-        )
-        await interaction.response.send_message(embed=embed)
-
-    @app_commands.command(
-        name="reactionrole_list",
-        description="List all reaction roles in this server"
-    )
+    @app_commands.command(name="reactionrole_list", description="List all reaction roles (legacy)")
     async def reactionrole_list(self, interaction: discord.Interaction):
-        """List all reaction roles"""
-        config = self.get_config(interaction.guild.id)
+        await self._list_rr(interaction)
 
-        if not config:
-            embed = discord.Embed(
-                description="No reaction roles configured.",
-                color=0x1a1a2e
-            )
-            await interaction.response.send_message(embed=embed, ephemeral=True)
-            return
-
-        embed = discord.Embed(
-            title="Reaction Roles",
-            color=0x1a1a2e
-        )
-
-        for message_id, reactions in config.items():
-            reaction_text = ""
-            for emoji, role_id in reactions.items():
-                role = interaction.guild.get_role(int(role_id))
-                role_text = role.mention if role else f"Deleted Role ({role_id})"
-                reaction_text += f"{emoji} → {role_text}\n"
-
-            if reaction_text:
-                embed.add_field(
-                    name=f"Message ID: {message_id}",
-                    value=reaction_text,
-                    inline=False
-                )
-
-        await interaction.response.send_message(embed=embed, ephemeral=True)
-
-    @app_commands.command(
-        name="reactionrole_clear",
-        description="Clear all reaction roles from a message"
-    )
+    @app_commands.command(name="reactionrole_clear", description="Clear all reaction roles from a message (legacy)")
     @app_commands.checks.has_permissions(manage_roles=True)
     async def reactionrole_clear(
         self,
@@ -229,33 +156,236 @@ class ReactionRoles(commands.Cog):
         message_id: str,
         channel: discord.TextChannel = None
     ):
-        """Clear all reaction roles from a message"""
         config = self.get_config(interaction.guild.id)
         message_id_str = str(message_id)
-
         if message_id_str not in config:
-            await interaction.response.send_message(
-                "No reaction roles found for that message.",
-                ephemeral=True
-            )
+            await interaction.response.send_message("no reaction roles found for that message.", ephemeral=True)
             return
-
+        # Also clear from button_roles if any
+        button_roles = config.get('button_roles', {})
+        if message_id_str in button_roles:
+            del button_roles[message_id_str]
         del config[message_id_str]
-        self.db.set(str(interaction.guild.id), config)
-
-        # Clear all reactions
+        self.save_config(interaction.guild.id, config)
         try:
             target_channel = channel or interaction.channel
             message = await target_channel.fetch_message(int(message_id))
             await message.clear_reactions()
         except:
             pass
+        await interaction.response.send_message("✅ all reaction roles cleared from that message.")
+
+    # ==================== NEW COMMAND GROUP ====================
+
+    reactionrole = app_commands.Group(name="reactionrole", description="Reaction role management")
+
+    @reactionrole.command(name="add", description="Add a reaction role to a message")
+    @app_commands.checks.has_permissions(manage_roles=True)
+    async def rr_add(
+        self,
+        interaction: discord.Interaction,
+        message_id: str,
+        emoji: str,
+        role: discord.Role,
+        channel: discord.TextChannel = None
+    ):
+        await self._add_rr(interaction, message_id, emoji, role, channel)
+
+    @reactionrole.command(name="remove", description="Remove a reaction role")
+    @app_commands.checks.has_permissions(manage_roles=True)
+    async def rr_remove(
+        self,
+        interaction: discord.Interaction,
+        message_id: str,
+        emoji: str,
+        channel: discord.TextChannel = None
+    ):
+        await self._remove_rr(interaction, message_id, emoji, channel)
+
+    @reactionrole.command(name="list", description="List all reaction roles in this server")
+    async def rr_list(self, interaction: discord.Interaction):
+        await self._list_rr(interaction)
+
+    # ==================== HELPERS ====================
+
+    async def _add_rr(self, interaction, message_id, emoji, role, channel):
+        self.bot.increment_command('reactionrole_add')
+        if role.position >= interaction.guild.me.top_role.position:
+            await interaction.response.send_message("i can't assign that role — it's above my top role.", ephemeral=True)
+            return
+        target_channel = channel or interaction.channel
+        try:
+            message = await target_channel.fetch_message(int(message_id))
+        except Exception:
+            await interaction.response.send_message(
+                "message not found. make sure the ID is correct and I can see the channel.",
+                ephemeral=True
+            )
+            return
+        try:
+            await message.add_reaction(emoji)
+        except discord.HTTPException:
+            await interaction.response.send_message("invalid emoji.", ephemeral=True)
+            return
+
+        config = self.get_config(interaction.guild.id)
+        message_id_str = str(message.id)
+        if message_id_str not in config:
+            config[message_id_str] = {}
+        config[message_id_str][emoji] = str(role.id)
+        self.save_config(interaction.guild.id, config)
 
         embed = discord.Embed(
-            description="All reaction roles cleared from that message.",
+            description=f"✅ reaction role added!\n{emoji} → {role.mention}",
             color=0x1a1a2e
         )
+        embed.add_field(name="Message", value=f"[Jump]({message.jump_url})", inline=False)
         await interaction.response.send_message(embed=embed)
+
+    async def _remove_rr(self, interaction, message_id, emoji, channel):
+        self.bot.increment_command('reactionrole_remove')
+        config = self.get_config(interaction.guild.id)
+        message_id_str = str(message_id)
+        if message_id_str not in config or emoji not in config[message_id_str]:
+            await interaction.response.send_message("no reaction role found for that message + emoji.", ephemeral=True)
+            return
+        del config[message_id_str][emoji]
+        if not config[message_id_str]:
+            del config[message_id_str]
+        self.save_config(interaction.guild.id, config)
+        try:
+            target_channel = channel or interaction.channel
+            message = await target_channel.fetch_message(int(message_id))
+            await message.clear_reaction(emoji)
+        except:
+            pass
+        await interaction.response.send_message(f"✅ reaction role removed: {emoji}")
+
+    async def _list_rr(self, interaction):
+        self.bot.increment_command('reactionrole_list')
+        config = self.get_config(interaction.guild.id)
+        # Filter out the button_roles key
+        rr_items = {k: v for k, v in config.items() if k != 'button_roles' and isinstance(v, dict)}
+        if not rr_items:
+            await interaction.response.send_message("no reaction roles configured.", ephemeral=True)
+            return
+        embed = discord.Embed(title="Reaction Roles", color=0x1a1a2e)
+        for message_id, reactions in rr_items.items():
+            text = ""
+            for emoji, role_id in reactions.items():
+                role = interaction.guild.get_role(int(role_id))
+                role_text = role.mention if role else f"deleted role ({role_id})"
+                text += f"{emoji} → {role_text}\n"
+            if text:
+                embed.add_field(name=f"Message ID: {message_id}", value=text, inline=False)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    # ==================== BUTTON ROLES ====================
+
+    buttonrole = app_commands.Group(name="buttonrole", description="Button role management")
+
+    @buttonrole.command(name="create", description="Create a button-role prompt message")
+    @app_commands.checks.has_permissions(manage_roles=True)
+    async def buttonrole_create(
+        self,
+        interaction: discord.Interaction,
+        channel: discord.TextChannel,
+        title: str,
+        description: str
+    ):
+        self.bot.increment_command('buttonrole_create')
+        embed = discord.Embed(
+            title=title,
+            description=description,
+            color=0x1a1a2e,
+            timestamp=discord.utils.utcnow()
+        )
+        embed.set_footer(text="click the buttons below to get roles")
+        view = discord.ui.View(timeout=None)  # persistent placeholder
+        sent = await channel.send(embed=embed, view=view)
+        # Save empty entry
+        config = self.get_config(interaction.guild.id)
+        config.setdefault('button_roles', {})[str(sent.id)] = []
+        self.save_config(interaction.guild.id, config)
+        await interaction.response.send_message(
+            f"✅ created button-role message in {channel.mention}.\n"
+            f"message ID: `{sent.id}`\nuse `/buttonrole addbutton` to add role buttons."
+        )
+
+    @buttonrole.command(name="addbutton", description="Add a role button to an existing button-role message")
+    @app_commands.checks.has_permissions(manage_roles=True)
+    async def buttonrole_addbutton(
+        self,
+        interaction: discord.Interaction,
+        message_id: str,
+        role: discord.Role,
+        label: str,
+        emoji: str = None,
+        channel: discord.TextChannel = None
+    ):
+        self.bot.increment_command('buttonrole_addbutton')
+        if role.position >= interaction.guild.me.top_role.position:
+            await interaction.response.send_message("i can't assign that role — it's above my top role.", ephemeral=True)
+            return
+
+        config = self.get_config(interaction.guild.id)
+        button_roles = config.setdefault('button_roles', {})
+        if str(message_id) not in button_roles:
+            button_roles[str(message_id)] = []
+        button_roles[str(message_id)].append({
+            'role_id': str(role.id),
+            'label': label,
+            'emoji': emoji,
+        })
+        self.save_config(interaction.guild.id, config)
+
+        # Rebuild the view and edit the message
+        target_channel = channel or interaction.channel
+        try:
+            message = await target_channel.fetch_message(int(message_id))
+        except Exception:
+            await interaction.response.send_message("message not found.", ephemeral=True)
+            return
+
+        view = self._build_button_view(message_id, button_roles[str(message_id)])
+        try:
+            await message.edit(view=view)
+        except Exception as e:
+            await interaction.response.send_message(f"failed to edit message: {e}", ephemeral=True)
+            return
+
+        await interaction.response.send_message(
+            f"✅ added button **{label}** for role {role.mention}"
+        )
+
+    def _build_button_view(self, message_id: str, buttons: list) -> discord.ui.View:
+        view = discord.ui.View(timeout=None)
+        for i, btn_data in enumerate(buttons[:25]):  # discord max 25 buttons
+            try:
+                role_id = int(btn_data['role_id'])
+            except (KeyError, ValueError, TypeError):
+                continue
+            custom_id = f"btnrole_{message_id}_{role_id}"
+            button = discord.ui.Button(
+                label=btn_data.get('label', 'Role'),
+                emoji=btn_data.get('emoji'),
+                style=discord.ButtonStyle.secondary,
+                custom_id=custom_id,
+                row=i // 5
+            )
+            view.add_item(button)
+        return view
+
+    @commands.Cog.listener()
+    async def on_ready(self):
+        # Re-register persistent button views from saved data
+        all_data = self.db.get_all()
+        for guild_id_str, guild_config in all_data.items():
+            button_roles = guild_config.get('button_roles', {})
+            for message_id_str, buttons in button_roles.items():
+                # The view is created on-demand in on_interaction; nothing to register here.
+                pass
+
 
 async def setup(bot):
     await bot.add_cog(ReactionRoles(bot))

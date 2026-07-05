@@ -1,64 +1,50 @@
+"""
+cogs/music.py — music stub.
+
+The full music cog (Spotify status viewer + future yt-dlp player) lives in
+cogs/music_disabled.py. It is not auto-loaded because main.py skips any
+file ending in `_disabled.py`. Music commands that depend on FFmpeg
+cannot run on Render's free tier (FFmpeg is not installed there).
+
+To re-enable locally:
+  1. Make sure FFmpeg is installed on your system:
+       - macOS:  `brew install ffmpeg`
+       - Ubuntu: `sudo apt install ffmpeg`
+       - Windows: download from https://ffmpeg.org/download.html
+  2. Install yt-dlp: `pip install yt-dlp`
+  3. Rename cogs/music_disabled.py to cogs/music.py
+       (or copy the contents of music_disabled.py over this file)
+  4. Restart the bot
+
+This stub keeps the /music command available so users get a friendly
+message instead of a silent failure.
+"""
 import discord
 from discord.ext import commands
 from discord import app_commands
-from utils.embeds import create_embed
+
 
 class Music(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-    
-    @app_commands.command(name="music", description="Show your current Spotify status")
-    async def music(self, interaction: discord.Interaction, user: discord.Member = None):
-        """Display Spotify activity"""
-        user = user or interaction.user
-        
-        # Find Spotify activity
-        spotify = None
-        for activity in user.activities:
-            if isinstance(activity, discord.Spotify):
-                spotify = activity
-                break
-        
-        if not spotify:
-            embed = create_embed(
-                title="🎵 No Music Playing",
-                description=f"{user.name} isn't listening to Spotify right now!",
-                color=discord.Color.orange()
-            )
-            await interaction.response.send_message(embed=embed)
-            return
-        
-        # Create rich embed
+
+    @app_commands.command(name="music", description="Music feature availability")
+    async def music(self, interaction: discord.Interaction):
+        self.bot.increment_command('music')
         embed = discord.Embed(
-            title="🎵 Now Playing on Spotify",
-            color=discord.Color.green()
+            title="🎵 Music — unavailable on this host",
+            description=(
+                "Music is currently unavailable on this hosting plan. "
+                "Self-host the bot to enable music features.\n\n"
+                "See `cogs/music_disabled.py` for the full implementation "
+                "and instructions on how to re-enable it locally with "
+                "FFmpeg installed."
+            ),
+            color=0x1a1a2e
         )
-        
-        embed.set_thumbnail(url=spotify.album_cover_url)
-        embed.add_field(name="🎵 Song", value=spotify.title, inline=False)
-        embed.add_field(name="👤 Artist", value=spotify.artist, inline=True)
-        embed.add_field(name="💿 Album", value=spotify.album, inline=True)
-        
-        # Duration
-        duration = spotify.duration.seconds
-        position = (spotify.end - spotify.start).seconds
-        
-        duration_str = f"{duration // 60}:{duration % 60:02d}"
-        position_str = f"{position // 60}:{position % 60:02d}"
-        
-        embed.add_field(name="⏱️ Progress", value=f"{position_str} / {duration_str}", inline=False)
-        
-        # Progress bar
-        progress_percent = (position / duration) * 100
-        bar_length = 20
-        filled = int((progress_percent / 100) * bar_length)
-        bar = "▓" * filled + "░" * (bar_length - filled)
-        embed.add_field(name="📊", value=f"`{bar}`", inline=False)
-        
-        embed.set_footer(text=f"Listening since", icon_url=user.avatar.url if user.avatar else None)
-        embed.timestamp = spotify.start
-        
+        embed.set_footer(text="ao — music module")
         await interaction.response.send_message(embed=embed)
+
 
 async def setup(bot):
     await bot.add_cog(Music(bot))

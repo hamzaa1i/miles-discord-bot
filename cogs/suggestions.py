@@ -1,46 +1,91 @@
+"""
+cogs/suggestions.py — suggestions system.
+
+Spec (ADD 2):
+  /suggest setup #channel — set the suggestions channel
+  /suggest [text] — submit a suggestion (creates embed, 👍/👎, gets ID)
+  /suggest approve [id] [reason(optional)] — mod only
+  /suggest deny [id] [reason(optional)] — mod only
+  /suggest list — show last 10 pending suggestions
+
+Data stored in data/suggestions.json per guild:
+{
+  "config": { "channel_id": "..." },
+  "counter": 1,
+  "items": {
+    "1": { "user_id": "...", "content": "...", "status": "pending",
+           "message_id": "...", "submitted_at": "...", "reason": null }
+  }
+}
+
+Backward compatibility: the legacy /suggestion_approve, /suggestion_deny,
+and /suggestions_setup commands are kept as thin wrappers so existing
+users don't break.
+"""
 import discord
 from discord.ext import commands
 from discord import app_commands
-from datetime import datetime
+from datetime import datetime, timezone
 from utils.database import Database
+
 
 class Suggestions(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.db = Database('data/suggestions.json')
 
-    def get_config(self, guild_id: int) -> dict:
-        return self.db.get(f"config_{guild_id}", {
-            'channel_id': None,
-            'enabled': False,
-            'review_channel': None
+    # ==================== Storage helpers ====================
+
+    def get_guild_data(self, guild_id: int) -> dict:
+        return self.db.get(str(guild_id), {
+            'config': {'channel_id': None},
+            'counter': 0,
+            'items': {},
         })
 
-    @app_commands.command(name="suggest", description="Submit a suggestion")
-    async def suggest(
-        self,
-        interaction: discord.Interaction,
-        suggestion: str
-    ):
-        config = self.get_config(interaction.guild.id)
+    def save_guild_data(self, guild_id: int, data: dict):
+        self.db.set(str(guild_id), data)
 
-        if not config['enabled'] or not config['channel_id']:
+    # ==================== Suggest command group ====================
+
+    suggest = app_commands.Group(name="suggest", description="Suggestion management")
+
+    @suggest.command(name="setup", description="Set the suggestions channel")
+    @app_commands.checks.has_permissions(manage_guild=True)
+    async def suggest_setup(self, interaction: discord.Interaction, channel: discord.TextChannel):
+        self.bot.increment_command('suggest_setup')
+        data = self.get_guild_data(interaction.guild.id)
+        data['config']['channel_id'] = str(channel.id)
+        self.save_guild_data(interaction.guild.id, data)
+        await interaction.response.send_message(
+            f"✅ suggestions channel set to {channel.mention}.\n"
+            f"users can now use `/suggest <text>` to submit suggestions."
+        )
+
+    @suggest.command(name="submit", description="Submit a suggestion")
+    async def suggest_submit(self, interaction: discord.Interaction, text: str):
+        self.bot.increment_command('suggest_submit')
+        data = self.get_guild_data(interaction.guild.id)
+        channel_id = data.get('config', {}).get('channel_id')
+        if not channel_id:
             await interaction.response.send_message(
-                "suggestions aren't set up yet.",
+                "suggestions aren't set up. ask a mod to run `/suggest setup #channel` first.",
                 ephemeral=True
             )
             return
-
-        channel = interaction.guild.get_channel(int(config['channel_id']))
+        channel = interaction.guild.get_channel(int(channel_id))
         if not channel:
             await interaction.response.send_message(
-                "suggestion channel not found.",
-                ephemeral=True
+                "configured suggestions channel no longer exists.", ephemeral=True
             )
             return
 
+        data['counter'] = data.get('counter', 0) + 1
+        sid = str(data['counter'])
+
         embed = discord.Embed(
-            description=suggestion,
+            title=f"Suggestion #{sid}",
+            description=text,
             color=0x1a1a2e,
             timestamp=datetime.utcnow()
         )
@@ -48,169 +93,176 @@ class Suggestions(commands.Cog):
             name=interaction.user.display_name,
             icon_url=interaction.user.avatar.url if interaction.user.avatar else None
         )
-        embed.set_footer(text=f"ID: {interaction.user.id}")
-        embed.add_field(name="Status", value="Pending", inline=True)
+        embed.add_field(name="Status", value="⏳ Pending", inline=True)
+        embed.set_footer(text=f"Submitter ID: {interaction.user.id} · Suggestion ID: {sid}")
 
         msg = await channel.send(embed=embed)
-        await msg.add_reaction("✅")
-        await msg.add_reaction("❌")
+        await msg.add_reaction("👍")
+        await msg.add_reaction("👎")
 
-        # Save suggestion
-        suggestions = self.db.get(str(interaction.guild.id), {})
-        suggestions[str(msg.id)] = {
+        data['items'][sid] = {
             'user_id': str(interaction.user.id),
-            'content': suggestion,
+            'content': text,
             'status': 'pending',
-            'submitted_at': datetime.utcnow().isoformat()
+            'message_id': str(msg.id),
+            'channel_id': str(channel.id),
+            'submitted_at': datetime.utcnow().isoformat(),
+            'reason': None,
         }
-        self.db.set(str(interaction.guild.id), suggestions)
+        self.save_guild_data(interaction.guild.id, data)
 
         await interaction.response.send_message(
-            f"suggestion submitted to {channel.mention}",
+            f"✅ suggestion #{sid} submitted in {channel.mention}.",
             ephemeral=True
         )
 
-    @app_commands.command(
-        name="suggestion_approve",
-        description="Approve a suggestion"
-    )
+    @suggest.command(name="approve", description="Approve a suggestion (mod only)")
     @app_commands.checks.has_permissions(manage_guild=True)
-    async def suggestion_approve(
-        self,
-        interaction: discord.Interaction,
-        message_id: str,
-        reason: str = "Approved"
-    ):
-        config = self.get_config(interaction.guild.id)
-        if not config['channel_id']:
+    async def suggest_approve(self, interaction: discord.Interaction, id: str, reason: str = None):
+        self.bot.increment_command('suggest_approve')
+        await self._review(interaction, id, 'approved', reason)
+
+    @suggest.command(name="deny", description="Deny a suggestion (mod only)")
+    @app_commands.checks.has_permissions(manage_guild=True)
+    async def suggest_deny(self, interaction: discord.Interaction, id: str, reason: str = None):
+        self.bot.increment_command('suggest_deny')
+        await self._review(interaction, id, 'denied', reason)
+
+    async def _review(self, interaction: discord.Interaction, sid: str, status: str, reason: str):
+        data = self.get_guild_data(interaction.guild.id)
+        item = data.get('items', {}).get(sid)
+        if not item:
             await interaction.response.send_message(
-                "suggestions not set up.",
-                ephemeral=True
+                f"no suggestion with id #{sid}.", ephemeral=True
             )
             return
 
-        channel = interaction.guild.get_channel(int(config['channel_id']))
+        channel = interaction.guild.get_channel(int(item['channel_id']))
         if not channel:
+            await interaction.response.send_message(
+                "suggestion channel no longer exists.", ephemeral=True
+            )
             return
 
         try:
-            msg = await channel.fetch_message(int(message_id))
+            msg = await channel.fetch_message(int(item['message_id']))
             embed = msg.embeds[0] if msg.embeds else discord.Embed()
-
-            for i, field in enumerate(embed.fields):
-                if field.name == "Status":
-                    embed.set_field_at(
-                        i,
-                        name="Status",
-                        value="✅ Approved",
-                        inline=True
-                    )
-                    break
-            else:
-                embed.add_field(name="Status", value="✅ Approved", inline=True)
-
-            embed.add_field(
-                name="Reviewed by",
-                value=interaction.user.mention,
-                inline=True
+        except Exception:
+            await interaction.response.send_message(
+                "couldn't fetch the original suggestion message.", ephemeral=True
             )
+            return
+
+        # Update status field
+        status_emoji = "✅" if status == 'approved' else "❌"
+        status_text = f"{status_emoji} {status.title()}"
+        updated = False
+        for i, field in enumerate(embed.fields):
+            if field.name == "Status":
+                embed.set_field_at(i, name="Status", value=status_text, inline=True)
+                updated = True
+                break
+        if not updated:
+            embed.add_field(name="Status", value=status_text, inline=True)
+
+        # Remove old "Reason" / "Reviewed by" fields if present (re-review case)
+        embed.clear_fields()
+        embed.add_field(name="Status", value=status_text, inline=True)
+        embed.add_field(name="Reviewed by", value=interaction.user.mention, inline=True)
+        if reason:
             embed.add_field(name="Reason", value=reason, inline=False)
-            embed.color = discord.Color.green()
+        else:
+            embed.add_field(name="Reason", value="No reason provided.", inline=False)
 
-            await msg.edit(embed=embed)
-
-            await interaction.response.send_message(
-                "suggestion approved.",
-                ephemeral=True
-            )
-        except:
-            await interaction.response.send_message(
-                "couldn't find that message.",
-                ephemeral=True
-            )
-
-    @app_commands.command(
-        name="suggestion_deny",
-        description="Deny a suggestion"
-    )
-    @app_commands.checks.has_permissions(manage_guild=True)
-    async def suggestion_deny(
-        self,
-        interaction: discord.Interaction,
-        message_id: str,
-        reason: str = "Denied"
-    ):
-        config = self.get_config(interaction.guild.id)
-        if not config['channel_id']:
-            await interaction.response.send_message(
-                "suggestions not set up.",
-                ephemeral=True
-            )
-            return
-
-        channel = interaction.guild.get_channel(int(config['channel_id']))
-        if not channel:
-            return
+        embed.color = discord.Color.green() if status == 'approved' else discord.Color.red()
 
         try:
-            msg = await channel.fetch_message(int(message_id))
-            embed = msg.embeds[0] if msg.embeds else discord.Embed()
-
-            for i, field in enumerate(embed.fields):
-                if field.name == "Status":
-                    embed.set_field_at(
-                        i,
-                        name="Status",
-                        value="❌ Denied",
-                        inline=True
-                    )
-                    break
-            else:
-                embed.add_field(name="Status", value="❌ Denied", inline=True)
-
-            embed.add_field(
-                name="Reviewed by",
-                value=interaction.user.mention,
-                inline=True
-            )
-            embed.add_field(name="Reason", value=reason, inline=False)
-            embed.color = discord.Color.red()
-
             await msg.edit(embed=embed)
+        except Exception:
+            pass
 
-            await interaction.response.send_message(
-                "suggestion denied.",
-                ephemeral=True
-            )
-        except:
-            await interaction.response.send_message(
-                "couldn't find that message.",
-                ephemeral=True
-            )
+        # Persist
+        item['status'] = status
+        item['reason'] = reason
+        item['reviewed_by'] = str(interaction.user.id)
+        item['reviewed_at'] = datetime.utcnow().isoformat()
+        data['items'][sid] = item
+        self.save_guild_data(interaction.guild.id, data)
 
-    @app_commands.command(
-        name="suggestions_setup",
-        description="Setup the suggestion system"
-    )
-    @app_commands.checks.has_permissions(administrator=True)
-    async def suggestions_setup(
-        self,
-        interaction: discord.Interaction,
-        channel: discord.TextChannel
-    ):
-        config = self.get_config(interaction.guild.id)
-        config['channel_id'] = str(channel.id)
-        config['enabled'] = True
-        self.db.set(f"config_{interaction.guild.id}", config)
-
-        embed = discord.Embed(
-            description=(
-                f"suggestions will be sent to {channel.mention}\n"
-                f"users can submit with `/suggest`"
-            ),
-            color=0x1a1a2e
+        action = "approved" if status == 'approved' else "denied"
+        await interaction.response.send_message(
+            f"✅ suggestion #{sid} {action}."
         )
-        await interaction.response.send_message(embed=embed)
+
+    @suggest.command(name="list", description="List the last 10 pending suggestions")
+    async def suggest_list(self, interaction: discord.Interaction):
+        self.bot.increment_command('suggest_list')
+        data = self.get_guild_data(interaction.guild.id)
+        items = data.get('items', {})
+        pending = [(sid, item) for sid, item in items.items() if item.get('status') == 'pending']
+        if not pending:
+            await interaction.response.send_message("no pending suggestions.", ephemeral=True)
+            return
+
+        pending.sort(key=lambda x: int(x[0]), reverse=True)
+        embed = discord.Embed(title="⏳ Pending Suggestions", color=0x1a1a2e)
+        for sid, item in pending[:10]:
+            content = item.get('content', '')[:200]
+            embed.add_field(
+                name=f"#{sid} — by <@{item.get('user_id')}>",
+                value=content or "*empty*",
+                inline=False
+            )
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    # ==================== Legacy commands (kept for backward compat) ====================
+
+    @app_commands.command(name="suggestions_setup", description="Setup the suggestion system (legacy)")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def suggestions_setup(self, interaction: discord.Interaction, channel: discord.TextChannel):
+        self.bot.increment_command('suggestions_setup')
+        data = self.get_guild_data(interaction.guild.id)
+        data['config']['channel_id'] = str(channel.id)
+        self.save_guild_data(interaction.guild.id, data)
+        await interaction.response.send_message(
+            f"✅ suggestions will be sent to {channel.mention}. users can use `/suggest submit <text>`."
+        )
+
+    @app_commands.command(name="suggestion_approve", description="Approve a suggestion (legacy)")
+    @app_commands.checks.has_permissions(manage_guild=True)
+    async def suggestion_approve(self, interaction: discord.Interaction, message_id: str, reason: str = "Approved"):
+        self.bot.increment_command('suggestion_approve')
+        data = self.get_guild_data(interaction.guild.id)
+        # Find suggestion by message_id
+        sid = None
+        for s_id, item in data.get('items', {}).items():
+            if item.get('message_id') == message_id:
+                sid = s_id
+                break
+        if not sid:
+            await interaction.response.send_message(
+                "no suggestion found for that message id.", ephemeral=True
+            )
+            return
+        await self._review(interaction, sid, 'approved', reason)
+
+    @app_commands.command(name="suggestion_deny", description="Deny a suggestion (legacy)")
+    @app_commands.checks.has_permissions(manage_guild=True)
+    async def suggestion_deny(self, interaction: discord.Interaction, message_id: str, reason: str = "Denied"):
+        self.bot.increment_command('suggestion_deny')
+        data = self.get_guild_data(interaction.guild.id)
+        sid = None
+        for s_id, item in data.get('items', {}).items():
+            if item.get('message_id') == message_id:
+                sid = s_id
+                break
+        if not sid:
+            await interaction.response.send_message(
+                "no suggestion found for that message id.", ephemeral=True
+            )
+            return
+        await self._review(interaction, sid, 'denied', reason)
+
 
 async def setup(bot):
     await bot.add_cog(Suggestions(bot))

@@ -2,39 +2,238 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 import random
+import asyncio
 import aiohttp
+import os
+import pyfiglet
+
 
 class Fun(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+        self.github_token = os.getenv('GITHUB_TOKEN')
+        self.api_url = "https://models.inference.ai.azure.com/chat/completions"
 
-    @app_commands.command(name="roll", description="Roll a dice")
-    async def roll(self, interaction: discord.Interaction, sides: int = 6):
-        if sides < 2 or sides > 1000:
-            await interaction.response.send_message(
-                "Sides must be between 2 and 1000.",
-                ephemeral=True
-            )
-            return
-        result = random.randint(1, sides)
-        embed = discord.Embed(
-            description=f"You rolled a **{result}** out of {sides}",
-            color=0x1a1a2e
-        )
-        await interaction.response.send_message(embed=embed)
+        # 50+ jokes
+        self.jokes = [
+            "I told my psychiatrist I keep thinking I'm a dog. He told me to get off the couch.",
+            "My grief counselor died. He was so good at his job, I don't even care.",
+            "I have a lot of growing up to do. I realized that the other day inside my fort.",
+            "I used to hate facial hair, but then it grew on me.",
+            "My boss told me to have a good day. So I went home.",
+            "I asked God for a bike, but I know God doesn't work that way. So I stole a bike and asked for forgiveness.",
+            "The cemetery is a popular place. People are dying to get in.",
+            "I don't trust stairs. They're always up to something.",
+            "My wife told me I had to stop acting like a flamingo. I had to put my foot down.",
+            "I told my doctor I broke my arm in two places. He told me to stop going to those places.",
+            "Why don't scientists trust atoms? Because they make up everything.",
+            "I'm reading a book about anti-gravity. It's impossible to put down.",
+            "I used to play piano by ear. Now I use my hands.",
+            "What do you call a fish wearing a bowtie? Sofishticated.",
+            "I'm on a seafood diet. I see food and I eat it.",
+            "Why did the scarecrow win an award? Because he was outstanding in his field.",
+            "I don't trust people with graph paper. They're always plotting something.",
+            "I told my wife she was drawing her eyebrows too high. She looked surprised.",
+            "What's the best thing about Switzerland? I don't know, but the flag is a big plus.",
+            "I have a fear of speed bumps. But I'm slowly getting over it.",
+            "Why don't skeletons fight each other? They don't have the guts.",
+            "I'm reading a horror book in braille. Something bad is going to happen, I can feel it.",
+            "What do you call a fake noodle? An impasta.",
+            "I used to be a banker, but I lost interest.",
+            "Why did the coffee file a police report? It got mugged.",
+            "I'd tell you a chemistry joke, but I know I wouldn't get a reaction.",
+            "I tried to catch fog yesterday. Mist.",
+            "What do you call a can opener that doesn't work? A can't opener.",
+            "I told a chemistry joke. There was no reaction.",
+            "I'm afraid for the calendar. Its days are numbered.",
+            "What do you call a pig that does karate? A pork chop.",
+            "I don't trust escalators. They're always up to something.",
+            "I have a chicken-proof lawn. It's impeccable.",
+            "What do you call a bear with no teeth? A gummy bear.",
+            "I tried to sue the airline for losing my luggage. I lost my case.",
+            "Why did the bicycle fall over? It was two tired.",
+            "I'm not addicted to brake fluid. I can stop whenever I want.",
+            "What did the grape say when it got stepped on? Nothing, it just let out a little wine.",
+            "I told a time-traveling joke. You guys didn't laugh, but you will.",
+            "Why did the man fall down the well? Because he couldn't see that well.",
+            "I used to be a shoe salesman, but I just couldn't fit in.",
+            "What do you call an alligator detective? An investigator.",
+            "I'd tell you a construction joke, but I'm still working on it.",
+            "Why did the math book look so sad? Because it had too many problems.",
+            "I got hit in the head with a can of soda. Luckily it was a soft drink.",
+            "What's the difference between a hippo and a Zippo? One is heavy, the other is a little lighter.",
+            "I'd tell you a joke about UDP, but you might not get it.",
+            "Why did the cookie go to the hospital? Because it felt crummy.",
+            "I have a step ladder because my real ladder left when I was young.",
+            "What do you call a snowman with a six-pack? An abdominal snowman.",
+            "I'd tell you a joke about a wall, but I'm afraid you won't get over it.",
+            "Why don't eggs tell jokes? They'd crack each other up.",
+            "I tried to write a joke about a pencil, but it was pointless.",
+        ]
 
-    @app_commands.command(name="flip", description="Flip a coin")
-    async def flip(self, interaction: discord.Interaction):
-        result = random.choice(["Heads", "Tails"])
-        embed = discord.Embed(
-            description=f"**{result}**",
-            color=0x1a1a2e
-        )
-        await interaction.response.send_message(embed=embed)
+        # 60+ facts
+        self.facts = [
+            "Honey never spoils. Archaeologists found 3000-year-old honey in Egyptian tombs that was still edible.",
+            "A day on Venus is longer than a year on Venus.",
+            "Octopuses have three hearts, blue blood, and nine brains.",
+            "The human brain uses about 20% of the body's total energy.",
+            "A group of flamingos is called a flamboyance.",
+            "There are more possible iterations of a game of chess than atoms in the observable universe.",
+            "Sharks are older than trees. They've existed for 450 million years.",
+            "The average person walks about 100,000 miles in their lifetime.",
+            "Cleopatra lived closer in time to the Moon landing than to the construction of the Great Pyramid.",
+            "A single cloud can weigh more than a million pounds.",
+            "Bananas are berries, but strawberries aren't.",
+            "The Eiffel Tower grows taller in summer due to thermal expansion.",
+            "Wombat poop is cube-shaped.",
+            "A group of crows is called a murder.",
+            "Honeybees can recognize human faces.",
+            "The shortest war in history lasted 38 minutes.",
+            "A jiffy is an actual unit of time: 1/100th of a second.",
+            "There are more stars in the universe than grains of sand on Earth.",
+            "Your stomach gets a new lining every 3-4 days.",
+            "Koalas have fingerprints nearly identical to humans.",
+            "A bolt of lightning contains enough energy to toast 100,000 slices of bread.",
+            "There are more possible games of chess than there are atoms in the universe.",
+            "Octopuses can taste with their suckers.",
+            "The longest word in English without a vowel is 'rhythms'.",
+            "A blue whale's heart is the size of a small car.",
+            "Vending machines kill more people than sharks do each year.",
+            "Human thigh bones are stronger than concrete.",
+            "You produce enough saliva in your lifetime to fill two swimming pools.",
+            "The Hawaiian alphabet has only 13 letters.",
+            "A group of porcupines is called a prickle.",
+            "There's a village in Norway called 'Hell'. It freezes over every winter.",
+            "Sharks can detect a single drop of blood in 100 liters of water.",
+            "Cows have best friends and get stressed when separated.",
+            "The first oranges weren't orange — they were green.",
+            "Polar bears have black skin under their white fur.",
+            "Some cats are allergic to humans.",
+            "A group of owls is called a parliament.",
+            "Sloths can hold their breath longer than dolphins — up to 40 minutes.",
+            "The unicorn is the national animal of Scotland.",
+            "A group of pandas is called an embarrassment.",
+            "Hot water can freeze faster than cold water. It's called the Mpemba effect.",
+            "The world's oldest known living tree is over 5,000 years old.",
+            "There are more bacteria in your mouth than people on Earth.",
+            "An ostrich's eye is bigger than its brain.",
+            "Butterflies taste with their feet.",
+            "The dots on dice are called 'pips'.",
+            "A group of hedgehogs is called an array.",
+            "Starfish can regrow their arms. Some can grow a new body from a single arm.",
+            "Humans share about 50% of their DNA with bananas.",
+            "The shortest commercial flight in the world lasts 57 seconds.",
+            "Sea otters hold hands while sleeping so they don't drift apart.",
+            "A group of kittens is called a kindle.",
+            "The inventor of the Frisbee was turned into a Frisbee after he died.",
+            "Dolphins have names for each other.",
+            "There's a species of jellyfish that is biologically immortal.",
+            "A group of rhinos is called a crash.",
+            "The first alarm clock could only ring at 4 AM.",
+            "Crocodiles can't stick their tongues out.",
+            "The word 'nerd' was first coined by Dr. Seuss in 'If I Ran the Zoo'.",
+            "Slugs have four noses.",
+            "A group of ravens is called an unkindness.",
+            "The first computer virus was created in 1983.",
+            "Armadillo shells are bulletproof.",
+            "The national flag of Nepal is the only one that isn't rectangular.",
+        ]
 
-    @app_commands.command(name="8ball", description="Ask the magic 8-ball")
-    async def eightball(self, interaction: discord.Interaction, question: str):
-        responses = [
+        # 40+ pickup lines
+        self.pickup_lines = [
+            "Are you French? Because Eiffel for you.",
+            "Do you have a name, or can I call you mine?",
+            "Are you a parking ticket? Because you've got 'fine' written all over you.",
+            "Is your name Google? Because you've got everything I've been searching for.",
+            "Are you a magician? Because whenever I look at you, everyone else disappears.",
+            "Do you have a Band-Aid? Because I just scraped my knee falling for you.",
+            "Are you Wi-Fi? Because I'm feeling a connection.",
+            "Did the sun come out, or did you just smile at me?",
+            "Are you a camera? Because every time I look at you, I smile.",
+            "Do you have a map? I keep getting lost in your eyes.",
+            "Are you Australian? Because you meet all of my koala-fications.",
+            "If beauty were time, you'd be eternity.",
+            "Are you a bank loan? Because you got my interest.",
+            "Is your dad a baker? Because you're a cutie pie.",
+            "Are you Cinderella? Because I see that dress disappearing at midnight.",
+            "Do you play soccer? Because you're a keeper.",
+            "Are you a firework? Because you light up my night.",
+            "I'm not a photographer, but I can picture us together.",
+            "If you were a triangle, you'd be acute one.",
+            "Are you made of copper and tellurium? Because you're Cu-Te.",
+            "Is your name Waldo? Because someone like you is hard to find.",
+            "Did you swallow magnets? Because you're attractive.",
+            "Are you a keyboard? Because you're just my type.",
+            "If I could rearrange the alphabet, I'd put U and I together.",
+            "Are you a power outage? Because you light up my world.",
+            "Do you have a sunburn, or are you always this hot?",
+            "Are you a time traveler? Because I can see you in my future.",
+            "Is your dad an alien? Because there's nothing else like you on Earth.",
+            "Are you a haunted house? Because I'm screaming inside.",
+            "Did it hurt? When you fell from heaven?",
+            "Are you a snowstorm? Because you're making me melt.",
+            "Are you a cat? Because you're purr-fect.",
+            "If you were a fruit, you'd be a fine-apple.",
+            "Are you an elevator? Because you lift me up.",
+            "Do you like Star Wars? Because Yoda only one for me.",
+            "Are you a volcano? Because I lava you.",
+            "I'd say God bless you, but it looks like he already did.",
+            "Are you a gardener? Because I'd dig you.",
+            "Is your name Hope? Because you're my only one.",
+            "If kisses were snowflakes, I'd send you a blizzard.",
+            "Are you Netflix? Because I could watch you all day.",
+            "Do you believe in love at first sight, or should I walk by again?",
+        ]
+
+        # 40+ would you rather
+        self.wyr_questions = [
+            "Would you rather be able to fly or be invisible?",
+            "Would you rather have unlimited money or unlimited time?",
+            "Would you rather know how you die or when you die?",
+            "Would you rather live without internet or without music?",
+            "Would you rather always be 10 minutes late or 20 minutes early?",
+            "Would you rather have the ability to speak all languages or play all instruments?",
+            "Would you rather never sleep or never eat?",
+            "Would you rather be the funniest person in the room or the smartest?",
+            "Would you rather lose all your photos or all your messages?",
+            "Would you rather be able to read minds or see the future?",
+            "Would you rather live in a treehouse or an underground bunker?",
+            "Would you rather have free WiFi wherever you go or free coffee wherever you go?",
+            "Would you rather be able to talk to animals or speak every language?",
+            "Would you rather live without heating or without AC?",
+            "Would you rather fight 100 duck-sized horses or 1 horse-sized duck?",
+            "Would you rather be famous but hated or unknown but loved?",
+            "Would you rather time travel to the past or the future?",
+            "Would you rather have a rewind button or a pause button for life?",
+            "Would you rather have one wish granted today or three wishes granted in 10 years?",
+            "Would you rather always know the truth or never be lied to?",
+            "Would you rather have an extra finger or an extra toe?",
+            "Would you rather be a famous musician or a famous actor?",
+            "Would you rather live forever or die young and happy?",
+            "Would you rather give up your phone or give up your friends?",
+            "Would you rather only be able to whisper or only be able to shout?",
+            "Would you rather live without your favorite food or only eat your favorite food?",
+            "Would you rather be able to teleport or read minds?",
+            "Would you rather be the worst player on a winning team or the best on a losing team?",
+            "Would you rather know everything or be able to do anything?",
+            "Would you rather lose your sense of taste or your sense of smell?",
+            "Would you rather have a third eye or a third ear?",
+            "Would you rather be alone for life or never have alone time?",
+            "Would you rather have super strength or super speed?",
+            "Would you rather live in a city or a remote cabin?",
+            "Would you rather forget your past or know your future?",
+            "Would you rather have a personal chef or a personal driver?",
+            "Would you rather be the funniest or the most attractive person in any room?",
+            "Would you rather fight a bear once a year or fight a goose every day?",
+            "Would you rather always have to say what you think or never speak again?",
+            "Would you rather never feel pain or never feel fear?",
+            "Would you rather have a remote control for life or a fast-forward button?",
+            "Would you rather be 5 years old forever or 80 years old forever?",
+            "Would you rather have a million dollars now or 10 million in 10 years?",
+        ]
+
+        # 20 magic 8ball responses
+        self.ball_responses = [
             "It is certain.",
             "Without a doubt.",
             "Yes, definitely.",
@@ -51,44 +250,115 @@ class Fun(commands.Cog):
             "The shadows are unclear.",
             "Darkness confirms it.",
             "Even the void doubts this.",
+            "Yes, but at what cost.",
+            "Concentrate and ask again.",
+            "Outlook is grim.",
+            "Ask me when the moon rises.",
         ]
-        embed = discord.Embed(color=0x1a1a2e)
-        embed.add_field(name="Question", value=question, inline=False)
-        embed.add_field(name="Answer", value=random.choice(responses), inline=False)
+
+        # 20+ typing race sentences (used by games.py)
+        self.typerace_sentences = [
+            "the quick brown fox jumps over the lazy dog.",
+            "she sells seashells by the seashore on sunny afternoons.",
+            "a journey of a thousand miles begins with a single step.",
+            "to be or not to be that is the question we all face.",
+            "the early bird catches the worm but the second mouse gets the cheese.",
+            "all that glitters is not gold but some of it certainly is.",
+            "the pen is mightier than the sword in most situations.",
+            "when life gives you lemons make lemonade and sell it.",
+            "an apple a day keeps the doctor away most of the time.",
+            "beauty is in the eye of the beholder and nowhere else.",
+            "actions speak louder than words ever could in this world.",
+            "the grass is always greener on the other side of the fence.",
+            "rome was not built in a day but it eventually fell.",
+            "better late than never unless you are attending a funeral.",
+            "every cloud has a silver lining somewhere if you look hard.",
+            "the cat sat on the mat while the dog slept on the floor.",
+            "music is the universal language of mankind across all cultures.",
+            "knowledge is power but only when properly applied to life.",
+            "time and tide wait for no man or woman on this earth.",
+            "the only thing we have to fear is fear itself and spiders.",
+            "you can't judge a book by its cover but you can try anyway.",
+            "the best things in life are free but the good ones cost money.",
+        ]
+
+    async def _send_joke(self, message):
+        """Helper used by intent_parser to send a random joke via a message reply."""
+        try:
+            embed = discord.Embed(description=random.choice(self.jokes), color=0x1a1a2e)
+            await message.reply(embed=embed, mention_author=False)
+        except Exception:
+            pass
+
+    async def _ai_one_liner(self, system_prompt: str, user_prompt: str) -> str:
+        """Helper: call the AI for a one-liner response."""
+        if not self.github_token:
+            return None
+        try:
+            headers = {
+                "Authorization": f"Bearer {self.github_token}",
+                "Content-Type": "application/json"
+            }
+            payload = {
+                "model": "gpt-4o-mini",
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                "temperature": 0.9,
+                "max_tokens": 200
+            }
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    self.api_url,
+                    headers=headers,
+                    json=payload,
+                    timeout=aiohttp.ClientTimeout(total=10)
+                ) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        return data['choices'][0]['message']['content']
+        except Exception as e:
+            print(f"AI helper error: {e}")
+        return None
+
+    @app_commands.command(name="roll", description="Roll a dice")
+    async def roll(self, interaction: discord.Interaction, sides: int = 6):
+        self.bot.increment_command('roll')
+        if sides < 2 or sides > 1000:
+            await interaction.response.send_message(
+                "Sides must be between 2 and 1000.",
+                ephemeral=True
+            )
+            return
+        result = random.randint(1, sides)
+        embed = discord.Embed(
+            description=f"You rolled a **{result}** out of {sides}",
+            color=0x1a1a2e
+        )
         await interaction.response.send_message(embed=embed)
 
-    @app_commands.command(name="rps", description="Rock Paper Scissors")
-    @app_commands.choices(choice=[
-        app_commands.Choice(name="Rock 🪨", value="rock"),
-        app_commands.Choice(name="Paper 📄", value="paper"),
-        app_commands.Choice(name="Scissors ✂️", value="scissors"),
-    ])
-    async def rps(self, interaction: discord.Interaction, choice: app_commands.Choice[str]):
-        choices = ["rock", "paper", "scissors"]
-        bot_choice = random.choice(choices)
-        emoji = {"rock": "🪨", "paper": "📄", "scissors": "✂️"}
+    @app_commands.command(name="flip", description="Flip a coin")
+    async def flip(self, interaction: discord.Interaction):
+        self.bot.increment_command('flip')
+        result = random.choice(["Heads", "Tails"])
+        embed = discord.Embed(
+            description=f"**{result}**",
+            color=0x1a1a2e
+        )
+        await interaction.response.send_message(embed=embed)
 
-        if choice.value == bot_choice:
-            result = "Tie."
-            color = discord.Color.orange()
-        elif (
-            (choice.value == "rock" and bot_choice == "scissors") or
-            (choice.value == "paper" and bot_choice == "rock") or
-            (choice.value == "scissors" and bot_choice == "paper")
-        ):
-            result = "You win."
-            color = discord.Color.green()
-        else:
-            result = "I win."
-            color = discord.Color.red()
-
-        embed = discord.Embed(description=result, color=color)
-        embed.add_field(name="You", value=f"{emoji[choice.value]} {choice.value.title()}", inline=True)
-        embed.add_field(name="Me", value=f"{emoji[bot_choice]} {bot_choice.title()}", inline=True)
+    @app_commands.command(name="8ball", description="Ask the magic 8-ball")
+    async def eightball(self, interaction: discord.Interaction, question: str):
+        self.bot.increment_command('8ball')
+        embed = discord.Embed(color=0x1a1a2e)
+        embed.add_field(name="Question", value=question, inline=False)
+        embed.add_field(name="Answer", value=random.choice(self.ball_responses), inline=False)
         await interaction.response.send_message(embed=embed)
 
     @app_commands.command(name="meme", description="Random meme")
     async def meme(self, interaction: discord.Interaction):
+        self.bot.increment_command('meme')
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.get('https://meme-api.com/gimme') as r:
@@ -103,44 +373,20 @@ class Fun(commands.Cog):
         except:
             await interaction.response.send_message("Failed to fetch meme.", ephemeral=True)
 
-    @app_commands.command(name="joke", description="Get a dark joke")
+    @app_commands.command(name="joke", description="Get a random joke")
     async def joke(self, interaction: discord.Interaction):
-        jokes = [
-            "I told my psychiatrist I keep thinking I'm a dog. He told me to get off the couch.",
-            "My grief counselor died. He was so good at his job, I don't even care.",
-            "I have a lot of growing up to do. I realized that the other day inside my fort.",
-            "I used to hate facial hair, but then it grew on me.",
-            "My boss told me to have a good day. So I went home.",
-            "I asked God for a bike, but I know God doesn't work that way. So I stole a bike and asked for forgiveness.",
-            "The cemetery is a popular place. People are dying to get in.",
-            "I don't trust stairs. They're always up to something.",
-            "My wife told me I had to stop acting like a flamingo. I had to put my foot down.",
-            "I told my doctor I broke my arm in two places. He told me to stop going to those places.",
-        ]
+        self.bot.increment_command('joke')
         embed = discord.Embed(
-            description=random.choice(jokes),
+            description=random.choice(self.jokes),
             color=0x1a1a2e
         )
         await interaction.response.send_message(embed=embed)
 
     @app_commands.command(name="fact", description="Get a random fact")
     async def fact(self, interaction: discord.Interaction):
-        facts = [
-            "Honey never spoils. Archaeologists found 3000-year-old honey in Egyptian tombs that was still edible.",
-            "A day on Venus is longer than a year on Venus.",
-            "Octopuses have three hearts, blue blood, and nine brains.",
-            "The human brain uses about 20% of the body's total energy.",
-            "A group of flamingos is called a flamboyance.",
-            "There are more possible iterations of a game of chess than atoms in the observable universe.",
-            "Sharks are older than trees. They've existed for 450 million years.",
-            "The average person walks about 100,000 miles in their lifetime.",
-            "Cleopatra lived closer in time to the Moon landing than to the construction of the Great Pyramid.",
-            "A single cloud can weigh more than a million pounds.",
-            "Bananas are berries, but strawberries aren't.",
-            "The Eiffel Tower grows taller in summer due to thermal expansion.",
-        ]
+        self.bot.increment_command('fact')
         embed = discord.Embed(
-            description=f"💡 {random.choice(facts)}",
+            description=f"💡 {random.choice(self.facts)}",
             color=0x1a1a2e
         )
         await interaction.response.send_message(embed=embed)
@@ -152,6 +398,7 @@ class Fun(commands.Cog):
         user1: discord.Member,
         user2: discord.Member
     ):
+        self.bot.increment_command('ship')
         score = random.randint(1, 100)
         bar_filled = score // 10
         bar = "❤️" * bar_filled + "🖤" * (10 - bar_filled)
@@ -167,6 +414,12 @@ class Fun(commands.Cog):
         else:
             verdict = "Perfect match. The universe wills it."
 
+        # AI one-liner
+        ai_comment = await self._ai_one_liner(
+            "Generate a single short funny or savage one-line comment about this Discord pairing. Lowercase, casual. Max 15 words. No emojis.",
+            f"{user1.display_name} and {user2.display_name}"
+        )
+
         embed = discord.Embed(color=0x1a1a2e)
         embed.add_field(
             name="Shipping",
@@ -179,28 +432,39 @@ class Fun(commands.Cog):
             inline=False
         )
         embed.add_field(name="Verdict", value=verdict, inline=False)
+        if ai_comment:
+            embed.set_footer(text=ai_comment)
 
         await interaction.response.send_message(embed=embed)
 
-    @app_commands.command(name="rate", description="Rate anything out of 10")
+    @app_commands.command(name="rate", description="Rate anything out of 10 with a sarcastic one-liner")
     async def rate(self, interaction: discord.Interaction, thing: str):
+        self.bot.increment_command('rate')
         score = random.randint(0, 10)
+        comment = await self._ai_one_liner(
+            f"You are ao, a sarcastic Discord bot. Rate '{thing}' a {score}/10 with one short sarcastic one-liner. Lowercase, casual, max 20 words. No emojis.",
+            thing
+        )
         embed = discord.Embed(
             description=f"I rate **{thing}** a **{score}/10**",
             color=0x1a1a2e
         )
+        if comment:
+            embed.set_footer(text=comment)
         await interaction.response.send_message(embed=embed)
 
     @app_commands.command(name="reverse", description="Reverse text")
     async def reverse(self, interaction: discord.Interaction, text: str):
+        self.bot.increment_command('reverse')
         embed = discord.Embed(
             description=text[::-1],
             color=0x1a1a2e
         )
         await interaction.response.send_message(embed=embed)
 
-    @app_commands.command(name="mock", description="Mock someone's text")
+    @app_commands.command(name="mock", description="Mock text in aLtErNaTiNg case")
     async def mock(self, interaction: discord.Interaction, text: str):
+        self.bot.increment_command('mock')
         mocked = "".join(
             c.upper() if i % 2 == 0 else c.lower()
             for i, c in enumerate(text)
@@ -208,8 +472,153 @@ class Fun(commands.Cog):
         embed = discord.Embed(description=mocked, color=0x1a1a2e)
         await interaction.response.send_message(embed=embed)
 
+    @app_commands.command(name="clap", description="Adds 👏 between every word")
+    async def clap(self, interaction: discord.Interaction, text: str):
+        self.bot.increment_command('clap')
+        words = text.split()
+        result = " 👏 ".join(words)
+        if len(result) > 2000:
+            result = result[:2000]
+        await interaction.response.send_message(result)
+
+    @app_commands.command(name="compliment", description="Give a genuine funny compliment")
+    async def compliment(self, interaction: discord.Interaction, user: discord.Member = None):
+        self.bot.increment_command('compliment')
+        target = user or interaction.user
+        compliment = await self._ai_one_liner(
+            "Give a genuine funny compliment to a Discord user. Lowercase, casual, max 2 sentences. No emojis. Not creepy.",
+            target.display_name
+        )
+        if not compliment:
+            fallback = [
+                f"{target.mention} you're doing better than you think.",
+                f"{target.mention} your existence is statistically impressive.",
+                f"{target.mention} you make the room 3% brighter. verified.",
+            ]
+            compliment = random.choice(fallback)
+        embed = discord.Embed(description=compliment, color=0x1a1a2e)
+        await interaction.response.send_message(embed=embed)
+
+    @app_commands.command(name="roastme", description="Roast yourself")
+    async def roastme(self, interaction: discord.Interaction):
+        self.bot.increment_command('roastme')
+        target = interaction.user
+        roast = await self._ai_one_liner(
+            f"Roast this Discord user named {target.display_name} in 2-3 sentences. Funny and savage but not hateful or slur-based. Lowercase, casual. No emojis.",
+            target.display_name
+        )
+        if not roast:
+            roast = f"{target.mention} you asked for this. that's already a red flag."
+        embed = discord.Embed(description=roast, color=0x1a1a2e)
+        embed.set_footer(text="you asked. don't blame me.")
+        await interaction.response.send_message(embed=embed)
+
+    @app_commands.command(name="hack", description="Fake hack a user (totally fake)")
+    async def hack(self, interaction: discord.Interaction, user: discord.Member):
+        self.bot.increment_command('hack')
+        if user.bot:
+            await interaction.response.send_message("can't hack bots. they're already soulless.", ephemeral=True)
+            return
+        await interaction.response.send_message(f"hacking {user.display_name}... 0%")
+        steps = [
+            ("accessing discord servers... 17%", 1.5),
+            ("bypassing 2fa... 34%", 2.0),
+            ("found password: *********", 1.5),
+            ("reading DMs... 51%", 2.0),
+            ("found search history... yikes.", 1.5),
+            ("installing malware... 78%", 1.5),
+            ("wiping browser cookies... 90%", 1.5),
+            (f"hack complete. {user.mention} is now yours. jk. this was fake.", 1.0),
+        ]
+        msg = await interaction.original_response()
+        for text, delay in steps:
+            await asyncio.sleep(delay)
+            try:
+                await msg.edit(content=text)
+            except:
+                pass
+
+    @app_commands.command(name="howsmart", description="Check how smart a user is")
+    async def howsmart(self, interaction: discord.Interaction, user: discord.Member = None):
+        self.bot.increment_command('howsmart')
+        target = user or interaction.user
+        pct = random.randint(0, 100)
+        comment = await self._ai_one_liner(
+            f"Make a single short sarcastic comment about {target.display_name} being {pct}% smart. Lowercase, casual, max 15 words. No emojis.",
+            target.display_name
+        )
+        embed = discord.Embed(
+            description=f"{target.mention} is **{pct}%** smart 🧠",
+            color=0x1a1a2e
+        )
+        if comment:
+            embed.set_footer(text=comment)
+        await interaction.response.send_message(embed=embed)
+
+    @app_commands.command(name="say", description="Make the bot say something")
+    @app_commands.checks.has_permissions(manage_messages=True)
+    async def say(self, interaction: discord.Interaction, text: str):
+        self.bot.increment_command('say')
+        try:
+            await interaction.message.delete()
+        except:
+            pass
+        await interaction.channel.send(text)
+        await interaction.response.send_message("done.", ephemeral=True)
+
+    @app_commands.command(name="ascii", description="Convert text to ASCII art")
+    async def ascii(self, interaction: discord.Interaction, text: str):
+        self.bot.increment_command('ascii')
+        if len(text) > 20:
+            await interaction.response.send_message("text too long. max 20 chars.", ephemeral=True)
+            return
+        try:
+            art = pyfiglet.figlet_format(text)
+            if len(art) > 1900:
+                art = art[:1900]
+            await interaction.response.send_message(f"```\n{art}\n```")
+        except Exception as e:
+            await interaction.response.send_message("couldn't generate ASCII art.", ephemeral=True)
+
+    @app_commands.command(name="emojify", description="Convert text to regional indicator emojis")
+    async def emojify(self, interaction: discord.Interaction, text: str):
+        self.bot.increment_command('emojify')
+        result = ""
+        for c in text.lower():
+            if c.isalpha():
+                result += f":regional_indicator_{c}: "
+            elif c == " ":
+                result += "   "
+            else:
+                result += c + " "
+        if len(result) > 2000:
+            result = result[:2000]
+        await interaction.response.send_message(result)
+
+    @app_commands.command(name="pickup", description="Get a random pickup line")
+    async def pickup(self, interaction: discord.Interaction):
+        self.bot.increment_command('pickup')
+        embed = discord.Embed(
+            description=random.choice(self.pickup_lines),
+            color=0x1a1a2e
+        )
+        await interaction.response.send_message(embed=embed)
+
+    @app_commands.command(name="wouldyourather", description="Get a random would-you-rather question")
+    async def wouldyourather(self, interaction: discord.Interaction):
+        self.bot.increment_command('wouldyourather')
+        embed = discord.Embed(
+            title="Would You Rather",
+            description=random.choice(self.wyr_questions),
+            color=0x1a1a2e
+        )
+        embed.set_footer(text="no wrong answers. except the wrong ones.")
+        await interaction.response.send_message(embed=embed)
+
+    # Keep /choose and /topic and /would from original (legacy compatibility)
     @app_commands.command(name="choose", description="Let the bot choose for you")
     async def choose(self, interaction: discord.Interaction, option1: str, option2: str):
+        self.bot.increment_command('choose')
         choice = random.choice([option1, option2])
         embed = discord.Embed(
             description=f"I choose **{choice}**",
@@ -219,6 +628,7 @@ class Fun(commands.Cog):
 
     @app_commands.command(name="topic", description="Random conversation topic")
     async def topic(self, interaction: discord.Interaction):
+        self.bot.increment_command('topic')
         topics = [
             "If you could live in any fictional universe, which would it be?",
             "What's a skill you wish you had learned earlier?",
@@ -238,19 +648,20 @@ class Fun(commands.Cog):
         embed.set_footer(text="conversation starter")
         await interaction.response.send_message(embed=embed)
 
-    @app_commands.command(name="would", description="Would you rather")
+    @app_commands.command(name="would", description="Would you rather (custom)")
     async def would(self, interaction: discord.Interaction, option1: str, option2: str):
+        self.bot.increment_command('would')
         embed = discord.Embed(
             title="Would You Rather",
             color=0x1a1a2e
         )
         embed.add_field(name="Option A", value=option1, inline=True)
         embed.add_field(name="Option B", value=option2, inline=True)
-
-        msg = await interaction.response.send_message(embed=embed)
+        await interaction.response.send_message(embed=embed)
         msg = await interaction.original_response()
         await msg.add_reaction("🅰️")
         await msg.add_reaction("🅱️")
+
 
 async def setup(bot):
     await bot.add_cog(Fun(bot))
