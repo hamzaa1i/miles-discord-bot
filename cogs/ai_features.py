@@ -101,9 +101,7 @@ class AIFeatures(commands.Cog):
             temperature=0.85,
             max_tokens=300
         )
-        embed = discord.Embed(description=result[:4000], color=0x1a1a2e)
-        embed.set_footer(text=f"situation: {situation[:100]}")
-        await interaction.followup.send(embed=embed)
+        await interaction.followup.send(f"{result}\n*situation: {situation[:100]}*")
 
     @app_commands.command(name="roast_server", description="AI roasts the current server")
     @app_commands.checks.cooldown(1, 10.0, key=lambda i: i.user.id)

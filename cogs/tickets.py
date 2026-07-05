@@ -167,6 +167,7 @@ class Tickets(commands.Cog):
         staff_role: discord.Role = None,
         category: discord.CategoryChannel = None
     ):
+        await interaction.response.defer(ephemeral=True)
         config = self.db.get(str(interaction.guild.id), {})
         config['staff_role_id'] = str(staff_role.id) if staff_role else None
         config['category_id'] = str(category.id) if category else None
@@ -188,9 +189,9 @@ class Tickets(commands.Cog):
             color=0x2b2d31
         )
         try:
-            await interaction.response.send_message(embed=confirm, ephemeral=True)
-        except discord.InteractionResponded:
             await interaction.followup.send(embed=confirm, ephemeral=True)
+        except Exception:
+            pass
 
     @ticket.command(name="close", description="Close a ticket channel")
     async def ticket_close(self, interaction: discord.Interaction):

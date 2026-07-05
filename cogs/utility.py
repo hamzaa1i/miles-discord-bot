@@ -261,6 +261,7 @@ class Utility(commands.Cog):
     @app_commands.command(name="color", description="Show a color swatch from a hex code")
     async def color(self, interaction: discord.Interaction, hex_code: str):
         self.bot.increment_command('color')
+        await interaction.response.defer()
         clean = hex_code.lstrip('#').strip()
         if len(clean) == 3:
             clean = ''.join(c * 2 for c in clean)
@@ -286,13 +287,14 @@ class Utility(commands.Cog):
         embed.add_field(name="RGB", value=f"`{r}, {g}, {b}`", inline=True)
         embed.set_thumbnail(url="attachment://color.png")
         try:
-            await interaction.response.send_message(embed=embed, file=file)
-        except discord.InteractionResponded:
             await interaction.followup.send(embed=embed, file=file)
+        except Exception:
+            pass
 
     @app_commands.command(name="qr", description="Generate a QR code")
     async def qr(self, interaction: discord.Interaction, text: str):
         self.bot.increment_command('qr')
+        await interaction.response.defer()
         try:
             import qrcode
             import io
@@ -308,9 +310,9 @@ class Utility(commands.Cog):
             embed.set_image(url="attachment://qr.png")
             embed.add_field(name="Content", value=f"`{text[:200]}`", inline=False)
             try:
-                await interaction.response.send_message(embed=embed, file=file)
-            except discord.InteractionResponded:
                 await interaction.followup.send(embed=embed, file=file)
+            except Exception:
+                pass
         except Exception as e:
             try:
                 await interaction.response.send_message(f"couldn't generate QR: {e}", ephemeral=True)

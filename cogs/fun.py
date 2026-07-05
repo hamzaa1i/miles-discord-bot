@@ -375,6 +375,7 @@ class Fun(commands.Cog):
     @app_commands.command(name="meme", description="Random meme from r/dankmemes")
     async def meme(self, interaction: discord.Interaction):
         self.bot.increment_command('meme')
+        await interaction.response.defer()
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.get('https://meme-api.com/gimme/dankmemes') as r:
@@ -383,11 +384,11 @@ class Fun(commands.Cog):
                         embed = discord.Embed(title=data.get('title', 'meme'), url=data.get('postLink', ''), color=0xe91e63)
                         embed.set_image(url=data.get('url', ''))
                         embed.set_footer(text=f"u/{data.get('author', '?')} · r/{data.get('subreddit', 'dankmemes')} • 👍 {data.get('ups', 0)}")
-                        await interaction.response.send_message(embed=embed)
+                        await interaction.followup.send(embed=embed)
                     else:
-                        await interaction.response.send_message("couldn't fetch meme.", ephemeral=True)
+                        await interaction.followup.send("couldn't fetch meme.")
         except Exception:
-            await interaction.response.send_message("failed to fetch meme.", ephemeral=True)
+            await interaction.followup.send("failed to fetch meme.")
 
     @app_commands.command(name="fact", description="Get a random fact")
     async def fact(self, interaction: discord.Interaction):
@@ -543,6 +544,7 @@ class Fun(commands.Cog):
     @app_commands.checks.cooldown(1, 10.0, key=lambda i: i.user.id)
     async def pp(self, interaction: discord.Interaction, user: discord.Member = None):
         self.bot.increment_command('pp')
+        await interaction.response.defer()
         target = user or interaction.user
         size = random.randint(1, 20)
         bar = "8" + "=" * size + "D"
@@ -553,12 +555,13 @@ class Fun(commands.Cog):
         msg = f"📏 {target.display_name}'s PP\n```\n{bar}\n```\nSize: {size}/20 inches"
         if comment:
             msg += f"\n*{comment}*"
-        await interaction.response.send_message(msg)
+        await interaction.followup.send(msg)
 
     @app_commands.command(name="iq", description="IQ test with AI comment")
     @app_commands.checks.cooldown(1, 10.0, key=lambda i: i.user.id)
     async def iq(self, interaction: discord.Interaction, user: discord.Member = None):
         self.bot.increment_command('iq')
+        await interaction.response.defer()
         target = user or interaction.user
         score = random.randint(1, 200)
         if score < 70:
@@ -574,13 +577,14 @@ class Fun(commands.Cog):
         msg = f"🧠 {target.display_name}'s IQ: **{score}** — {tier}"
         if comment:
             msg += f"\n*{comment}*"
-        await interaction.response.send_message(msg)
+        await interaction.followup.send(msg)
 
 
     @app_commands.command(name="compliment", description="AI compliment")
     @app_commands.checks.cooldown(1, 10.0, key=lambda i: i.user.id)
     async def compliment(self, interaction: discord.Interaction, user: discord.Member = None):
         self.bot.increment_command('compliment')
+        await interaction.response.defer()
         target = user or interaction.user
         comp = await self._ai_one_liner(
             f"Give a genuine funny compliment to {target.display_name}. Lowercase, max 2 sentences. No emojis.",
@@ -588,12 +592,13 @@ class Fun(commands.Cog):
         )
         if not comp:
             comp = f"{target.mention} you're doing better than you think."
-        await interaction.response.send_message(comp)
+        await interaction.followup.send(comp)
 
     @app_commands.command(name="roastme", description="Roast yourself")
     @app_commands.checks.cooldown(1, 10.0, key=lambda i: i.user.id)
     async def roastme(self, interaction: discord.Interaction):
         self.bot.increment_command('roastme')
+        await interaction.response.defer()
         target = interaction.user
         roast = await self._ai_one_liner(
             f"Roast {target.display_name} in 1-2 sentences. They asked for it. Funny, savage, not hateful. Lowercase. No emojis.",
@@ -601,12 +606,13 @@ class Fun(commands.Cog):
         )
         if not roast:
             roast = f"{target.mention} you asked for this. that's already a red flag."
-        await interaction.response.send_message(roast)
+        await interaction.followup.send(roast)
 
     @app_commands.command(name="ship", description="Ship two users")
     @app_commands.checks.cooldown(1, 10.0, key=lambda i: i.user.id)
     async def ship(self, interaction: discord.Interaction, user1: discord.Member, user2: discord.Member):
         self.bot.increment_command('ship')
+        await interaction.response.defer()
         score = random.randint(1, 100)
         bar = "❤️" * (score // 10) + "🖤" * (10 - score // 10)
         if score < 30:
@@ -622,12 +628,13 @@ class Fun(commands.Cog):
         msg = f"💖 {user1.mention} 🖤 {user2.mention}\nCompatibility: {score}%\n{bar}\n{verdict}"
         if comment:
             msg += f"\n*{comment}*"
-        await interaction.response.send_message(msg)
+        await interaction.followup.send(msg)
 
     @app_commands.command(name="rate", description="AI rates something /10")
     @app_commands.checks.cooldown(1, 10.0, key=lambda i: i.user.id)
     async def rate(self, interaction: discord.Interaction, thing: str):
         self.bot.increment_command('rate')
+        await interaction.response.defer()
         score = random.randint(0, 10)
         comment = await self._ai_one_liner(
             f"You are cyn. Rate '{thing}' a {score}/10 in one sarcastic sentence. Lowercase. No emojis.",
@@ -636,7 +643,7 @@ class Fun(commands.Cog):
         msg = f"I rate **{thing}** a **{score}/10**"
         if comment:
             msg += f"\n*{comment}*"
-        await interaction.response.send_message(msg)
+        await interaction.followup.send(msg)
 
     @app_commands.command(name="battle", description="AI narrates a funny battle")
     @app_commands.checks.cooldown(1, 15.0, key=lambda i: i.user.id)

@@ -73,9 +73,10 @@ class AutoResponder(commands.Cog):
                     await message.channel.send(response)
                     return
 
-        # Auto-responder substring match
+        # Auto-responder whole-word match (DESIGN FIX 4)
+        import re as _re
         for trigger, response in config.get('triggers', {}).items():
-            if trigger in content_lower:
+            if _re.search(rf'\b{_re.escape(trigger)}\b', message.content, _re.IGNORECASE):
                 formatted = self._format_response(response, message)
                 await message.channel.send(formatted)
                 return

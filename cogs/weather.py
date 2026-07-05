@@ -55,7 +55,8 @@ class Weather(commands.Cog):
             async with aiohttp.ClientSession() as session:
                 async with session.get(
                     url,
-                    timeout=aiohttp.ClientTimeout(total=15)
+                    timeout=aiohttp.ClientTimeout(total=15),
+                    headers={"User-Agent": "curl/7.68.0"}
                 ) as r:
                     if r.status == 404:
                         return discord.Embed(
@@ -71,8 +72,19 @@ class Weather(commands.Cog):
                     try:
                         data = await r.json()
                     except Exception:
+                        # wttr.in sometimes returns HTML instead of JSON
+                        try:
+                            raw_text = await r.text()
+                            # Try to find weather info in plain text
+                            if 'Unknown location' in raw_text or 'ERROR' in raw_text:
+                                return discord.Embed(
+                                    description=f"couldn't find weather for **{city}**.",
+                                    color=0xed4245
+                                )
+                        except Exception:
+                            pass
                         return discord.Embed(
-                            description=f"couldn't parse weather data for {city}.",
+                            description=f"couldn't parse weather data for **{city}**. try a different city name.",
                             color=0xed4245
                         )
 

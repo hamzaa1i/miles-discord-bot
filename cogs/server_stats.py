@@ -370,6 +370,7 @@ class ServerStats(commands.Cog):
     @app_commands.command(name="roleinfo", description="Detailed role information")
     @app_commands.describe(role="The role to view")
     async def roleinfo(self, interaction: discord.Interaction, role: discord.Role):
+        await interaction.response.defer()
         embed = discord.Embed(title=f"🎭 {role.name}", color=role.color if role.color.value else 0x2b2d31)
         embed.add_field(name="ID", value=role.id, inline=True)
         embed.add_field(name="Members", value=len(role.members), inline=True)
@@ -387,10 +388,11 @@ class ServerStats(commands.Cog):
         if role.permissions.ban_members: perms.append("Ban")
         if perms:
             embed.add_field(name="Key Permissions", value=", ".join(perms), inline=False)
-        await interaction.response.send_message(embed=embed)
+        await interaction.followup.send(embed=embed)
 
     @app_commands.command(name="channelinfo", description="Channel information")
     async def channelinfo(self, interaction: discord.Interaction, channel: discord.TextChannel = None):
+        await interaction.response.defer()
         channel = channel or interaction.channel
         embed = discord.Embed(title=f"#{channel.name}", color=0x2b2d31)
         embed.add_field(name="ID", value=channel.id, inline=True)
@@ -399,10 +401,11 @@ class ServerStats(commands.Cog):
         embed.add_field(name="NSFW", value="Yes" if channel.nsfw else "No", inline=True)
         embed.add_field(name="Slowmode", value=f"{channel.slowmode_delay}s", inline=True)
         embed.add_field(name="Created", value=channel.created_at.strftime("%Y-%m-%d"), inline=True)
-        await interaction.response.send_message(embed=embed)
+        await interaction.followup.send(embed=embed)
 
     @app_commands.command(name="banner", description="Show user banner")
     async def banner(self, interaction: discord.Interaction, user: discord.Member = None):
+        await interaction.response.defer()
         user = user or interaction.user
         fetched = await self.bot.fetch_user(user.id)
         if not fetched.banner:
@@ -414,9 +417,9 @@ class ServerStats(commands.Cog):
         embed = discord.Embed(title=f"{user.display_name}'s Banner", color=fetched.accent_color or 0x2b2d31)
         embed.set_image(url=fetched.banner.url)
         try:
-            await interaction.response.send_message(embed=embed)
-        except discord.InteractionResponded:
             await interaction.followup.send(embed=embed)
+        except Exception:
+            pass
 
 
 async def setup(bot):

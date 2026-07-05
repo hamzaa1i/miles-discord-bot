@@ -266,8 +266,14 @@ class Economy(commands.Cog):
         await interaction.response.defer()
 
         all_data = self.db.get_all()
+        # Filter to only members of this guild
+        guild_member_ids = {str(m.id) for m in interaction.guild.members}
+        filtered = {
+            uid: data for uid, data in all_data.items()
+            if uid in guild_member_ids and isinstance(data, dict)
+        }
         sorted_users = sorted(
-            all_data.items(),
+            filtered.items(),
             key=lambda x: x[1].get('balance', 0) + x[1].get('bank', 0),
             reverse=True
         )[:10]

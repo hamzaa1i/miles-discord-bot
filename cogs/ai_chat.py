@@ -222,6 +222,16 @@ you are cyn. you're real enough. made by {owner_display} (@{owner_username})."""
             print(f"Narrate error: {e}")
             return fallback
 
+    async def _safe_reply(self, message, content=None, embed=None, mention_author=False, **kwargs):
+        """Safely reply to a message, falling back to channel.send if the message is deleted."""
+        try:
+            await message.reply(content=content, embed=embed, mention_author=mention_author, **kwargs)
+        except (discord.NotFound, discord.HTTPException):
+            try:
+                await message.channel.send(content=content, embed=embed)
+            except Exception:
+                pass
+
     async def _execute_intent(self, message: discord.Message, intent_data: dict) -> bool:
         """Map an intent dict to an actual command call.
         Returns True if handled (the AI chat fallback should NOT run),
@@ -249,67 +259,67 @@ you are cyn. you're real enough. made by {owner_display} (@{owner_username})."""
         try:
             if intent == 'ban':
                 if not author.guild_permissions.ban_members:
-                    await message.reply("you don't have permission to do that", mention_author=False)
+                    await self._safe_reply(message, "you don't have permission to do that", mention_author=False)
                     return True
                 target = resolve_user()
                 if not target:
-                    await message.reply("who do you want me to ban? mention them.", mention_author=False)
+                    await self._safe_reply(message, "who do you want me to ban? mention them.", mention_author=False)
                     return True
                 reason = params.get('reason', 'No reason')
                 await target.ban(reason=reason)
-                await message.reply(f"banned **{target}** — {reason}", mention_author=False)
+                await self._safe_reply(message, f"banned **{target}** — {reason}", mention_author=False)
                 return True
 
             if intent == 'kick':
                 if not author.guild_permissions.kick_members:
-                    await message.reply("you don't have permission to do that", mention_author=False)
+                    await self._safe_reply(message, "you don't have permission to do that", mention_author=False)
                     return True
                 target = resolve_user()
                 if not target:
-                    await message.reply("who do you want me to kick? mention them.", mention_author=False)
+                    await self._safe_reply(message, "who do you want me to kick? mention them.", mention_author=False)
                     return True
                 reason = params.get('reason', 'No reason')
                 await target.kick(reason=reason)
-                await message.reply(f"kicked **{target}** — {reason}", mention_author=False)
+                await self._safe_reply(message, f"kicked **{target}** — {reason}", mention_author=False)
                 return True
 
             if intent == 'mute':
                 if not author.guild_permissions.moderate_members:
-                    await message.reply("you don't have permission to do that", mention_author=False)
+                    await self._safe_reply(message, "you don't have permission to do that", mention_author=False)
                     return True
                 target = resolve_user()
                 if not target:
-                    await message.reply("who do you want me to mute? mention them.", mention_author=False)
+                    await self._safe_reply(message, "who do you want me to mute? mention them.", mention_author=False)
                     return True
                 seconds = params.get('duration_seconds') or 600
                 if seconds > 2419200:
                     seconds = 2419200
                 reason = params.get('reason', 'No reason')
                 await target.timeout(timedelta(seconds=seconds), reason=reason)
-                await message.reply(f"muted **{target}** for {seconds}s — {reason}", mention_author=False)
+                await self._safe_reply(message, f"muted **{target}** for {seconds}s — {reason}", mention_author=False)
                 return True
 
             if intent == 'purge':
                 if not author.guild_permissions.manage_messages:
-                    await message.reply("you don't have permission to do that", mention_author=False)
+                    await self._safe_reply(message, "you don't have permission to do that", mention_author=False)
                     return True
                 amount = params.get('amount') or 5
                 if amount < 1 or amount > 100:
                     amount = max(1, min(100, amount))
                 deleted = await channel.purge(limit=amount)
-                await message.reply(f"deleted {len(deleted)} messages", delete_after=5, mention_author=False)
+                await self._safe_reply(message, f"deleted {len(deleted)} messages", delete_after=5, mention_author=False)
                 return True
 
             if intent == 'warn':
                 if not author.guild_permissions.moderate_members:
-                    await message.reply("you don't have permission to do that", mention_author=False)
+                    await self._safe_reply(message, "you don't have permission to do that", mention_author=False)
                     return True
                 target = resolve_user()
                 if not target:
-                    await message.reply("who do you want me to warn? mention them.", mention_author=False)
+                    await self._safe_reply(message, "who do you want me to warn? mention them.", mention_author=False)
                     return True
                 reason = params.get('reason', 'No reason')
-                await message.reply(f"⚠️ **{target}** has been warned: {reason}", mention_author=False)
+                await self._safe_reply(message, f"⚠️ **{target}** has been warned: {reason}", mention_author=False)
                 return True
 
             if intent == 'balance':
@@ -332,7 +342,7 @@ you are cyn. you're real enough. made by {owner_display} (@{owner_username})."""
                     except Exception:
                         narrated = None
                     if narrated:
-                        await message.reply(narrated, mention_author=False)
+                        await self._safe_reply(message, narrated, mention_author=False)
                     else:
                         # Fallback: plain text with actual values
                         await message.reply(
@@ -340,29 +350,29 @@ you are cyn. you're real enough. made by {owner_display} (@{owner_username})."""
                             mention_author=False
                         )
                 else:
-                    await message.reply("economy system not loaded.", mention_author=False)
+                    await self._safe_reply(message, "economy system not loaded.", mention_author=False)
                 return True
 
             if intent == 'pay':
                 target = resolve_user('target_user_id') or (message.mentions[0] if message.mentions else None)
                 amount = params.get('amount')
                 if not target or not amount:
-                    await message.reply("who do you want to pay and how much?", mention_author=False)
+                    await self._safe_reply(message, "who do you want to pay and how much?", mention_author=False)
                     return True
                 eco_cog = self.bot.get_cog('Economy')
                 if eco_cog:
                     sender = eco_cog.get_user_data(author.id)
                     if sender['balance'] < amount:
-                        await message.reply(f"you only have ${sender['balance']:,}", mention_author=False)
+                        await self._safe_reply(message, f"you only have ${sender['balance']:,}", mention_author=False)
                         return True
                     receiver = eco_cog.get_user_data(target.id)
                     sender['balance'] -= amount
                     receiver['balance'] += amount
                     eco_cog.save_user_data(author.id, sender)
                     eco_cog.save_user_data(target.id, receiver)
-                    await message.reply(f"sent **${amount:,}** to {target.mention}", mention_author=False)
+                    await self._safe_reply(message, f"sent **${amount:,}** to {target.mention}", mention_author=False)
                 else:
-                    await message.reply("economy system not loaded.", mention_author=False)
+                    await self._safe_reply(message, "economy system not loaded.", mention_author=False)
                 return True
 
             if intent == 'daily':
@@ -371,13 +381,13 @@ you are cyn. you're real enough. made by {owner_display} (@{owner_username})."""
                     # Invoke the daily command directly via the cog
                     cmd = eco_cog.daily
                     # Build a fake interaction isn't trivial — just send instructions
-                    await message.reply("use `/daily` to claim your daily reward.", mention_author=False)
+                    await self._safe_reply(message, "use `/daily` to claim your daily reward.", mention_author=False)
                 else:
-                    await message.reply("economy system not loaded.", mention_author=False)
+                    await self._safe_reply(message, "economy system not loaded.", mention_author=False)
                 return True
 
             if intent == 'work':
-                await message.reply("use `/work` to work for coins.", mention_author=False)
+                await self._safe_reply(message, "use `/work` to work for coins.", mention_author=False)
                 return True
 
             if intent == 'rank':
@@ -391,18 +401,18 @@ you are cyn. you're real enough. made by {owner_display} (@{owner_username})."""
                         mention_author=False
                     )
                 else:
-                    await message.reply("leveling system not loaded.", mention_author=False)
+                    await self._safe_reply(message, "leveling system not loaded.", mention_author=False)
                 return True
 
             if intent == 'leaderboard':
-                await message.reply("use `/leaderboard_levels` to see the XP leaderboard.", mention_author=False)
+                await self._safe_reply(message, "use `/leaderboard_levels` to see the XP leaderboard.", mention_author=False)
                 return True
 
             if intent == 'remind':
                 seconds = params.get('duration_seconds')
                 reminder_text = params.get('reminder_text', '')
                 if not seconds or not reminder_text:
-                    await message.reply("set a reminder like: 'remind me in 10 minutes to drink water'", mention_author=False)
+                    await self._safe_reply(message, "set a reminder like: 'remind me in 10 minutes to drink water'", mention_author=False)
                     return True
                 # Store in data/reminders.json and let the background task handle it
                 import time as _time
@@ -426,7 +436,7 @@ you are cyn. you're real enough. made by {owner_display} (@{owner_username})."""
                         dur = f"{seconds // 60} minute(s)"
                     else:
                         dur = f"{seconds} second(s)"
-                    await message.reply(f"got it. i'll remind you in {dur}.", mention_author=False)
+                    await self._safe_reply(message, f"got it. i'll remind you in {dur}.", mention_author=False)
                 except Exception as e:
                     # Fallback: use asyncio to schedule
                     async def _remind():
@@ -436,7 +446,7 @@ you are cyn. you're real enough. made by {owner_display} (@{owner_username})."""
                         except:
                             pass
                     asyncio.create_task(_remind())
-                    await message.reply(f"reminder set — I'll ping you in {seconds}s", mention_author=False)
+                    await self._safe_reply(message, f"reminder set — I'll ping you in {seconds}s", mention_author=False)
                 return True
 
             if intent == 'serverinfo':
@@ -453,9 +463,9 @@ you are cyn. you're real enough. made by {owner_display} (@{owner_username})."""
                     embed.add_field(name="Owner", value=str(g.owner), inline=True)
                     embed.add_field(name="Created", value=g.created_at.strftime("%Y-%m-%d"), inline=True)
                     embed.add_field(name="ID", value=g.id, inline=True)
-                    await message.reply(embed=embed, mention_author=False)
+                    await self._safe_reply(message, embed=embed, mention_author=False)
                 else:
-                    await message.reply("server info system not loaded.", mention_author=False)
+                    await self._safe_reply(message, "server info system not loaded.", mention_author=False)
                 return True
 
             if intent == 'avatar':
@@ -465,14 +475,14 @@ you are cyn. you're real enough. made by {owner_display} (@{owner_username})."""
                     embed.set_image(url=target.avatar.url)
                 else:
                     embed.set_image(url=target.default_avatar.url)
-                await message.reply(embed=embed, mention_author=False)
+                await self._safe_reply(message, embed=embed, mention_author=False)
                 return True
 
             if intent == 'poll':
                 question = params.get('question', '')
                 options_list = params.get('options_list', []) or []
                 if not question:
-                    await message.reply("what's the poll question?", mention_author=False)
+                    await self._safe_reply(message, "what's the poll question?", mention_author=False)
                     return True
                 embed = discord.Embed(title="📊 Poll", description=question, color=0x1a1a2e)
                 embed.set_footer(text=f"by {author}")
@@ -495,7 +505,7 @@ you are cyn. you're real enough. made by {owner_display} (@{owner_username})."""
                 if fun_cog:
                     await fun_cog._send_joke(message)
                 else:
-                    await message.reply("jokes system not loaded.", mention_author=False)
+                    await self._safe_reply(message, "jokes system not loaded.", mention_author=False)
                 return True
 
             if intent == 'meme':
@@ -507,42 +517,42 @@ you are cyn. you're real enough. made by {owner_display} (@{owner_username})."""
                                 embed = discord.Embed(title=data['title'], color=0x1a1a2e)
                                 embed.set_image(url=data['url'])
                                 embed.set_footer(text=f"r/{data['subreddit']} • 👍 {data['ups']}")
-                                await message.reply(embed=embed, mention_author=False)
+                                await self._safe_reply(message, embed=embed, mention_author=False)
                                 return True
                 except:
                     pass
-                await message.reply("couldn't fetch a meme.", mention_author=False)
+                await self._safe_reply(message, "couldn't fetch a meme.", mention_author=False)
                 return True
 
             if intent == 'rps':
-                await message.reply("use `/rps` to play rock paper scissors with buttons.", mention_author=False)
+                await self._safe_reply(message, "use `/rps` to play rock paper scissors with buttons.", mention_author=False)
                 return True
 
             if intent == 'trivia':
                 triv = self.bot.get_cog('Trivia')
                 if triv:
-                    await message.reply("use `/trivia` to start a trivia game.", mention_author=False)
+                    await self._safe_reply(message, "use `/trivia` to start a trivia game.", mention_author=False)
                 else:
-                    await message.reply("trivia system not loaded.", mention_author=False)
+                    await self._safe_reply(message, "trivia system not loaded.", mention_author=False)
                 return True
 
             if intent == 'weather':
                 city = params.get('city')
                 if not city:
-                    await message.reply("which city?", mention_author=False)
+                    await self._safe_reply(message, "which city?", mention_author=False)
                     return True
                 # Try the dedicated Weather cog first, fall back to Utility
                 weather_cog = self.bot.get_cog('Weather')
                 if weather_cog and hasattr(weather_cog, '_fetch_weather_embed'):
                     embed = await weather_cog._fetch_weather_embed(city)
-                    await message.reply(embed=embed, mention_author=False)
+                    await self._safe_reply(message, embed=embed, mention_author=False)
                 else:
-                    await message.reply("weather system not loaded.", mention_author=False)
+                    await self._safe_reply(message, "weather system not loaded.", mention_author=False)
                 return True
 
             if intent == 'flip':
                 result = random.choice(['Heads', 'Tails'])
-                await message.reply(f"**{result}**", mention_author=False)
+                await self._safe_reply(message, f"**{result}**", mention_author=False)
                 return True
 
             if intent == 'roll':
@@ -552,11 +562,11 @@ you are cyn. you're real enough. made by {owner_display} (@{owner_username})."""
                 if sides > 1000:
                     sides = 1000
                 result = random.randint(1, sides)
-                await message.reply(f"🎲 you rolled a **{result}** (d{sides})", mention_author=False)
+                await self._safe_reply(message, f"🎲 you rolled a **{result}** (d{sides})", mention_author=False)
                 return True
 
         except discord.Forbidden:
-            await message.reply("i don't have permission to do that.", mention_author=False)
+            await self._safe_reply(message, "i don't have permission to do that.", mention_author=False)
             return True
         except Exception as e:
             print(f"Intent execution error: {e}")
@@ -574,10 +584,7 @@ you are cyn. you're real enough. made by {owner_display} (@{owner_username})."""
         if self.bot.user in message.mentions:
             is_limited, remaining = self.check_rate_limit(message.author.id)
             if is_limited:
-                await message.reply(
-                    f"slow down. {remaining}s",
-                    mention_author=False
-                )
+                await self._safe_reply(message, f"slow down. {remaining}s", mention_author=False)
                 return
 
             content = message.content.replace(
@@ -596,10 +603,7 @@ you are cyn. you're real enough. made by {owner_display} (@{owner_username})."""
                     "i'm here. what do you want",
                     "what is it",
                 ]
-                await message.reply(
-                    random.choice(greetings),
-                    mention_author=False
-                )
+                await self._safe_reply(message, random.choice(greetings), mention_author=False)
                 return
 
             self.update_rate_limit(message.author.id)
@@ -620,7 +624,7 @@ you are cyn. you're real enough. made by {owner_display} (@{owner_username})."""
             async with message.channel.typing():
                 response = await self.get_ai_response(message.author.id, content)
 
-            await message.reply(response, mention_author=False)
+            await self._safe_reply(message, response, mention_author=False)
 
     @app_commands.command(name="chat", description="Talk to cyn")
     @app_commands.checks.cooldown(1, 5.0, key=lambda i: i.user.id)
@@ -773,13 +777,8 @@ you are cyn. you're real enough. made by {owner_display} (@{owner_username})."""
             ]
             roast_text = random.choice(roasts)
 
-        embed = discord.Embed(
-            description=roast_text,
-            color=0x1a1a2e
-        )
-        embed.set_footer(text="don't take it personally. or do.")
-
-        await interaction.response.send_message(embed=embed)
+        await interaction.response.defer()
+        await interaction.followup.send(f"{roast_text}\n*don't take it personally. or do.*")
 
     # ==================== /cyn slash command ====================
     @app_commands.command(name="cyn", description="Talk to cyn or run commands naturally")

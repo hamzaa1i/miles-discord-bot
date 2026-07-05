@@ -17,10 +17,10 @@ CONFIG = {
     "avatar": {"x": 60, "y": 81, "size": 120},
     "status": {"x": 152, "y": 173, "size": 28},
     "username": {"x": 210, "y": 95, "font_size": 38, "color": "#ffffff"},
-    "rank_label": {"x": 750, "y": 50, "font_size": 24, "color": "#a0a0aa"},
-    "rank_value": {"x": 815, "y": 42, "font_size": 38, "color": "#ffffff"},
-    "level_label": {"x": 580, "y": 50, "font_size": 24},
-    "level_value": {"x": 650, "y": 42, "font_size": 38, "color": "#ffffff"},
+    "rank_label": {"x": 750, "y": 35, "font_size": 24, "color": "#a0a0aa"},
+    "rank_value": {"x": 815, "y": 60, "font_size": 38, "color": "#ffffff"},
+    "level_label": {"x": 580, "y": 35, "font_size": 24},
+    "level_value": {"x": 650, "y": 60, "font_size": 38, "color": "#ffffff"},
     "xp_text": {"x": 874, "y": 160, "font_size": 22, "color": "#a0a0aa"},
     "progress_bar": {"x": 210, "y": 190, "w": 664, "h": 16, "bg": "#28283a", "radius": 8},
     "percentage": {"x": 542, "y": 215, "font_size": 18, "color": "#a0a0aa"}
@@ -372,7 +372,7 @@ async def generate_profile_card(
         ("NET WORTH", f"${balance + bank:,}"),
         ("TOTAL EARNED", f"${total_earned:,}"),
         ("STREAK", f"{streak} days"),
-        ("GEMS", f"{gems} 💎"),
+        ("GEMS", f"{gems}"),
     ]
 
     start_x = 50

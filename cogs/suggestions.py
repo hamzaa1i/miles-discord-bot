@@ -64,6 +64,7 @@ class Suggestions(commands.Cog):
 
     @suggest.command(name="submit", description="Submit a suggestion")
     async def suggest_submit(self, interaction: discord.Interaction, text: str):
+        await interaction.response.defer(ephemeral=True)
         self.bot.increment_command('suggest_submit')
         data = self.get_guild_data(interaction.guild.id)
         channel_id = data.get('config', {}).get('channel_id')
@@ -111,7 +112,7 @@ class Suggestions(commands.Cog):
         }
         self.save_guild_data(interaction.guild.id, data)
 
-        await interaction.response.send_message(
+        await interaction.followup.send(
             f"✅ suggestion #{sid} submitted in {channel.mention}.",
             ephemeral=True
         )
