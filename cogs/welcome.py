@@ -265,8 +265,84 @@ class Welcome(commands.Cog):
         )
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-    # /welcome and /goodbye groups removed to stay under Discord's 100-command limit.
-    # Use /autorole and /toggledms (kept below) for the most common welcome tasks.
+
+    # ==================== WELCOME & GOODBYE GROUPS ====================
+
+    welcome = app_commands.Group(name="welcome", description="Configure welcome messages")
+    goodbye = app_commands.Group(name="goodbye", description="Configure goodbye messages")
+
+    @welcome.command(name="channel", description="Set welcome channel")
+    @app_commands.checks.has_permissions(manage_guild=True)
+    async def welcome_channel(self, interaction: discord.Interaction, channel: discord.TextChannel):
+        config = self.get_config(interaction.guild.id)
+        config['channel_id'] = str(channel.id)
+        config['enabled'] = True
+        self.db.set(str(interaction.guild.id), config)
+        await interaction.response.send_message(f"✅ welcome channel set to {channel.mention}")
+
+    @welcome.command(name="message", description="Set welcome message")
+    @app_commands.checks.has_permissions(manage_guild=True)
+    async def welcome_message(self, interaction: discord.Interaction, message: str):
+        config = self.get_config(interaction.guild.id)
+        config['message'] = message
+        self.db.set(str(interaction.guild.id), config)
+        await interaction.response.send_message("✅ welcome message set.\nvariables: `{user}` `{server}` `{membercount}`")
+
+    @welcome.command(name="toggle", description="Enable/disable welcome messages")
+    @app_commands.checks.has_permissions(manage_guild=True)
+    async def welcome_toggle(self, interaction: discord.Interaction, enabled: bool):
+        config = self.get_config(interaction.guild.id)
+        config['enabled'] = enabled
+        self.db.set(str(interaction.guild.id), config)
+        status = "enabled" if enabled else "disabled"
+        await interaction.response.send_message(f"✅ welcome messages **{status}**")
+
+    @welcome.command(name="test", description="Send a test welcome message")
+    @app_commands.checks.has_permissions(manage_guild=True)
+    async def welcome_test(self, interaction: discord.Interaction):
+        config = self.get_config(interaction.guild.id)
+        channel_id = config.get('channel_id')
+        if not channel_id:
+            await interaction.response.send_message("no welcome channel set.", ephemeral=True)
+            return
+        channel = interaction.guild.get_channel(int(channel_id))
+        if not channel:
+            await interaction.response.send_message("channel not found.", ephemeral=True)
+            return
+        msg_text = config.get('message', 'Welcome {user} to {server}!').format(
+            user=interaction.user.mention, server=interaction.guild.name, membercount=interaction.guild.member_count
+        )
+        embed = discord.Embed(title=f"Welcome to {interaction.guild.name}!", description=msg_text, color=0x2b2d31)
+        embed.set_thumbnail(url=interaction.user.avatar.url if interaction.user.avatar else interaction.user.default_avatar.url)
+        await channel.send(embed=embed)
+        await interaction.response.send_message("✅ test sent.", ephemeral=True)
+
+    @goodbye.command(name="channel", description="Set goodbye channel")
+    @app_commands.checks.has_permissions(manage_guild=True)
+    async def goodbye_channel(self, interaction: discord.Interaction, channel: discord.TextChannel):
+        config = self.get_config(interaction.guild.id)
+        config['goodbye_channel_id'] = str(channel.id)
+        config['goodbye_enabled'] = True
+        self.db.set(str(interaction.guild.id), config)
+        await interaction.response.send_message(f"✅ goodbye channel set to {channel.mention}")
+
+    @goodbye.command(name="message", description="Set goodbye message")
+    @app_commands.checks.has_permissions(manage_guild=True)
+    async def goodbye_message(self, interaction: discord.Interaction, message: str):
+        config = self.get_config(interaction.guild.id)
+        config['goodbye_message'] = message
+        self.db.set(str(interaction.guild.id), config)
+        await interaction.response.send_message("✅ goodbye message set.")
+
+    @goodbye.command(name="toggle", description="Enable/disable goodbye messages")
+    @app_commands.checks.has_permissions(manage_guild=True)
+    async def goodbye_toggle(self, interaction: discord.Interaction, enabled: bool):
+        config = self.get_config(interaction.guild.id)
+        config['goodbye_enabled'] = enabled
+        self.db.set(str(interaction.guild.id), config)
+        status = "enabled" if enabled else "disabled"
+        await interaction.response.send_message(f"✅ goodbye messages **{status}**")
+
 
     @app_commands.command(name="autorole", description="Set the role automatically assigned to new members")
     @app_commands.checks.has_permissions(manage_roles=True)

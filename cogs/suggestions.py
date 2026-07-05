@@ -195,5 +195,28 @@ class Suggestions(commands.Cog):
         )
 
 
+    @suggest.command(name="list", description="List last 10 pending suggestions")
+    async def suggest_list(self, interaction: discord.Interaction):
+        self.bot.increment_command('suggest_list')
+        data = self.get_guild_data(interaction.guild.id)
+        items = data.get('items', {})
+        pending = [(sid, item) for sid, item in items.items() if item.get('status') == 'pending']
+        if not pending:
+            try:
+                await interaction.response.send_message("no pending suggestions.", ephemeral=True)
+            except discord.InteractionResponded:
+                pass
+            return
+        pending.sort(key=lambda x: int(x[0]), reverse=True)
+        embed = discord.Embed(title="⏳ Pending Suggestions", color=0x2b2d31)
+        for sid, item in pending[:10]:
+            content = item.get('content', '')[:200]
+            embed.add_field(name=f"#{sid} — by <@{item.get('user_id', '?')}>", value=content or "*empty*", inline=False)
+        try:
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+        except discord.InteractionResponded:
+            await interaction.followup.send(embed=embed, ephemeral=True)
+
+
 async def setup(bot):
     await bot.add_cog(Suggestions(bot))

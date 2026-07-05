@@ -182,5 +182,103 @@ class Leveling(commands.Cog):
             embed = discord.Embed(title="XP Leaderboard", description=desc, color=0x1a1a2e)
             await interaction.followup.send(embed=embed)
 
+    # ===== XP ADMIN GROUP =====
+
+    xp_admin = app_commands.Group(name="xp", description="XP admin commands")
+
+    @xp_admin.command(name="give", description="Give XP to user (owner only)")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def xp_give(self, interaction: discord.Interaction, user: discord.Member, amount: int):
+        import os
+        if interaction.user.id != int(os.getenv('OWNER_ID', '0')):
+            await interaction.response.send_message("only the owner can do this.", ephemeral=True)
+            return
+        data = self.get_user_data(interaction.guild.id, user.id)
+        old_level = data.get('level', 0)
+        data['total_xp'] = data.get('total_xp', 0) + amount
+        new_level, current_xp, _ = self.get_level_from_xp(data['total_xp'])
+        data['level'] = new_level
+        data['xp'] = current_xp
+        self.save_user_data(interaction.guild.id, user.id, data)
+        if new_level > old_level:
+            await self.announce_levelup(interaction.guild, user, new_level)
+        await interaction.response.send_message(f"gave **{amount:,} XP** to {user.mention}. now Level {new_level}")
+
+    @xp_admin.command(name="remove", description="Remove XP from user (owner only)")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def xp_remove(self, interaction: discord.Interaction, user: discord.Member, amount: int):
+        import os
+        if interaction.user.id != int(os.getenv('OWNER_ID', '0')):
+            await interaction.response.send_message("only the owner can do this.", ephemeral=True)
+            return
+        data = self.get_user_data(interaction.guild.id, user.id)
+        data['total_xp'] = max(0, data.get('total_xp', 0) - amount)
+        new_level, current_xp, _ = self.get_level_from_xp(data['total_xp'])
+        data['level'] = new_level
+        data['xp'] = current_xp
+        self.save_user_data(interaction.guild.id, user.id, data)
+        await interaction.response.send_message(f"removed **{amount:,} XP** from {user.mention}. now Level {new_level}")
+
+    @xp_admin.command(name="reset", description="Reset user XP (owner only)")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def xp_reset(self, interaction: discord.Interaction, user: discord.Member):
+        import os
+        if interaction.user.id != int(os.getenv('OWNER_ID', '0')):
+            await interaction.response.send_message("only the owner can do this.", ephemeral=True)
+            return
+        self.save_user_data(interaction.guild.id, user.id, {'xp': 0, 'level': 0, 'total_xp': 0})
+        await interaction.response.send_message(f"reset {user.mention}'s XP")
+
+    @xp_admin.command(name="setup", description="Set level-up announcement channel")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def xp_setup(self, interaction: discord.Interaction, channel: discord.TextChannel):
+        config = self.config_db.get(str(interaction.guild.id), {})
+        config['enabled'] = True
+        config['levelup_channel'] = str(channel.id)
+        self.config_db.set(str(interaction.guild.id), config)
+        await interaction.response.send_message(f"✅ level-ups will go to {channel.mention}")
+
+    @xp_admin.command(name="ignore", description="Toggle channel XP ignore")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def xp_ignore(self, interaction: discord.Interaction, channel: discord.TextChannel):
+        config = self.config_db.get(str(interaction.guild.id), {})
+        if 'ignored_channels' not in config: config['ignored_channels'] = []
+        ch_id = str(channel.id)
+        if ch_id in config['ignored_channels']:
+            config['ignored_channels'].remove(ch_id)
+            action = "removed from"
+        else:
+            config['ignored_channels'].append(ch_id)
+            action = "added to"
+        self.config_db.set(str(interaction.guild.id), config)
+        await interaction.response.send_message(f"{channel.mention} {action} XP ignore list")
+
+    @xp_admin.command(name="multiplier", description="Set XP multiplier for server")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def xp_multiplier(self, interaction: discord.Interaction, multiplier: float):
+        if multiplier < 0.1 or multiplier > 10:
+            await interaction.response.send_message("multiplier must be 0.1-10.", ephemeral=True)
+            return
+        config = self.config_db.get(str(interaction.guild.id), {})
+        config['multiplier'] = multiplier
+        self.config_db.set(str(interaction.guild.id), config)
+        await interaction.response.send_message(f"✅ XP multiplier set to **{multiplier}x**")
+
+    @xp_admin.command(name="config", description="View leveling config")
+    async def xp_config(self, interaction: discord.Interaction):
+        config = self.config_db.get(str(interaction.guild.id), {})
+        embed = discord.Embed(title="Leveling Config", color=0x1a1a2e)
+        embed.add_field(name="Status", value="Enabled" if config.get('enabled', True) else "Disabled", inline=True)
+        embed.add_field(name="XP/Message", value=f"{self.xp_min}-{self.xp_max}", inline=True)
+        embed.add_field(name="Cooldown", value=f"{self.cooldown}s", inline=True)
+        if config.get('multiplier'):
+            embed.add_field(name="Multiplier", value=f"{config['multiplier']}x", inline=True)
+        ch_id = config.get('levelup_channel')
+        if ch_id:
+            ch = interaction.guild.get_channel(int(ch_id))
+            embed.add_field(name="Channel", value=ch.mention if ch else "Deleted", inline=True)
+        await interaction.response.send_message(embed=embed)
+
+
 async def setup(bot):
     await bot.add_cog(Leveling(bot))

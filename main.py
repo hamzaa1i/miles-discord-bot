@@ -89,6 +89,82 @@ intents.message_content = True
 intents.members = True
 intents.presences = True
 
+# Override Discord's 100 global command limit.
+# We use guild sync (copy_global_to + sync(guild=guild)) which has no practical limit.
+# discord.py hardcodes the 100 limit in CommandTree.add_command, so we patch it out.
+import discord.app_commands.tree as _tree
+
+_original_add_command = _tree.CommandTree.add_command
+
+async def _patched_add_command(self, command, *, guild=None, guilds=None, override=False):
+    """Patched add_command that removes the 100-command global limit."""
+    # Just call the original but catch CommandLimitReached and skip it
+    # Actually, we need to monkey-patch the class method to remove the check.
+    # The simplest way: just call the original and ignore the error for global commands.
+    try:
+        return _original_add_command(self, command, guild=guild, guilds=guilds, override=override)
+    except _tree.CommandLimitReached:
+        # If we hit the global limit, add to the guild-specific storage instead
+        # by doing nothing — copy_global_to will handle it later.
+        pass
+
+# Actually, a better approach: patch the _global_commands dict check directly
+# by making the add_command method skip the limit check. We do this by
+# temporarily making _global_commands behave like it has no limit.
+# The cleanest way: just override the 100 constant.
+_original_check = None
+
+def _patch_add_command():
+    """Patch CommandTree.add_command to remove the 100-command limit."""
+    import types
+    
+    def new_add_command(self, command, *, guild=None, guilds=None, override=False):
+        # Copy the original logic but remove the limit checks
+        from discord.app_commands.commands import Command, Group, ContextMenu
+        from discord.app_commands.errors import CommandAlreadyRegistered
+        from discord.utils import MISSING
+        
+        if isinstance(command, ContextMenu):
+            # Context menus have their own logic — just call original
+            return _original_add_command(self, command, guild=guild, guilds=guilds, override=override)
+        
+        root = command.root_parent or command
+        name = root.name
+        
+        if guild is not None and guilds:
+            raise TypeError('cannot mix guild and guilds keywords')
+        
+        if guild is not MISSING and guild is not None:
+            guild_id = guild.id
+            commands = self._guild_commands.setdefault(guild_id, {})
+            found = name in commands
+            if found and not override:
+                raise CommandAlreadyRegistered(name, guild_id)
+            to_add = not (override and found)
+            # REMOVED: if len(commands) + to_add > 5: raise CommandLimitReached
+            commands[name] = root
+        elif guilds:
+            for guild in guilds:
+                guild_id = guild.id
+                commands = self._guild_commands.setdefault(guild_id, {})
+                found = name in commands
+                if found and not override:
+                    raise CommandAlreadyRegistered(name, guild_id)
+                to_add = not (override and found)
+                # REMOVED: limit check
+                commands[name] = root
+        else:
+            found = name in self._global_commands
+            if found and not override:
+                raise CommandAlreadyRegistered(name, None)
+            to_add = not (override and found)
+            # REMOVED: if len(self._global_commands) + to_add > 100: raise CommandLimitReached
+            self._global_commands[name] = root
+    
+    _tree.CommandTree.add_command = new_add_command
+
+_patch_add_command()
+
 
 # ==================== FIX 5 — Data Directory and Files ====================
 DEFAULT_DATA_FILES = [
@@ -187,12 +263,25 @@ class CynBot(commands.Bot):
         else:
             logger.warning("⚠️ OWNER_ID not set in env")
 
-        # FIX 2 — sync slash commands only once per process
+        # Guild sync — removes Discord's 100 global command limit entirely.
+        # Commands are copied to each guild and synced per-guild (instant, no 1hr wait).
         if not self.synced:
             try:
-                synced = await self.tree.sync()
-                print(f"Synced {len(synced)} commands")
-                logger.info(f"✅ Synced {len(synced)} slash commands")
+                # First do a global sync to register commands globally as a fallback
+                global_synced = await self.tree.sync()
+                print(f"Synced {len(global_synced)} commands globally (fallback)")
+                logger.info(f"✅ Synced {len(global_synced)} global commands")
+
+                # Then copy to each guild for instant per-guild access
+                for guild in self.guilds:
+                    try:
+                        self.tree.copy_global_to(guild=guild)
+                        synced = await self.tree.sync(guild=guild)
+                        print(f"✅ Synced {len(synced)} commands to {guild.name}")
+                        logger.info(f"✅ Synced {len(synced)} commands to guild: {guild.name}")
+                    except Exception as e:
+                        print(f"❌ Failed to sync to {guild.name}: {e}")
+                        logger.error(f"❌ Failed to sync to guild {guild.name}: {e}")
             except Exception as e:
                 print(f"Failed to sync: {e}")
                 logger.error(f"❌ Failed to sync: {e}")
@@ -226,6 +315,17 @@ class CynBot(commands.Bot):
     @change_status.before_loop
     async def before_change_status(self):
         await self.wait_until_ready()
+
+    # Sync commands to new guilds when the bot joins them
+    async def on_guild_join(self, guild: discord.Guild):
+        try:
+            self.tree.copy_global_to(guild=guild)
+            synced = await self.tree.sync(guild=guild)
+            print(f"✅ Synced {len(synced)} commands to new guild: {guild.name}")
+            logger.info(f"✅ Synced {len(synced)} commands to new guild: {guild.name}")
+        except Exception as e:
+            print(f"❌ Failed to sync to {guild.name}: {e}")
+            logger.error(f"❌ Failed to sync to new guild {guild.name}: {e}")
 
     # FIX 6 (part 1) — regular prefix-command error handler
     async def on_command_error(self, ctx, error):

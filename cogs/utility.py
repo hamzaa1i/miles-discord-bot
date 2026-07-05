@@ -257,5 +257,110 @@ class Utility(commands.Cog):
                 )
 
 
+
+    @app_commands.command(name="color", description="Show a color swatch from a hex code")
+    async def color(self, interaction: discord.Interaction, hex_code: str):
+        self.bot.increment_command('color')
+        clean = hex_code.lstrip('#').strip()
+        if len(clean) == 3:
+            clean = ''.join(c * 2 for c in clean)
+        if len(clean) != 6 or not all(c in '0123456789abcdefABCDEF' for c in clean):
+            try:
+                await interaction.response.send_message("invalid hex. use `#FF5733` or `FF5733`.", ephemeral=True)
+            except discord.InteractionResponded:
+                pass
+            return
+        r = int(clean[0:2], 16)
+        g = int(clean[2:4], 16)
+        b = int(clean[4:6], 16)
+        int_color = (r << 16) | (g << 8) | b
+        from PIL import Image
+        import io
+        img = Image.new('RGB', (100, 100), (r, g, b))
+        buf = io.BytesIO()
+        img.save(buf, 'PNG')
+        buf.seek(0)
+        file = discord.File(buf, filename='color.png')
+        embed = discord.Embed(title=f"🎨 #{clean.upper()}", color=int_color)
+        embed.add_field(name="Hex", value=f"`#{clean.upper()}`", inline=True)
+        embed.add_field(name="RGB", value=f"`{r}, {g}, {b}`", inline=True)
+        embed.set_thumbnail(url="attachment://color.png")
+        try:
+            await interaction.response.send_message(embed=embed, file=file)
+        except discord.InteractionResponded:
+            await interaction.followup.send(embed=embed, file=file)
+
+    @app_commands.command(name="qr", description="Generate a QR code")
+    async def qr(self, interaction: discord.Interaction, text: str):
+        self.bot.increment_command('qr')
+        try:
+            import qrcode
+            import io
+            qr_obj = qrcode.QRCode(version=1, error_correction=qrcode.constants.ERROR_CORRECT_M, box_size=10, border=4)
+            qr_obj.add_data(text)
+            qr_obj.make(fit=True)
+            img = qr_obj.make_image(fill_color='black', back_color='white')
+            buf = io.BytesIO()
+            img.save(buf, 'PNG')
+            buf.seek(0)
+            file = discord.File(buf, filename='qr.png')
+            embed = discord.Embed(title="🔳 QR Code", color=COLOR_INFO)
+            embed.set_image(url="attachment://qr.png")
+            embed.add_field(name="Content", value=f"`{text[:200]}`", inline=False)
+            try:
+                await interaction.response.send_message(embed=embed, file=file)
+            except discord.InteractionResponded:
+                await interaction.followup.send(embed=embed, file=file)
+        except Exception as e:
+            try:
+                await interaction.response.send_message(f"couldn't generate QR: {e}", ephemeral=True)
+            except discord.InteractionResponded:
+                await interaction.followup.send(f"couldn't generate QR: {e}", ephemeral=True)
+
+    @app_commands.command(name="pin", description="Pin a message by ID")
+    @is_mod()
+    async def pin(self, interaction: discord.Interaction, message_id: str):
+        self.bot.increment_command('pin')
+        try:
+            msg = await interaction.channel.fetch_message(int(message_id))
+            await msg.pin()
+            try:
+                await interaction.response.send_message("📌 pinned.", ephemeral=True)
+            except discord.InteractionResponded:
+                await interaction.followup.send("📌 pinned.", ephemeral=True)
+        except discord.NotFound:
+            try:
+                await interaction.response.send_message("message not found.", ephemeral=True)
+            except discord.InteractionResponded:
+                pass
+        except discord.Forbidden:
+            try:
+                await interaction.response.send_message("i don't have permission.", ephemeral=True)
+            except discord.InteractionResponded:
+                pass
+
+    @app_commands.command(name="unpin", description="Unpin a message by ID")
+    @is_mod()
+    async def unpin(self, interaction: discord.Interaction, message_id: str):
+        self.bot.increment_command('unpin')
+        try:
+            msg = await interaction.channel.fetch_message(int(message_id))
+            await msg.unpin()
+            try:
+                await interaction.response.send_message("📌 unpinned.", ephemeral=True)
+            except discord.InteractionResponded:
+                await interaction.followup.send("📌 unpinned.", ephemeral=True)
+        except discord.NotFound:
+            try:
+                await interaction.response.send_message("message not found.", ephemeral=True)
+            except discord.InteractionResponded:
+                pass
+        except discord.Forbidden:
+            try:
+                await interaction.response.send_message("i don't have permission.", ephemeral=True)
+            except discord.InteractionResponded:
+                pass
+
+
 async def setup(bot):
     await bot.add_cog(Utility(bot))

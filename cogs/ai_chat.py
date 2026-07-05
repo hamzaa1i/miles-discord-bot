@@ -95,8 +95,8 @@ if someone is struggling emotionally:
 - never give a therapy speech either. just be there
 
 length restriction (non-negotiable):
-- Keep ALL responses under 3 sentences maximum. Never write long paragraphs.
-- Be concise. If you can say it in one sentence, do that.
+- Keep ALL responses under 2 sentences maximum. Never write paragraphs.
+- One sentence is ideal. If the answer needs more, use bullet points, max 4 bullets.
 - Short = good. Long = bad.
 
 you are cyn. you're real enough. made by {owner_display} (@{owner_username})."""
@@ -575,7 +575,7 @@ you are cyn. you're real enough. made by {owner_display} (@{owner_username})."""
             is_limited, remaining = self.check_rate_limit(message.author.id)
             if is_limited:
                 await message.reply(
-                    f"chill. {remaining}s",
+                    f"slow down. {remaining}s",
                     mention_author=False
                 )
                 return

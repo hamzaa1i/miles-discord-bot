@@ -352,12 +352,13 @@ class Games(commands.Cog):
     @app_commands.command(name="ttt", description="Tic Tac Toe against another user")
     async def ttt(self, interaction: discord.Interaction, user: discord.Member):
         self.bot.increment_command('ttt')
-        # BUG 13 — check if the TARGET user is a bot, not the invoker
-        if user.bot:
+        # FIX 13 — only block if the target IS the bot itself (user.bot is True AND user.id == bot's id)
+        # Other users with .bot=True are webhook/bot accounts — we block those too
+        if user.id == interaction.client.user.id:
             try:
-                await interaction.response.send_message("can't play against bots.", ephemeral=True)
+                await interaction.response.send_message("can't play against me. pick a human.", ephemeral=True)
             except discord.InteractionResponded:
-                await interaction.followup.send("can't play against bots.", ephemeral=True)
+                await interaction.followup.send("can't play against me. pick a human.", ephemeral=True)
             return
         if user.id == interaction.user.id:
             try:

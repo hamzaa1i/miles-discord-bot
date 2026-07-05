@@ -307,5 +307,38 @@ class LoggingSystem(commands.Cog):
         await interaction.response.send_message(embed=embed)
 
 
+    log = app_commands.Group(name="log", description="Log event configuration")
+
+    @log.command(name="toggle", description="Toggle a specific log event")
+    @app_commands.checks.has_permissions(administrator=True)
+    @app_commands.choices(event_type=[
+        app_commands.Choice(name="Message Delete", value="message_delete"),
+        app_commands.Choice(name="Message Edit", value="message_edit"),
+        app_commands.Choice(name="Member Join", value="member_join"),
+        app_commands.Choice(name="Member Leave", value="member_leave"),
+        app_commands.Choice(name="Member Ban", value="member_ban"),
+        app_commands.Choice(name="Member Unban", value="member_unban"),
+        app_commands.Choice(name="Role Changes", value="role_changes"),
+        app_commands.Choice(name="Channel Changes", value="channel_changes"),
+        app_commands.Choice(name="Voice Activity", value="voice_activity"),
+        app_commands.Choice(name="Nickname Changes", value="nickname_changes"),
+    ])
+    async def log_toggle(self, interaction: discord.Interaction, event_type: app_commands.Choice[str]):
+        config = self.get_config(interaction.guild.id)
+        current = config['enabled'].get(event_type.value, True)
+        config['enabled'][event_type.value] = not current
+        self.save_config(interaction.guild.id, config)
+        status = "disabled" if current else "enabled"
+        await interaction.response.send_message(f"✅ **{event_type.name}** logging **{status}**")
+
+    @log.command(name="list", description="View all log event statuses")
+    async def log_list(self, interaction: discord.Interaction):
+        config = self.get_config(interaction.guild.id)
+        embed = discord.Embed(title="📋 Log Events", color=0x2b2d31)
+        for key, val in config['enabled'].items():
+            embed.add_field(name=key.replace('_', ' ').title(), value="✅" if val else "❌", inline=True)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
 async def setup(bot):
     await bot.add_cog(LoggingSystem(bot))

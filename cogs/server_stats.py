@@ -367,5 +367,57 @@ class ServerStats(commands.Cog):
         await interaction.response.send_message(embed=embed)
 
 
+    @app_commands.command(name="roleinfo", description="Detailed role information")
+    @app_commands.describe(role="The role to view")
+    async def roleinfo(self, interaction: discord.Interaction, role: discord.Role):
+        embed = discord.Embed(title=f"🎭 {role.name}", color=role.color if role.color.value else 0x2b2d31)
+        embed.add_field(name="ID", value=role.id, inline=True)
+        embed.add_field(name="Members", value=len(role.members), inline=True)
+        embed.add_field(name="Color", value=str(role.color), inline=True)
+        embed.add_field(name="Position", value=role.position, inline=True)
+        embed.add_field(name="Mentionable", value="Yes" if role.mentionable else "No", inline=True)
+        embed.add_field(name="Hoisted", value="Yes" if role.hoist else "No", inline=True)
+        embed.add_field(name="Created", value=role.created_at.strftime("%Y-%m-%d"), inline=True)
+        perms = []
+        if role.permissions.administrator: perms.append("Administrator")
+        if role.permissions.manage_guild: perms.append("Manage Guild")
+        if role.permissions.manage_channels: perms.append("Manage Channels")
+        if role.permissions.manage_messages: perms.append("Manage Messages")
+        if role.permissions.kick_members: perms.append("Kick")
+        if role.permissions.ban_members: perms.append("Ban")
+        if perms:
+            embed.add_field(name="Key Permissions", value=", ".join(perms), inline=False)
+        await interaction.response.send_message(embed=embed)
+
+    @app_commands.command(name="channelinfo", description="Channel information")
+    async def channelinfo(self, interaction: discord.Interaction, channel: discord.TextChannel = None):
+        channel = channel or interaction.channel
+        embed = discord.Embed(title=f"#{channel.name}", color=0x2b2d31)
+        embed.add_field(name="ID", value=channel.id, inline=True)
+        embed.add_field(name="Type", value=str(channel.type).replace('_', ' ').title(), inline=True)
+        embed.add_field(name="Category", value=channel.category.name if channel.category else "None", inline=True)
+        embed.add_field(name="NSFW", value="Yes" if channel.nsfw else "No", inline=True)
+        embed.add_field(name="Slowmode", value=f"{channel.slowmode_delay}s", inline=True)
+        embed.add_field(name="Created", value=channel.created_at.strftime("%Y-%m-%d"), inline=True)
+        await interaction.response.send_message(embed=embed)
+
+    @app_commands.command(name="banner", description="Show user banner")
+    async def banner(self, interaction: discord.Interaction, user: discord.Member = None):
+        user = user or interaction.user
+        fetched = await self.bot.fetch_user(user.id)
+        if not fetched.banner:
+            try:
+                await interaction.response.send_message(f"{user.display_name} doesn't have a banner.", ephemeral=True)
+            except discord.InteractionResponded:
+                pass
+            return
+        embed = discord.Embed(title=f"{user.display_name}'s Banner", color=fetched.accent_color or 0x2b2d31)
+        embed.set_image(url=fetched.banner.url)
+        try:
+            await interaction.response.send_message(embed=embed)
+        except discord.InteractionResponded:
+            await interaction.followup.send(embed=embed)
+
+
 async def setup(bot):
     await bot.add_cog(ServerStats(bot))

@@ -231,5 +231,31 @@ class Birthdays(commands.Cog):
         )
 
 
+    @birthday.command(name="remove", description="Remove your birthday")
+    async def birthday_remove(self, interaction: discord.Interaction):
+        self.bot.increment_command('birthday_remove')
+        data = self.get_guild_data(interaction.guild.id)
+        users = data.get('users', {})
+        if str(interaction.user.id) in users:
+            del users[str(interaction.user.id)]
+            data['users'] = users
+            self.save_guild_data(interaction.guild.id, data)
+            await interaction.response.send_message("✅ your birthday has been removed.", ephemeral=True)
+        else:
+            await interaction.response.send_message("you hadn't set a birthday.", ephemeral=True)
+
+    @birthday.command(name="check", description="See someone's birthday")
+    async def birthday_check(self, interaction: discord.Interaction, user: discord.Member):
+        self.bot.increment_command('birthday_check')
+        data = self.get_guild_data(interaction.guild.id)
+        bday = data.get('users', {}).get(str(user.id))
+        if not bday:
+            await interaction.response.send_message(f"{user.display_name} hasn't set their birthday.", ephemeral=True)
+            return
+        month = bday.get('month')
+        day = bday.get('day')
+        await interaction.response.send_message(f"🎂 {user.mention}'s birthday is **{MONTHS[month]} {day}**")
+
+
 async def setup(bot):
     await bot.add_cog(Birthdays(bot))

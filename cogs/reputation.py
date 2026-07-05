@@ -153,5 +153,21 @@ class Reputation(commands.Cog):
         )
 
 
+    @rep.command(name="check", description="Check someone's reputation score")
+    async def rep_check(self, interaction: discord.Interaction, user: discord.Member = None):
+        self.bot.increment_command('rep_check')
+        target = user or interaction.user
+        data = self.get_user(target.id)
+        embed = discord.Embed(color=0x2b2d31)
+        embed.set_author(name=target.display_name, icon_url=target.avatar.url if target.avatar else None)
+        embed.add_field(name="reputation", value=f"**{data.get('rep', 0)}** points", inline=True)
+        embed.add_field(name="received from", value=f"{len(data.get('received_from', []))} users", inline=True)
+        try:
+            await interaction.response.send_message(embed=embed)
+        except discord.InteractionResponded:
+            await interaction.followup.send(embed=embed)
+
+
+
 async def setup(bot):
     await bot.add_cog(Reputation(bot))

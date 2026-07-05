@@ -270,5 +270,32 @@ class Polls(commands.Cog):
 
 
 
+    @poll.command(name="results", description="Show current poll results without ending")
+    async def poll_results(self, interaction: discord.Interaction, message_id: str):
+        self.bot.increment_command('poll_results')
+        pdata = self._get_poll(message_id)
+        if not pdata:
+            try:
+                await interaction.response.send_message("no poll found.", ephemeral=True)
+            except discord.InteractionResponded:
+                pass
+            return
+        channel = self.bot.get_channel(int(pdata['channel_id']))
+        if not channel:
+            try:
+                await interaction.response.send_message("channel not found.", ephemeral=True)
+            except discord.InteractionResponded:
+                pass
+            return
+        votes = await self._count_votes(channel, int(message_id))
+        pdata['votes'] = votes
+        self._save_poll(message_id, pdata)
+        embed = self._build_poll_embed(pdata, show_results=True)
+        try:
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+        except discord.InteractionResponded:
+            await interaction.followup.send(embed=embed, ephemeral=True)
+
+
 async def setup(bot):
     await bot.add_cog(Polls(bot))

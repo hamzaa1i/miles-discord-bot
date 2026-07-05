@@ -352,5 +352,38 @@ class Giveaways(commands.Cog):
 
 
 
+    @giveaway.command(name="list", description="List active giveaways in this server")
+    async def giveaway_list(self, interaction: discord.Interaction):
+        self.bot.increment_command('giveaway_list')
+        all_data = self._all_giveaways()
+        active = []
+        for mid, gdata in all_data.items():
+            if not isinstance(gdata, dict) or gdata.get('ended'):
+                continue
+            if str(gdata.get('guild_id')) != str(interaction.guild.id):
+                continue
+            active.append(gdata)
+        if not active:
+            try:
+                await interaction.response.send_message("no active giveaways.", ephemeral=True)
+            except discord.InteractionResponded:
+                pass
+            return
+        embed = discord.Embed(title="🎉 Active Giveaways", color=0x2b2d31)
+        import time as _time
+        now = int(_time.time())
+        for gdata in active[:10]:
+            remaining = max(0, gdata.get('end_time', 0) - now)
+            embed.add_field(
+                name=gdata.get('prize', 'a prize'),
+                value=f"Host: <@{gdata.get('host_id', '?')}>\nEntries: {len(gdata.get('entrants', []))}\nEnds in: {remaining}s",
+                inline=False
+            )
+        try:
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+        except discord.InteractionResponded:
+            await interaction.followup.send(embed=embed, ephemeral=True)
+
+
 async def setup(bot):
     await bot.add_cog(Giveaways(bot))
