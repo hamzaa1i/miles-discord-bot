@@ -306,59 +306,6 @@ class LoggingSystem(commands.Cog):
         embed.set_footer(text="use /log toggle <event> to disable specific events")
         await interaction.response.send_message(embed=embed)
 
-    log = app_commands.Group(name="log", description="Logging configuration")
-
-    @log.command(name="toggle", description="Toggle a specific log event")
-    @app_commands.checks.has_permissions(administrator=True)
-    @app_commands.choices(event_type=[
-        app_commands.Choice(name="Message Delete", value="message_delete"),
-        app_commands.Choice(name="Message Edit", value="message_edit"),
-        app_commands.Choice(name="Member Join", value="member_join"),
-        app_commands.Choice(name="Member Leave", value="member_leave"),
-        app_commands.Choice(name="Member Ban", value="member_ban"),
-        app_commands.Choice(name="Member Unban", value="member_unban"),
-        app_commands.Choice(name="Role Changes", value="role_changes"),
-        app_commands.Choice(name="Channel Changes", value="channel_changes"),
-        app_commands.Choice(name="Voice Activity", value="voice_activity"),
-        app_commands.Choice(name="Nickname Changes", value="nickname_changes"),
-    ])
-    async def log_toggle(self, interaction: discord.Interaction, event_type: app_commands.Choice[str]):
-        self.bot.increment_command('log_toggle')
-        config = self.get_config(interaction.guild.id)
-        current = config['enabled'].get(event_type.value, True)
-        config['enabled'][event_type.value] = not current
-        self.save_config(interaction.guild.id, config)
-        status = "Disabled" if current else "Enabled"
-        await interaction.response.send_message(
-            f"✅ **{event_type.name}** logging is now **{status}**"
-        )
-
-    @log.command(name="list", description="List all log event statuses")
-    async def log_list(self, interaction: discord.Interaction):
-        config = self.get_config(interaction.guild.id)
-        embed = discord.Embed(
-            title="📋 Log Event Status",
-            color=0x1a1a2e,
-            timestamp=datetime.now(timezone.utc)
-        )
-        for key, label in [
-            ("message_delete", "Message Delete"),
-            ("message_edit", "Message Edit"),
-            ("member_join", "Member Join"),
-            ("member_leave", "Member Leave"),
-            ("member_ban", "Member Ban"),
-            ("member_unban", "Member Unban"),
-            ("role_changes", "Role Changes"),
-            ("channel_changes", "Channel Changes"),
-            ("voice_activity", "Voice Activity"),
-            ("nickname_changes", "Nickname Changes"),
-        ]:
-            value = config['enabled'].get(key, True)
-            embed.add_field(name=label, value="✅ on" if value else "❌ off", inline=True)
-        channel_id = config.get('log_channel_id')
-        embed.set_footer(text=f"log channel: {channel_id or 'not set'}")
-        await interaction.response.send_message(embed=embed, ephemeral=True)
-
 
 async def setup(bot):
     await bot.add_cog(LoggingSystem(bot))

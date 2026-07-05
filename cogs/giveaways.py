@@ -350,39 +350,6 @@ class Giveaways(commands.Cog):
             f"🎉 New winner: <@{new_winner}>!"
         )
 
-    @giveaway.command(name="list", description="List all active giveaways in this server")
-    async def giveaway_list(self, interaction: discord.Interaction):
-        self.bot.increment_command('giveaway_list')
-        all_data = self._all_giveaways()
-        active = []
-        for mid, gdata in all_data.items():
-            if not isinstance(gdata, dict):
-                continue
-            if gdata.get('ended'):
-                continue
-            if str(gdata.get('guild_id')) != str(interaction.guild.id):
-                continue
-            active.append(gdata)
-
-        if not active:
-            await interaction.response.send_message("no active giveaways in this server.", ephemeral=True)
-            return
-
-        embed = discord.Embed(title="🎉 Active Giveaways", color=0x1a1a2e)
-        now = int(datetime.utcnow().replace(tzinfo=timezone.utc).timestamp())
-        for gdata in active[:10]:
-            remaining = max(0, gdata.get('end_time', 0) - now)
-            embed.add_field(
-                name=gdata.get('prize', 'a prize'),
-                value=(
-                    f"[Jump to giveaway](https://discord.com/channels/{gdata.get('guild_id')}/{gdata.get('channel_id')}/{gdata.get('message_id')})\n"
-                    f"Host: <@{gdata.get('host_id')}>\n"
-                    f"Ends in: {format_remaining(remaining)}\n"
-                    f"Entries: {len(gdata.get('entrants', []))}"
-                ),
-                inline=False
-            )
-        await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
 async def setup(bot):

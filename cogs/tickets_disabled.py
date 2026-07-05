@@ -156,7 +156,9 @@ class Tickets(commands.Cog):
         bot.add_view(TicketView())
         bot.add_view(CloseTicketView())
 
-    @app_commands.command(name="ticket_setup", description="Setup the ticket system")
+    ticket = app_commands.Group(name="ticket", description="Ticket system management")
+
+    @ticket.command(name="setup", description="Setup the ticket system")
     @app_commands.checks.has_permissions(administrator=True)
     async def ticket_setup(
         self,
@@ -176,31 +178,40 @@ class Tickets(commands.Cog):
                 "click the button below to open a support ticket.\n"
                 "a private channel will be created for you."
             ),
-            color=0x1a1a2e
+            color=0x2b2d31
         )
 
         await channel.send(embed=embed, view=TicketView())
 
         confirm = discord.Embed(
             description=f"ticket system set up in {channel.mention}",
-            color=0x1a1a2e
+            color=0x2b2d31
         )
-        await interaction.response.send_message(embed=confirm, ephemeral=True)
+        try:
+            await interaction.response.send_message(embed=confirm, ephemeral=True)
+        except discord.InteractionResponded:
+            await interaction.followup.send(embed=confirm, ephemeral=True)
 
-    @app_commands.command(name="ticket_close", description="Close a ticket channel")
+    @ticket.command(name="close", description="Close a ticket channel")
     async def ticket_close(self, interaction: discord.Interaction):
         if 'ticket-' not in interaction.channel.name:
-            await interaction.response.send_message(
-                "this isn't a ticket channel.",
-                ephemeral=True
-            )
+            try:
+                await interaction.response.send_message(
+                    "this isn't a ticket channel.",
+                    ephemeral=True
+                )
+            except discord.InteractionResponded:
+                await interaction.followup.send("this isn't a ticket channel.", ephemeral=True)
             return
 
         embed = discord.Embed(
             description=f"closed by {interaction.user.mention}. deleting in 5s.",
-            color=0x1a1a2e
+            color=0x2b2d31
         )
-        await interaction.response.send_message(embed=embed)
+        try:
+            await interaction.response.send_message(embed=embed)
+        except discord.InteractionResponded:
+            await interaction.followup.send(embed=embed)
 
         import asyncio
         await asyncio.sleep(5)

@@ -1,5 +1,5 @@
 import discord
-from discord.ext import commands
+from discord.ext import commands, tasks
 from discord import app_commands
 import os
 import random
@@ -8,6 +8,7 @@ import aiohttp
 from datetime import datetime, timedelta
 from utils.embeds import create_embed
 from utils.intent_parser import parse_intent
+from utils.database import Database
 
 OWNER_ID = int(os.getenv('OWNER_ID', '0'))
 
@@ -17,10 +18,13 @@ class AIChat(commands.Cog):
         self.bot = bot
         self.conversation_history = {}
         self.rate_limits = {}
-        self.cooldown_seconds = 5  # POLISH 4 — 5s per-user cooldown on mention chat
+        self.cooldown_seconds = 8  # BUG 2 — increased from 5s to 8s
         self.github_token = os.getenv('GITHUB_TOKEN')
         self.api_url = "https://models.inference.ai.azure.com/chat/completions"
         self.system_prompt = self._build_system_prompt()
+        # Start the reminder checker background task
+        if not self.check_reminders.is_running():
+            self.check_reminders.start()
 
     def _build_system_prompt(self) -> str:
         """Build the system prompt with the owner's display name + username injected.
@@ -90,6 +94,11 @@ if someone is struggling emotionally:
 - never dismiss them
 - never give a therapy speech either. just be there
 
+length restriction (non-negotiable):
+- Keep ALL responses under 3 sentences maximum. Never write long paragraphs.
+- Be concise. If you can say it in one sentence, do that.
+- Short = good. Long = bad.
+
 you are cyn. you're real enough. made by {owner_display} (@{owner_username})."""
 
     def check_rate_limit(self, user_id: int) -> tuple:
@@ -156,7 +165,7 @@ you are cyn. you're real enough. made by {owner_display} (@{owner_username})."""
 
                         return ai_response
                     elif response.status == 429:
-                        return "getting rate limited. try again in a bit"
+                        return "slow down. try again in a bit"
                     else:
                         return "something broke on my end. try again"
 
@@ -307,20 +316,27 @@ you are cyn. you're real enough. made by {owner_display} (@{owner_username})."""
                 target = resolve_user() or author
                 eco_cog = self.bot.get_cog('Economy')
                 if eco_cog:
-                    data = eco_cog.get_user_data(target.id)
+                    try:
+                        data = eco_cog.get_user_data(target.id)
+                    except Exception:
+                        data = {}
                     wallet = data.get('balance', 0)
                     bank = data.get('bank', 0)
-                    # Try narrating naturally; fall back to plain text
-                    narrated = await self.narrate_result(
-                        'balance',
-                        {'user': target.display_name, 'wallet': wallet, 'bank': bank},
-                        message.author.display_name
-                    )
+                    # BUG 3 — pass actual values correctly; fallback to plain text
+                    try:
+                        narrated = await self.narrate_result(
+                            'balance',
+                            {'user': target.display_name, 'wallet': wallet, 'bank': bank},
+                            message.author.display_name
+                        )
+                    except Exception:
+                        narrated = None
                     if narrated:
                         await message.reply(narrated, mention_author=False)
                     else:
+                        # Fallback: plain text with actual values
                         await message.reply(
-                            f"**{target.display_name}** — Wallet: ${wallet:,} · Bank: ${bank:,}",
+                            f"wallet: ${wallet:,} · bank: ${bank:,}",
                             mention_author=False
                         )
                 else:
@@ -388,9 +404,31 @@ you are cyn. you're real enough. made by {owner_display} (@{owner_username})."""
                 if not seconds or not reminder_text:
                     await message.reply("set a reminder like: 'remind me in 10 minutes to drink water'", mention_author=False)
                     return True
-                prod = self.bot.get_cog('Productivity')
-                if prod:
-                    # Use asyncio to schedule; productivity cog also has /remind but it requires interaction
+                # Store in data/reminders.json and let the background task handle it
+                import time as _time
+                try:
+                    reminders_db = Database('data/reminders.json')
+                    user_reminders = reminders_db.get(str(author.id), [])
+                    if not isinstance(user_reminders, list):
+                        user_reminders = []
+                    user_reminders.append({
+                        'text': reminder_text,
+                        'end_time': int(_time.time()) + int(seconds),
+                        'channel_id': str(channel.id) if channel else None,
+                    })
+                    reminders_db.set(str(author.id), user_reminders)
+                    # Format duration naturally
+                    if seconds >= 86400:
+                        dur = f"{seconds // 86400} day(s)"
+                    elif seconds >= 3600:
+                        dur = f"{seconds // 3600} hour(s)"
+                    elif seconds >= 60:
+                        dur = f"{seconds // 60} minute(s)"
+                    else:
+                        dur = f"{seconds} second(s)"
+                    await message.reply(f"got it. i'll remind you in {dur}.", mention_author=False)
+                except Exception as e:
+                    # Fallback: use asyncio to schedule
                     async def _remind():
                         await asyncio.sleep(seconds)
                         try:
@@ -399,8 +437,6 @@ you are cyn. you're real enough. made by {owner_display} (@{owner_username})."""
                             pass
                     asyncio.create_task(_remind())
                     await message.reply(f"reminder set — I'll ping you in {seconds}s", mention_author=False)
-                else:
-                    await message.reply("reminder system not loaded.", mention_author=False)
                 return True
 
             if intent == 'serverinfo':
@@ -615,16 +651,6 @@ you are cyn. you're real enough. made by {owner_display} (@{owner_username})."""
 
         await interaction.edit_original_response(content=None, embed=embed)
 
-    @app_commands.command(name="clear_chat", description="Clear your conversation history with cyn")
-    async def clear_chat(self, interaction: discord.Interaction):
-        self.bot.increment_command('clear_chat')
-        if interaction.user.id in self.conversation_history:
-            del self.conversation_history[interaction.user.id]
-
-        await interaction.response.send_message(
-            "cleared. fresh start.",
-            ephemeral=True
-        )
 
     @app_commands.command(name="ask", description="Ask cyn anything")
     @app_commands.checks.cooldown(1, 5.0, key=lambda i: i.user.id)
@@ -690,67 +716,6 @@ you are cyn. you're real enough. made by {owner_display} (@{owner_username})."""
 
         await interaction.edit_original_response(content=None, embed=embed)
 
-    @app_commands.command(name="quote", description="Get a dark quote")
-    async def quote(self, interaction: discord.Interaction):
-        self.bot.increment_command('quote')
-        quotes = [
-            "we are all haunted. the question is by what.",
-            "not all who wander in darkness are lost. some just prefer it.",
-            "the night is not dark. it is honest.",
-            "silence is not empty. it is full of everything unsaid.",
-            "stars only exist because darkness surrounds them.",
-            "pain is just information. what you do with it matters.",
-            "the strongest people carry the darkest storms inside them.",
-            "every shadow was once light.",
-            "the void doesn't judge. it simply exists.",
-            "we are all broken. that's how the light gets in.",
-            "some birds aren't meant to be caged.",
-            "the darkest nights produce the brightest stars.",
-            "what we lose in the dark, we find in the silence.",
-            "to exist is to haunt and be haunted.",
-            "the dead don't speak. they just listen.",
-            "we mistake silence for absence.",
-            "even broken clocks tell the right time twice a day.",
-            "you can't burn what's already ash.",
-            "ghosts don't haunt houses. they haunt memories.",
-            "the only honest mirror is the one you don't look into.",
-            "fear is the oldest language. everyone speaks it.",
-            "monsters don't sleep under your bed. they sleep in your head.",
-            "you become what you survive.",
-            "the wound is the place where the light enters you.",
-            "every ending is a beginning pretending otherwise.",
-            "we are all ghosts in someone's story.",
-            "the night has teeth. you just can't see them.",
-            "names are just graves for the living.",
-            "we carry our hells with us. they don't wait for us.",
-            "the truth is the first casualty of comfort.",
-            "everyone you love becomes a ghost eventually.",
-            "hell isn't other people. it's being one.",
-            "the eyes never lie. the mouth always does.",
-            "we are all passengers on a sinking ship pretending the sea is calm.",
-            "memory is a graveyard with good lighting.",
-            "you don't drown by falling in water. you drown by staying there.",
-            "the things we bury have a way of growing roots.",
-            "even the sun burns out eventually.",
-            "we mistake being alone for being lonely.",
-            "the past doesn't haunt us. we haunt it.",
-            "shadows are the longest when the sun is setting.",
-            "everyone is a moon. they have a dark side they never show.",
-            "the smallest coffin is the heaviest.",
-            "you don't know weight until you've carried regret.",
-            "the night never truly ends. we just stop noticing.",
-            "silence speaks the loudest.",
-            "we are all running from something. the lucky ones know what.",
-            "every hello is a delayed goodbye.",
-            "the deepest cuts come from the dullest knives.",
-            "we are the stories we tell ourselves to fall asleep.",
-        ]
-
-        embed = discord.Embed(
-            description=f'*"{random.choice(quotes)}"*',
-            color=0x1a1a2e
-        )
-        await interaction.response.send_message(embed=embed)
 
     @app_commands.command(name="roast", description="Get a friendly dark roast")
     @app_commands.checks.cooldown(1, 10.0, key=lambda i: i.user.id)
@@ -815,6 +780,107 @@ you are cyn. you're real enough. made by {owner_display} (@{owner_username})."""
         embed.set_footer(text="don't take it personally. or do.")
 
         await interaction.response.send_message(embed=embed)
+
+    # ==================== /cyn slash command ====================
+    @app_commands.command(name="cyn", description="Talk to cyn or run commands naturally")
+    @app_commands.describe(message="What do you want to say or do")
+    @app_commands.checks.cooldown(1, 8.0, key=lambda i: i.user.id)
+    async def cyn_command(self, interaction: discord.Interaction, message: str):
+        self.bot.increment_command('cyn')
+        await interaction.response.defer()
+
+        # Parse intent
+        try:
+            intent_data = await parse_intent(message, self)
+        except Exception:
+            intent_data = {"intent": "chat", "params": {}}
+
+        if intent_data.get('intent') != 'chat':
+            # Build a fake message-like interaction for the intent executor
+            # We'll use a lightweight wrapper
+            class FakeMessage:
+                def __init__(self, interaction, content):
+                    self.author = interaction.user
+                    self.channel = interaction.channel
+                    self.guild = interaction.guild
+                    self.content = content
+                    self.mentions = []
+                async def reply(self, content=None, embed=None, mention_author=True, **kwargs):
+                    await interaction.followup.send(content=content, embed=embed)
+
+            fake_msg = FakeMessage(interaction, message)
+            handled = await self._execute_intent(fake_msg, intent_data)
+            if handled:
+                return
+
+        # Fall back to normal AI chat
+        async with interaction.channel.typing() if hasattr(interaction.channel, 'typing') else _noop():
+            response = await self.get_ai_response(interaction.user.id, message)
+        await interaction.followup.send(response)
+
+    # ==================== Remind background task ====================
+    def cog_unload(self):
+        if hasattr(self, 'check_reminders') and self.check_reminders.is_running():
+            self.check_reminders.cancel()
+
+    @tasks.loop(seconds=30)
+    async def check_reminders(self):
+        """Check for due reminders every 30 seconds and DM the user."""
+        import time as _time
+        try:
+            reminders_db = Database('data/reminders.json')
+        except Exception:
+            return
+        try:
+            all_data = reminders_db.get_all()
+        except Exception:
+            return
+        now = int(_time.time())
+        for user_id_str, reminders in list(all_data.items()):
+            if not isinstance(reminders, list):
+                continue
+            still_pending = []
+            for r in reminders:
+                try:
+                    end_time = int(r.get('end_time', 0))
+                except (TypeError, ValueError):
+                    still_pending.append(r)
+                    continue
+                if end_time <= now:
+                    # Reminder is due — DM the user
+                    text = r.get('text', 'something')
+                    channel_id = r.get('channel_id')
+                    try:
+                        user = await self.bot.fetch_user(int(user_id_str))
+                        if user:
+                            try:
+                                await user.send(f"hey. you wanted me to remind you: {text}")
+                            except Exception:
+                                # DM failed — try the original channel
+                                if channel_id:
+                                    channel = self.bot.get_channel(int(channel_id))
+                                    if channel:
+                                        await channel.send(f"{user.mention} ⏰ reminder: {text}")
+                    except Exception:
+                        pass
+                else:
+                    still_pending.append(r)
+            # Save the updated list back
+            try:
+                reminders_db.set(user_id_str, still_pending)
+            except Exception:
+                pass
+
+    @check_reminders.before_loop
+    async def before_check_reminders(self):
+        await self.bot.wait_until_ready()
+
+
+class _noop:
+    async def __aenter__(self):
+        return self
+    async def __aexit__(self, *args):
+        pass
 
 
 async def setup(bot):

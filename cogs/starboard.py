@@ -203,25 +203,7 @@ class Starboard(commands.Cog):
             f"emoji: {config['emoji']}"
         )
 
-    @starboard.command(name="emoji", description="Change the star emoji")
-    @app_commands.checks.has_permissions(administrator=True)
-    async def starboard_emoji(self, interaction: discord.Interaction, emoji: str):
-        self.bot.increment_command('starboard_emoji')
-        config = self.get_config(interaction.guild.id)
-        config['emoji'] = emoji
-        self.save_config(interaction.guild.id, config)
-        await interaction.response.send_message(f"✅ starboard emoji set to {emoji}")
 
-    @starboard.command(name="threshold", description="Change the required star count")
-    @app_commands.checks.has_permissions(administrator=True)
-    async def starboard_threshold(self, interaction: discord.Interaction, number: int):
-        self.bot.increment_command('starboard_threshold')
-        if number < 1:
-            number = 1
-        config = self.get_config(interaction.guild.id)
-        config['threshold'] = number
-        self.save_config(interaction.guild.id, config)
-        await interaction.response.send_message(f"✅ starboard threshold set to **{number}**")
 
     @starboard.command(name="ignore", description="Ignore a channel from starboard")
     @app_commands.checks.has_permissions(administrator=True)
@@ -235,52 +217,6 @@ class Starboard(commands.Cog):
         self.save_config(interaction.guild.id, config)
         await interaction.response.send_message(f"✅ {channel.mention} is now ignored by the starboard.")
 
-    @starboard.command(name="unignore", description="Stop ignoring a channel from starboard")
-    @app_commands.checks.has_permissions(administrator=True)
-    async def starboard_unignore(self, interaction: discord.Interaction, channel: discord.TextChannel):
-        self.bot.increment_command('starboard_unignore')
-        config = self.get_config(interaction.guild.id)
-        ignored = config.get('ignored_channels', [])
-        ignored = [c for c in ignored if str(c) != str(channel.id)]
-        config['ignored_channels'] = ignored
-        self.save_config(interaction.guild.id, config)
-        await interaction.response.send_message(f"✅ {channel.mention} is no longer ignored by the starboard.")
-
-    # ==================== Legacy commands (kept for backward compat) ====================
-
-    @app_commands.command(name="starboard_setup", description="Setup the starboard (legacy)")
-    @app_commands.checks.has_permissions(administrator=True)
-    async def starboard_setup_legacy(
-        self,
-        interaction: discord.Interaction,
-        channel: discord.TextChannel,
-        threshold: int = 3,
-        emoji: str = "⭐"
-    ):
-        self.bot.increment_command('starboard_setup_legacy')
-        config = self.get_config(interaction.guild.id)
-        config['channel_id'] = str(channel.id)
-        config['threshold'] = max(1, threshold)
-        config['emoji'] = emoji
-        self.save_config(interaction.guild.id, config)
-        await interaction.response.send_message(
-            f"✅ starboard set up in {channel.mention}.\n"
-            f"threshold: **{max(1, threshold)}** {emoji}"
-        )
-
-    @app_commands.command(name="starboard_toggle", description="Enable/disable the starboard (legacy)")
-    @app_commands.checks.has_permissions(administrator=True)
-    async def starboard_toggle_legacy(self, interaction: discord.Interaction, enabled: bool):
-        self.bot.increment_command('starboard_toggle_legacy')
-        config = self.get_config(interaction.guild.id)
-        if not enabled:
-            # Disable by clearing channel_id
-            config['_disabled'] = True
-        else:
-            config['_disabled'] = False
-        self.save_config(interaction.guild.id, config)
-        status = "enabled" if enabled else "disabled"
-        await interaction.response.send_message(f"starboard is now **{status}**")
 
 
 async def setup(bot):

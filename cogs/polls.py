@@ -268,69 +268,6 @@ class Polls(commands.Cog):
         await self._end_poll(message_id, force=True)
         await interaction.response.send_message("✅ poll ended.")
 
-    @poll.command(name="results", description="Show current poll results without ending")
-    async def poll_results(self, interaction: discord.Interaction, message_id: str):
-        self.bot.increment_command('poll_results')
-        pdata = self._get_poll(message_id)
-        if not pdata:
-            await interaction.response.send_message(
-                "no poll found with that message id.", ephemeral=True
-            )
-            return
-        channel = self.bot.get_channel(int(pdata['channel_id']))
-        if not channel:
-            await interaction.response.send_message(
-                "poll channel no longer exists.", ephemeral=True
-            )
-            return
-        votes = await self._count_votes(channel, int(message_id))
-        pdata['votes'] = votes
-        self._save_poll(message_id, pdata)
-        embed = self._build_poll_embed(pdata, show_results=True)
-        await interaction.response.send_message(embed=embed, ephemeral=True)
-
-    # ==================== Legacy commands (kept for backward compat) ====================
-
-    @app_commands.command(name="multipoll", description="Create a multi-option poll (legacy)")
-    async def multipoll(
-        self,
-        interaction: discord.Interaction,
-        question: str,
-        option1: str,
-        option2: str,
-        option3: str = None,
-        option4: str = None,
-        duration: int = 60
-    ):
-        self.bot.increment_command('multipoll')
-        options = [option1, option2]
-        if option3:
-            options.append(option3)
-        if option4:
-            options.append(option4)
-        if duration < 5:
-            duration = 5
-
-        end_time = int(datetime.utcnow().replace(tzinfo=timezone.utc).timestamp()) + duration
-        pdata = {
-            'message_id': None,
-            'channel_id': str(interaction.channel.id),
-            'guild_id': str(interaction.guild.id),
-            'author_id': str(interaction.user.id),
-            'question': question,
-            'options': options,
-            'end_time': end_time,
-            'ended': False,
-            'votes': {},
-        }
-        embed = self._build_poll_embed(pdata)
-        await interaction.response.send_message(embed=embed)
-        msg = await interaction.original_response()
-        for i in range(len(options)):
-            await msg.add_reaction(POLL_EMOJIS[i])
-        pdata['message_id'] = str(msg.id)
-        self._save_poll(str(msg.id), pdata)
-        self.bot.loop.create_task(self._schedule_end(str(msg.id), duration))
 
 
 async def setup(bot):

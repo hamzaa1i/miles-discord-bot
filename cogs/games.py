@@ -352,15 +352,25 @@ class Games(commands.Cog):
     @app_commands.command(name="ttt", description="Tic Tac Toe against another user")
     async def ttt(self, interaction: discord.Interaction, user: discord.Member):
         self.bot.increment_command('ttt')
+        # BUG 13 — check if the TARGET user is a bot, not the invoker
         if user.bot:
-            await interaction.response.send_message("can't play against bots.", ephemeral=True)
+            try:
+                await interaction.response.send_message("can't play against bots.", ephemeral=True)
+            except discord.InteractionResponded:
+                await interaction.followup.send("can't play against bots.", ephemeral=True)
             return
         if user.id == interaction.user.id:
-            await interaction.response.send_message("can't play against yourself.", ephemeral=True)
+            try:
+                await interaction.response.send_message("can't play against yourself.", ephemeral=True)
+            except discord.InteractionResponded:
+                await interaction.followup.send("can't play against yourself.", ephemeral=True)
             return
         view = TicTacToeView(interaction.user, user)
         embed = view._build_embed()
-        await interaction.response.send_message(embed=embed, view=view)
+        try:
+            await interaction.response.send_message(embed=embed, view=view)
+        except discord.InteractionResponded:
+            await interaction.followup.send(embed=embed, view=view)
         view.message = await interaction.original_response()
 
     @app_commands.command(name="numguess", description="Number guessing game (1-100)")

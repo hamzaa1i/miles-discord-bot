@@ -145,45 +145,6 @@ class Productivity(commands.Cog):
             )
         
         await interaction.response.send_message(embed=embed, ephemeral=True)
-    
-    @app_commands.command(name="mood", description="Track your mood")
-    async def mood(self, interaction: discord.Interaction, emoji: str):
-        """Log daily mood"""
-        data = self.db.get(str(interaction.user.id), {'reminders': [], 'notes': [], 'moods': []})
-        
-        today = datetime.utcnow().date().isoformat()
-        
-        # Check if already logged today
-        for mood in data['moods']:
-            if mood['date'] == today:
-                embed = create_embed(
-                    title="✅ Mood Already Logged",
-                    description=f"You already logged your mood as {mood['emoji']} today!",
-                    color=discord.Color.orange()
-                )
-                await interaction.response.send_message(embed=embed, ephemeral=True)
-                return
-        
-        # Log mood
-        data['moods'].append({
-            'emoji': emoji,
-            'date': today
-        })
-        
-        self.db.set(str(interaction.user.id), data)
-        
-        embed = create_embed(
-            title="✅ Mood Logged!",
-            description=f"Today's mood: {emoji}",
-            color=discord.Color.green()
-        )
-        
-        # Show mood trend
-        if len(data['moods']) >= 7:
-            recent_moods = " ".join([m['emoji'] for m in data['moods'][-7:]])
-            embed.add_field(name="Last 7 Days", value=recent_moods)
-        
-        await interaction.response.send_message(embed=embed)
 
 async def setup(bot):
     await bot.add_cog(Productivity(bot))

@@ -345,65 +345,6 @@ class Marriage(commands.Cog):
             embed.set_footer(text=f"divorced {data['times_divorced']} time(s)")
         await interaction.response.send_message(embed=embed)
 
-    @app_commands.command(name="marry_status", description="Check your own marriage status")
-    async def marry_status(self, interaction: discord.Interaction):
-        self.bot.increment_command('marry_status')
-        # Delegate to /marriage logic
-        data = self.get_user(interaction.user.id)
-        embed = discord.Embed(color=0x1a1a2e)
-        embed.set_author(
-            name=interaction.user.display_name,
-            icon_url=interaction.user.avatar.url if interaction.user.avatar else None
-        )
-        if data.get('married_to'):
-            try:
-                spouse = await self.bot.fetch_user(int(data['married_to']))
-                spouse_name = spouse.mention
-            except Exception:
-                spouse_name = "unknown"
-            try:
-                since = datetime.fromisoformat(data['married_since'])
-                days = (datetime.utcnow() - since).days
-            except Exception:
-                days = 0
-            embed.add_field(name="married to", value=spouse_name, inline=True)
-            embed.add_field(name="for", value=f"{days} days", inline=True)
-        else:
-            embed.description = "not married."
-        if data.get('times_divorced', 0) > 0:
-            embed.set_footer(text=f"divorced {data['times_divorced']} time(s)")
-        await interaction.response.send_message(embed=embed)
-
-    # ==================== Legacy commands (kept for backward compat) ====================
-
-    @app_commands.command(name="spouse", description="Check your or someone's marriage status (legacy)")
-    async def spouse(self, interaction: discord.Interaction, user: discord.Member = None):
-        self.bot.increment_command('spouse')
-        target = user or interaction.user
-        data = self.get_user(target.id)
-        embed = discord.Embed(color=0x1a1a2e)
-        embed.set_author(
-            name=target.display_name,
-            icon_url=target.avatar.url if target.avatar else None
-        )
-        if data.get('married_to'):
-            try:
-                spouse = await self.bot.fetch_user(int(data['married_to']))
-                spouse_name = spouse.mention
-            except Exception:
-                spouse_name = "unknown"
-            try:
-                since = datetime.fromisoformat(data['married_since'])
-                days = (datetime.utcnow() - since).days
-            except Exception:
-                days = 0
-            embed.add_field(name="married to", value=spouse_name, inline=True)
-            embed.add_field(name="for", value=f"{days} days", inline=True)
-        else:
-            embed.description = "not married."
-        if data.get('times_divorced', 0) > 0:
-            embed.set_footer(text=f"divorced {data['times_divorced']} time(s)")
-        await interaction.response.send_message(embed=embed)
 
 
 async def setup(bot):

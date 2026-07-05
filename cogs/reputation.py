@@ -104,23 +104,6 @@ class Reputation(commands.Cog):
         embed.set_footer(text=f"by {interaction.user.display_name}")
         await interaction.response.send_message(embed=embed)
 
-    @rep.command(name="check", description="Check someone's reputation score")
-    async def rep_check(self, interaction: discord.Interaction, user: discord.Member = None):
-        self.bot.increment_command('rep_check')
-        target = user or interaction.user
-        data = self.get_user(target.id)
-        embed = discord.Embed(color=0x1a1a2e)
-        embed.set_author(
-            name=target.display_name,
-            icon_url=target.avatar.url if target.avatar else None
-        )
-        embed.add_field(name="reputation", value=f"**{data.get('rep', 0)}** points", inline=True)
-        embed.add_field(
-            name="received from",
-            value=f"{len(data.get('received_from', []))} users",
-            inline=True
-        )
-        await interaction.response.send_message(embed=embed)
 
     @rep.command(name="leaderboard", description="Top 10 reputation in the server")
     async def rep_leaderboard(self, interaction: discord.Interaction):
@@ -168,55 +151,6 @@ class Reputation(commands.Cog):
         await interaction.response.send_message(
             f"✅ reset {user.mention}'s reputation to 0."
         )
-
-    # ==================== Legacy commands (kept for backward compat) ====================
-
-    @app_commands.command(name="repcheck", description="Check reputation of a user (legacy)")
-    async def repcheck_legacy(self, interaction: discord.Interaction, user: discord.Member = None):
-        self.bot.increment_command('repcheck')
-        target = user or interaction.user
-        data = self.get_user(target.id)
-        embed = discord.Embed(color=0x1a1a2e)
-        embed.set_author(
-            name=target.display_name,
-            icon_url=target.avatar.url if target.avatar else None
-        )
-        embed.add_field(name="reputation", value=f"**{data.get('rep', 0)}** points", inline=True)
-        embed.add_field(
-            name="received from",
-            value=f"{len(data.get('received_from', []))} users",
-            inline=True
-        )
-        await interaction.response.send_message(embed=embed)
-
-    @app_commands.command(name="replb", description="Reputation leaderboard (legacy)")
-    async def replb_legacy(self, interaction: discord.Interaction):
-        self.bot.increment_command('replb')
-        all_data = self.db.get_all()
-        guild_member_ids = {str(m.id) for m in interaction.guild.members}
-        filtered = [
-            (uid, data.get('rep', 0))
-            for uid, data in all_data.items()
-            if uid in guild_member_ids and isinstance(data, dict)
-        ]
-        filtered.sort(key=lambda x: x[1], reverse=True)
-        top = filtered[:10]
-        if not top:
-            await interaction.response.send_message("no rep data yet.", ephemeral=True)
-            return
-        embed = discord.Embed(title="Rep Leaderboard", color=0x1a1a2e)
-        medals = {1: "🥇", 2: "🥈", 3: "🥉"}
-        desc = ""
-        for idx, (uid, rep) in enumerate(top, 1):
-            try:
-                user_obj = await self.bot.fetch_user(int(uid))
-                name = user_obj.name
-            except Exception:
-                name = f"User {uid}"
-            medal = medals.get(idx, f"`#{idx}`")
-            desc += f"{medal} **{name}** — {rep} rep\n"
-        embed.description = desc
-        await interaction.response.send_message(embed=embed)
 
 
 async def setup(bot):

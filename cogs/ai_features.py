@@ -88,63 +88,7 @@ class AIFeatures(commands.Cog):
         embed = discord.Embed(title=f"💡 {topic} — explained", description=result[:4000], color=0x1a1a2e)
         await interaction.followup.send(embed=embed)
 
-    @app_commands.command(name="code", description="Generate a code snippet")
-    @app_commands.checks.cooldown(1, 30.0, key=lambda i: i.user.id)
-    async def code(self, interaction: discord.Interaction, language: str, description: str):
-        self.bot.increment_command('code')
-        await interaction.response.defer()
-        result = await self._ai_call(
-            f"You are a code generator. Write {language} code for the user's request. Return ONLY code in a single fenced block, no explanation.",
-            description,
-            temperature=0.2,
-            max_tokens=1000
-        )
-        embed = discord.Embed(title=f"💻 {language} code", description=result[:4000], color=0x1a1a2e)
-        await interaction.followup.send(embed=embed)
 
-    @app_commands.command(name="debug", description="Find bugs in your code")
-    @app_commands.checks.cooldown(1, 30.0, key=lambda i: i.user.id)
-    async def debug(self, interaction: discord.Interaction, code: str):
-        self.bot.increment_command('debug')
-        await interaction.response.defer()
-        result = await self._ai_call(
-            "You are a debugger. Look at the user's code, identify bugs, and suggest fixes. Be specific. Use bullet points. Be concise.",
-            code,
-            temperature=0.3,
-            max_tokens=1000
-        )
-        embed = discord.Embed(title="🐞 Debug report", description=result[:4000], color=0xff5555)
-        embed.add_field(name="Your code", value=f"```\n{code[:1000]}\n```", inline=False)
-        await interaction.followup.send(embed=embed)
-
-    @app_commands.command(name="story", description="AI writes a short story (150-200 words)")
-    @app_commands.checks.cooldown(1, 30.0, key=lambda i: i.user.id)
-    async def story(self, interaction: discord.Interaction, prompt: str):
-        self.bot.increment_command('story')
-        await interaction.response.defer()
-        result = await self._ai_call(
-            "Write a short story (150-200 words) based on the user's prompt. Be vivid. Use a narrative voice. No preamble.",
-            prompt,
-            temperature=0.9,
-            max_tokens=400
-        )
-        embed = discord.Embed(title="📖 A short story", description=result[:4000], color=0x1a1a2e)
-        embed.set_footer(text=f"based on: {prompt[:100]}")
-        await interaction.followup.send(embed=embed)
-
-    @app_commands.command(name="poem", description="AI writes a short poem (8-12 lines)")
-    @app_commands.checks.cooldown(1, 30.0, key=lambda i: i.user.id)
-    async def poem(self, interaction: discord.Interaction, topic: str):
-        self.bot.increment_command('poem')
-        await interaction.response.defer()
-        result = await self._ai_call(
-            "Write a short poem (8-12 lines) about the user's topic. Make it evocative. No title. No preamble.",
-            topic,
-            temperature=0.95,
-            max_tokens=300
-        )
-        embed = discord.Embed(title=f"📜 A poem about {topic}", description=result[:4000], color=0x1a1a2e)
-        await interaction.followup.send(embed=embed)
 
     @app_commands.command(name="advice", description="Blunt, sarcastic but actually useful advice")
     @app_commands.checks.cooldown(1, 15.0, key=lambda i: i.user.id)
@@ -159,52 +103,6 @@ class AIFeatures(commands.Cog):
         )
         embed = discord.Embed(description=result[:4000], color=0x1a1a2e)
         embed.set_footer(text=f"situation: {situation[:100]}")
-        await interaction.followup.send(embed=embed)
-
-    @app_commands.command(name="define", description="Define a word with etymology + example")
-    @app_commands.checks.cooldown(1, 15.0, key=lambda i: i.user.id)
-    async def define(self, interaction: discord.Interaction, word: str):
-        self.bot.increment_command('define')
-        await interaction.response.defer()
-        result = await self._ai_call(
-            "Define the user's word. Then give the etymology (origin) in one sentence. Then give one example sentence using the word. Be concise and accurate. If the word doesn't exist, say so.",
-            word,
-            temperature=0.4,
-            max_tokens=400
-        )
-        embed = discord.Embed(title=f"📚 {word}", description=result[:4000], color=0x1a1a2e)
-        await interaction.followup.send(embed=embed)
-
-    @app_commands.command(name="tldr", description="TLDR of the last 15 messages in this channel")
-    @app_commands.checks.cooldown(1, 20.0, key=lambda i: i.user.id)
-    async def tldr(self, interaction: discord.Interaction):
-        self.bot.increment_command('tldr')
-        await interaction.response.defer()
-        # Fetch last 15 messages excluding bot
-        messages = []
-        try:
-            async for m in interaction.channel.history(limit=30, oldest_first=False):
-                if not m.author.bot and m.content:
-                    messages.append(f"{m.author.display_name}: {m.content}")
-                if len(messages) >= 15:
-                    break
-        except Exception as e:
-            await interaction.followup.send(f"couldn't fetch messages: {e}")
-            return
-
-        if not messages:
-            await interaction.followup.send("no recent messages to summarize.")
-            return
-
-        transcript = "\n".join(reversed(messages))
-        result = await self._ai_call(
-            "Summarize the following Discord conversation in 2-3 sentences. Be concise. Capture the main topic and any decisions made.",
-            transcript,
-            temperature=0.3,
-            max_tokens=200
-        )
-        embed = discord.Embed(title="📄 TLDR", description=result[:4000], color=0x1a1a2e)
-        embed.set_footer(text=f"based on {len(messages)} recent messages")
         await interaction.followup.send(embed=embed)
 
     @app_commands.command(name="roast_server", description="AI roasts the current server")
@@ -227,27 +125,6 @@ class AIFeatures(commands.Cog):
         )
         embed = discord.Embed(title="🔥 Server roast", description=result[:4000], color=0xff5555)
         await interaction.followup.send(embed=embed)
-
-    @app_commands.command(name="aipoll", description="AI generates a poll question about a topic")
-    async def aipoll(self, interaction: discord.Interaction, topic: str):
-        self.bot.increment_command('aipoll')
-        await interaction.response.defer()
-        result = await self._ai_call(
-            "Generate a single opinion poll question or 'would you rather' about the user's topic. Return ONLY the question, nothing else. Make it thought-provoking. Max 1 sentence.",
-            topic,
-            temperature=0.85,
-            max_tokens=120
-        )
-        # Clean up
-        question = result.strip().strip('"').strip('*')
-        embed = discord.Embed(title="📊 AI-generated poll", description=question[:2048], color=0x1a1a2e)
-        embed.set_footer(text=f"about: {topic} · by {interaction.user}")
-        await interaction.followup.send(embed=embed)
-        # Add reactions
-        msg = await interaction.original_response()
-        await msg.add_reaction("👍")
-        await msg.add_reaction("👎")
-
 
 async def setup(bot):
     await bot.add_cog(AIFeatures(bot))

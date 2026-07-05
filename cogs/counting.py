@@ -194,7 +194,7 @@ class Counting(commands.Cog):
         )
         await interaction.response.send_message(embed=embed)
 
-    @counting.command(name="toggle_save", description="Toggle whether count resets to 0 on fail or saves")
+
     @app_commands.checks.has_permissions(manage_channels=True)
     async def counting_toggle_save(self, interaction: discord.Interaction):
         self.bot.increment_command('counting_toggle_save')
@@ -203,36 +203,6 @@ class Counting(commands.Cog):
         self.save_config(interaction.guild.id, config)
         status = "✅ on (count is preserved on fail)" if config['save_count_on_fail'] else "❌ off (count resets to 0 on fail)"
         await interaction.response.send_message(f"save-on-fail is now **{status}**.")
-
-    # ==================== Legacy commands (kept for backward compat) ====================
-
-    @app_commands.command(name="counting_setup", description="Setup the counting channel (legacy)")
-    @app_commands.checks.has_permissions(manage_channels=True)
-    async def counting_setup_legacy(self, interaction: discord.Interaction, channel: discord.TextChannel):
-        self.bot.increment_command('counting_setup_legacy')
-        config = self.get_config(interaction.guild.id)
-        config['channel_id'] = str(channel.id)
-        config['enabled'] = True
-        config['current_count'] = 0
-        config['last_user_id'] = None
-        self.save_config(interaction.guild.id, config)
-        await interaction.response.send_message(
-            f"✅ counting channel set to {channel.mention}. start counting from 1."
-        )
-
-    @app_commands.command(name="count", description="Check current count (legacy)")
-    async def count_legacy(self, interaction: discord.Interaction):
-        self.bot.increment_command('count_legacy')
-        config = self.get_config(interaction.guild.id)
-        if not config.get('enabled', True):
-            await interaction.response.send_message(
-                "counting isn't set up. use `/counting_setup`", ephemeral=True
-            )
-            return
-        embed = discord.Embed(color=0x1a1a2e)
-        embed.add_field(name="current count", value=f"**{config.get('current_count', 0)}**", inline=True)
-        embed.add_field(name="high score", value=f"**{config.get('high_score', 0)}**", inline=True)
-        await interaction.response.send_message(embed=embed)
 
 
 async def setup(bot):

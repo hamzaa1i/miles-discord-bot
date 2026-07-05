@@ -639,37 +639,6 @@ class ServerLogs(commands.Cog):
         await channel.send(embed=embed)
 
     # ==================== SETUP COMMANDS ====================
-
-    @app_commands.command(name="logs_setup", description="Setup server logging")
-    @app_commands.checks.has_permissions(administrator=True)
-    async def logs_setup(
-        self,
-        interaction: discord.Interaction,
-        channel: discord.TextChannel,
-        enabled: bool = True
-    ):
-        """Setup server logs"""
-        config = self.get_config(interaction.guild.id)
-        config['enabled'] = enabled
-        config['log_channel'] = str(channel.id)
-        self.db.set(str(interaction.guild.id), config)
-
-        embed = discord.Embed(
-            title="Server Logs Configured",
-            color=0x1a1a2e
-        )
-        embed.add_field(name="Log Channel", value=channel.mention, inline=True)
-        embed.add_field(
-            name="Status",
-            value="Enabled" if enabled else "Disabled",
-            inline=True
-        )
-        embed.set_footer(
-            text="All server events will now be logged. Use /logs_toggle to disable specific events."
-        )
-
-        await interaction.response.send_message(embed=embed)
-
     @app_commands.command(name="logs_toggle", description="Toggle specific log events")
     @app_commands.checks.has_permissions(administrator=True)
     @app_commands.describe(event="The event type to toggle")
@@ -702,33 +671,5 @@ class ServerLogs(commands.Cog):
             color=0x1a1a2e
         )
         await interaction.response.send_message(embed=embed)
-
-    @app_commands.command(name="logs_ignore", description="Ignore a channel from logging")
-    @app_commands.checks.has_permissions(administrator=True)
-    async def logs_ignore(
-        self,
-        interaction: discord.Interaction,
-        channel: discord.TextChannel
-    ):
-        """Toggle channel ignore"""
-        config = self.get_config(interaction.guild.id)
-        ignored = config.get('ignored_channels', [])
-
-        if str(channel.id) in ignored:
-            ignored.remove(str(channel.id))
-            action = "removed from"
-        else:
-            ignored.append(str(channel.id))
-            action = "added to"
-
-        config['ignored_channels'] = ignored
-        self.db.set(str(interaction.guild.id), config)
-
-        embed = discord.Embed(
-            description=f"{channel.mention} {action} ignored channels list.",
-            color=0x1a1a2e
-        )
-        await interaction.response.send_message(embed=embed)
-
 async def setup(bot):
     await bot.add_cog(ServerLogs(bot))

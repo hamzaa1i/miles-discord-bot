@@ -167,36 +167,7 @@ class Birthdays(commands.Cog):
             ephemeral=True
         )
 
-    @birthday.command(name="remove", description="Remove your birthday")
-    async def birthday_remove(self, interaction: discord.Interaction):
-        self.bot.increment_command('birthday_remove')
-        data = self.get_guild_data(interaction.guild.id)
-        users = data.get('users', {})
-        if str(interaction.user.id) in users:
-            del users[str(interaction.user.id)]
-            data['users'] = users
-            self.save_guild_data(interaction.guild.id, data)
-            await interaction.response.send_message("✅ your birthday has been removed.", ephemeral=True)
-        else:
-            await interaction.response.send_message("you hadn't set a birthday.", ephemeral=True)
 
-    @birthday.command(name="check", description="See when someone's birthday is")
-    async def birthday_check(self, interaction: discord.Interaction, user: discord.Member):
-        self.bot.increment_command('birthday_check')
-        data = self.get_guild_data(interaction.guild.id)
-        bday = data.get('users', {}).get(str(user.id))
-        if not bday:
-            await interaction.response.send_message(
-                f"{user.display_name} hasn't set their birthday.", ephemeral=True
-            )
-            return
-        month = bday.get('month')
-        day = bday.get('day')
-        embed = discord.Embed(
-            description=f"🎂 {user.mention}'s birthday is **{MONTHS[month]} {day}**",
-            color=0x1a1a2e
-        )
-        await interaction.response.send_message(embed=embed)
 
     @birthday.command(name="upcoming", description="List the next 5 upcoming birthdays")
     async def birthday_upcoming(self, interaction: discord.Interaction):
@@ -258,93 +229,6 @@ class Birthdays(commands.Cog):
         await interaction.response.send_message(
             f"✅ birthday announcements will go to {channel.mention}."
         )
-
-    # ==================== Legacy commands (kept for backward compat) ====================
-
-    @app_commands.command(name="birthday_set", description="Set your birthday (legacy)")
-    async def birthday_set_legacy(self, interaction: discord.Interaction, month: int, day: int):
-        self.bot.increment_command('birthday_set_legacy')
-        if month < 1 or month > 12 or day < 1 or day > 31:
-            await interaction.response.send_message("that's not a real date.", ephemeral=True)
-            return
-        data = self.get_guild_data(interaction.guild.id)
-        data.setdefault('users', {})[str(interaction.user.id)] = {'month': month, 'day': day}
-        self.save_guild_data(interaction.guild.id, data)
-        await interaction.response.send_message(
-            f"✅ birthday set to **{MONTHS[month]} {day}**", ephemeral=True
-        )
-
-    @app_commands.command(name="birthday_setup", description="Set birthday announcement channel (legacy)")
-    @app_commands.checks.has_permissions(administrator=True)
-    async def birthday_setup_legacy(self, interaction: discord.Interaction, channel: discord.TextChannel):
-        self.bot.increment_command('birthday_setup_legacy')
-        data = self.get_guild_data(interaction.guild.id)
-        data.setdefault('config', {})['channel_id'] = str(channel.id)
-        self.save_guild_data(interaction.guild.id, data)
-        await interaction.response.send_message(
-            f"✅ birthday announcements will go to {channel.mention}."
-        )
-
-    @app_commands.command(name="birthday", description="Check someone's birthday (legacy)")
-    async def birthday_legacy(self, interaction: discord.Interaction, user: discord.Member = None):
-        self.bot.increment_command('birthday_legacy')
-        target = user or interaction.user
-        data = self.get_guild_data(interaction.guild.id)
-        bday = data.get('users', {}).get(str(target.id))
-        if not bday:
-            await interaction.response.send_message(
-                f"{target.display_name} hasn't set their birthday.", ephemeral=True
-            )
-            return
-        month = bday.get('month')
-        day = bday.get('day')
-        embed = discord.Embed(
-            description=f"🎂 {target.mention}'s birthday is **{MONTHS[month]} {day}**",
-            color=0x1a1a2e
-        )
-        await interaction.response.send_message(embed=embed)
-
-    @app_commands.command(name="birthdays", description="List upcoming birthdays (legacy)")
-    async def birthdays_legacy(self, interaction: discord.Interaction):
-        self.bot.increment_command('birthdays_legacy')
-        # Delegate to the new /birthday upcoming logic
-        data = self.get_guild_data(interaction.guild.id)
-        users = data.get('users', {})
-        now = datetime.utcnow()
-        upcoming = []
-        for user_id_str, bday in users.items():
-            try:
-                m, d = int(bday['month']), int(bday['day'])
-            except (KeyError, ValueError, TypeError):
-                continue
-            try:
-                next_bday = datetime(now.year, m, d)
-            except ValueError:
-                continue
-            if next_bday < now:
-                next_bday = datetime(now.year + 1, m, d)
-            days_until = (next_bday - now).days
-            upcoming.append((days_until, user_id_str, m, d))
-
-        upcoming.sort(key=lambda x: x[0])
-        if not upcoming:
-            await interaction.response.send_message("no birthdays set in this server.", ephemeral=True)
-            return
-
-        embed = discord.Embed(title="🎂 Upcoming Birthdays", color=0x1a1a2e)
-        desc = ""
-        for days_until, user_id_str, m, d in upcoming[:10]:
-            member = interaction.guild.get_member(int(user_id_str))
-            name = member.display_name if member else f"User {user_id_str}"
-            if days_until == 0:
-                when = "today"
-            elif days_until == 1:
-                when = "tomorrow"
-            else:
-                when = f"in {days_until} days"
-            desc += f"**{name}** — {MONTHS_SHORT[m]} {d} ({when})\n"
-        embed.description = desc
-        await interaction.response.send_message(embed=embed)
 
 
 async def setup(bot):
