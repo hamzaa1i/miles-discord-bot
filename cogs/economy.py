@@ -1,3 +1,9 @@
+"""
+cogs/economy.py — economy system with guild-scoped data.
+
+Data format in data/economy.json:
+    {"guild_id": {"user_id": {balance, bank, inventory, ...}}}
+"""
 import discord
 from discord.ext import commands
 from discord import app_commands
@@ -8,11 +14,17 @@ from utils.database import Database
 
 OWNER_ID = int(os.getenv('OWNER_ID', '0'))
 
+
 class Economy(commands.Cog):
+    """Economy commands"""
+
+    earn = app_commands.Group(name="earn", description="Earn coins in various ways")
+    bank = app_commands.Group(name="bank", description="Banking operations")
+    eco_admin = app_commands.Group(name="eco_admin", description="Economy admin tools")
+
     def __init__(self, bot):
         self.bot = bot
         self.db = Database('data/economy.json')
-
         self.shop_items = {
             "Fishing Rod": {"price": 500, "description": "Required to fish", "emoji": "🎣", "type": "tool"},
             "Hunting Rifle": {"price": 1000, "description": "Required to hunt", "emoji": "🔫", "type": "tool"},
@@ -20,25 +32,29 @@ class Economy(commands.Cog):
             "Lucky Charm": {"price": 3000, "description": "Increases luck", "emoji": "🍀", "type": "boost"},
             "VIP Badge": {"price": 10000, "description": "VIP status", "emoji": "⭐", "type": "cosmetic"},
             "Premium Role": {"price": 15000, "description": "Premium role", "emoji": "💎", "type": "cosmetic"},
-            "XP Boost": {"price": 5000, "description": "2x XP 24hrs", "emoji": "🚀", "type": "boost"},
-            "Shovel": {"price": 600, "description": "Required to dig", "emoji": "🪣", "type": "tool"}
         }
 
-    def get_user_data(self, user_id: int) -> dict:
-        return self.db.get(str(user_id), {
+    def _get_guild_data(self, guild_id: int) -> dict:
+        return self.db.get(str(guild_id), {})
+
+    def _save_guild_data(self, guild_id: int, data: dict):
+        self.db.set(str(guild_id), data)
+
+    def get_user_data(self, guild_id: int, user_id: int) -> dict:
+        guild_data = self._get_guild_data(guild_id)
+        return guild_data.get(str(user_id), {
             'balance': 0, 'bank': 0, 'inventory': [],
             'last_daily': None, 'last_work': None,
-            'last_fish': None, 'last_hunt': None,
-            'last_mine': None, 'last_beg': None,
-            'last_crime': None, 'total_earned': 0,
-            'total_spent': 0, 'daily_streak': 0,
-            'gems': 0, 'fish_caught': 0,
-            'animals_hunted': 0, 'times_mined': 0,
-            'successful_crimes': 0, 'times_robbed': 0
+            'last_fish': None, 'last_hunt': None, 'last_mine': None,
+            'last_beg': None, 'last_crime': None,
+            'total_earned': 0, 'total_spent': 0,
+            'daily_streak': 0, 'gems': 0,
         })
 
-    def save_user_data(self, user_id: int, data: dict):
-        self.db.set(str(user_id), data)
+    def save_user_data(self, guild_id: int, user_id: int, data: dict):
+        guild_data = self._get_guild_data(guild_id)
+        guild_data[str(user_id)] = data
+        self._save_guild_data(guild_id, guild_data)
 
     def has_item(self, data, item):
         return item in data.get('inventory', [])
@@ -64,26 +80,38 @@ class Economy(commands.Cog):
         else:
             return f"{seconds // 3600}h {(seconds % 3600) // 60}m"
 
-    # ===== STANDALONE COMMANDS (most used, stay as individual) =====
+    def _check_married(self, user_id: int) -> bool:
+        """Check if user is married for daily bonus."""
+        try:
+            marriage_db = Database('data/marriages.json')
+            data = marriage_db.get(str(user_id), {})
+            return data.get('partner_id') is not None
+        except Exception:
+            return False
+
+    # ===== STANDALONE COMMANDS =====
 
     @app_commands.command(name="balance", description="Check your balance")
     async def balance(self, interaction: discord.Interaction, user: discord.Member = None):
-        user = user or interaction.user
-        data = self.get_user_data(user.id)
+        self.bot.increment_command('balance')
+        target = user or interaction.user
+        data = self.get_user_data(interaction.guild.id, target.id)
         embed = discord.Embed(color=0x1a1a2e)
-        embed.set_author(name=f"{user.display_name}'s Balance", icon_url=user.avatar.url if user.avatar else None)
+        embed.set_author(name=f"{target.display_name}'s Balance", icon_url=target.avatar.url if target.avatar else None)
         embed.add_field(name="Wallet", value=f"${data['balance']:,}", inline=True)
         embed.add_field(name="Bank", value=f"${data['bank']:,}", inline=True)
         embed.add_field(name="Net Worth", value=f"${data['balance'] + data['bank']:,}", inline=True)
-        if data.get('gems', 0) > 0:
-            embed.add_field(name="Gems", value=f"{data['gems']} 💎", inline=True)
-        if data.get('daily_streak', 0) > 1:
-            embed.set_footer(text=f"Streak: {data['daily_streak']} days 🔥")
+        if data.get('inventory'):
+            embed.add_field(name="Inventory", value=f"{len(data['inventory'])} items", inline=True)
+        if data.get('daily_streak', 0) > 0:
+            embed.add_field(name="Streak", value=f"{data['daily_streak']} days", inline=True)
         await interaction.response.send_message(embed=embed)
 
     @app_commands.command(name="daily", description="Claim daily reward")
     async def daily(self, interaction: discord.Interaction):
-        data = self.get_user_data(interaction.user.id)
+        self.bot.increment_command('daily')
+        await interaction.response.defer()
+        data = self.get_user_data(interaction.guild.id, interaction.user.id)
         now = datetime.utcnow()
         if data['last_daily']:
             last = datetime.fromisoformat(data['last_daily'])
@@ -92,86 +120,115 @@ class Economy(commands.Cog):
                 remaining = timedelta(days=1) - diff
                 h = remaining.seconds // 3600
                 m = (remaining.seconds % 3600) // 60
-                await interaction.response.send_message(f"come back in **{h}h {m}m**", ephemeral=True)
+                await interaction.followup.send(f"already claimed. come back in **{h}h {m}m**")
                 return
-            data['daily_streak'] = data.get('daily_streak', 0) + 1 if diff < timedelta(days=2) else 1
+            if diff < timedelta(days=2):
+                data['daily_streak'] = data.get('daily_streak', 0) + 1
+            else:
+                data['daily_streak'] = 1
+                await interaction.followup.send("streak lost. back to day 1.")
         else:
             data['daily_streak'] = 1
+
         streak = data['daily_streak']
-        base = random.randint(500, 1500)
-        streak_bonus = min(streak * 100, 1000)
+        base = random.randint(500, 1000)
+        streak_bonus = min(streak * 100, 600)
+
+        # Weekly bonus
+        weekly_bonus = 0
+        if streak % 7 == 0:
+            weekly_bonus = base  # 2x base
+        # Monthly bonus
+        monthly_bonus = 0
+        if streak >= 30 and streak % 30 == 0:
+            monthly_bonus = base * 2  # 3x base total
+
+        # Marriage bonus
+        marriage_bonus = 50 if self._check_married(interaction.user.id) else 0
+
         lucky_bonus = random.randint(200, 500) if self.lucky(data) else 0
-        total = base + streak_bonus + lucky_bonus
+        total = base + streak_bonus + weekly_bonus + monthly_bonus + marriage_bonus + lucky_bonus
+
         data['balance'] += total
         data['last_daily'] = now.isoformat()
         data['total_earned'] += total
-        self.save_user_data(interaction.user.id, data)
+        self.save_user_data(interaction.guild.id, interaction.user.id, data)
+
         embed = discord.Embed(title="Daily Reward", color=0x1a1a2e)
         embed.add_field(name="Base", value=f"${base:,}", inline=True)
         embed.add_field(name=f"Streak (Day {streak})", value=f"+${streak_bonus:,}", inline=True)
+        if weekly_bonus:
+            embed.add_field(name="WEEKLY BONUS", value=f"+${weekly_bonus:,}", inline=True)
+        if monthly_bonus:
+            embed.add_field(name="MONTHLY BONUS", value=f"+${monthly_bonus:,}", inline=True)
+        if marriage_bonus:
+            embed.add_field(name="💍 Marriage Bonus", value=f"+${marriage_bonus}", inline=True)
         if lucky_bonus:
             embed.add_field(name="Lucky Bonus", value=f"+${lucky_bonus:,}", inline=True)
         embed.add_field(name="Total", value=f"**${total:,}**", inline=False)
-        embed.set_footer(text=f"Streak: {streak} days 🔥")
-        await interaction.response.send_message(embed=embed)
+        embed.set_footer(text=f"Streak: {streak} days")
+        await interaction.followup.send(embed=embed)
 
     @app_commands.command(name="work", description="Work to earn coins")
     async def work(self, interaction: discord.Interaction):
-        data = self.get_user_data(interaction.user.id)
-        on_cd, remaining = self.on_cooldown(data['last_work'], 1)
+        self.bot.increment_command('work')
+        await interaction.response.defer()
+        data = self.get_user_data(interaction.guild.id, interaction.user.id)
+        on_cd, remaining = self.on_cooldown(data.get('last_work'), 1)
         if on_cd:
-            await interaction.response.send_message(f"rest for **{self.format_time(remaining)}**", ephemeral=True)
+            await interaction.followup.send(f"already worked. come back in **{self.format_time(remaining)}**")
             return
         jobs = [
-            ("coded a discord bot", 400, 800), ("designed graphics", 300, 600),
-            ("fixed bugs", 500, 900), ("built a website", 400, 750),
-            ("taught a class", 350, 700), ("freelanced", 450, 850),
+            "drove an Uber", "debugged someone's code", "sold feet pics on the dark web",
+            "worked the night shift", "streamed for 6 hours", "walked dogs in the rain",
+            "delivered pizzas", "tutored a kid in math", "fixed a leaky faucet",
+            "performed at a open mic", "flipped burgers", "did someone's taxes",
+            "painted a fence", "organized a closet", "cat-sat for a week",
+            "wrote a jingle", "mowed lawns", "bartended a wedding",
+            "edited a wedding video", "carried groceries for old people",
         ]
-        job, mn, mx = random.choice(jobs)
-        earned = random.randint(mn, mx)
-        if self.lucky(data): earned = int(earned * 1.2)
+        job = random.choice(jobs)
+        earned = random.randint(300, 800)
+        if self.lucky(data):
+            earned = int(earned * 1.2)
         data['balance'] += earned
         data['last_work'] = datetime.utcnow().isoformat()
         data['total_earned'] += earned
-        self.save_user_data(interaction.user.id, data)
+        self.save_user_data(interaction.guild.id, interaction.user.id, data)
         embed = discord.Embed(description=f"you {job} and earned **${earned:,}**", color=0x1a1a2e)
         embed.add_field(name="Balance", value=f"${data['balance']:,}")
-        await interaction.response.send_message(embed=embed)
+        await interaction.followup.send(embed=embed)
 
     @app_commands.command(name="pay", description="Send coins to someone")
     async def pay(self, interaction: discord.Interaction, user: discord.Member, amount: int):
+        self.bot.increment_command('pay')
         if user.id == interaction.user.id or user.bot or amount <= 0:
             await interaction.response.send_message("invalid.", ephemeral=True)
             return
-        sender = self.get_user_data(interaction.user.id)
+        sender = self.get_user_data(interaction.guild.id, interaction.user.id)
         if sender['balance'] < amount:
             await interaction.response.send_message(f"you only have ${sender['balance']:,}", ephemeral=True)
             return
-        receiver = self.get_user_data(user.id)
+        receiver = self.get_user_data(interaction.guild.id, user.id)
         sender['balance'] -= amount
         receiver['balance'] += amount
-        self.save_user_data(interaction.user.id, sender)
-        self.save_user_data(user.id, receiver)
+        self.save_user_data(interaction.guild.id, interaction.user.id, sender)
+        self.save_user_data(interaction.guild.id, user.id, receiver)
         embed = discord.Embed(description=f"sent **${amount:,}** to {user.mention}", color=0x1a1a2e)
         await interaction.response.send_message(embed=embed)
 
     @app_commands.command(name="shop", description="View the shop")
     async def shop(self, interaction: discord.Interaction):
+        self.bot.increment_command('shop')
         embed = discord.Embed(title="Shop", description="use `/buy <item>` to purchase", color=0x1a1a2e)
-        categories = {}
         for name, d in self.shop_items.items():
-            cat = d['type']
-            if cat not in categories: categories[cat] = []
-            categories[cat].append((name, d))
-        cat_names = {'tool': '🔧 Tools', 'boost': '⚡ Boosts', 'cosmetic': '✨ Cosmetics'}
-        for cat, items in categories.items():
-            text = "\n".join([f"{d['emoji']} **{n}** — ${d['price']:,}\n{d['description']}" for n, d in items])
-            embed.add_field(name=cat_names.get(cat, cat.title()), value=text, inline=False)
+            embed.add_field(name=f"{d['emoji']} **{name}** — ${d['price']:,}", value=d['description'], inline=False)
         await interaction.response.send_message(embed=embed)
 
     @app_commands.command(name="buy", description="Purchase an item")
     async def buy(self, interaction: discord.Interaction, item: str):
-        data = self.get_user_data(interaction.user.id)
+        self.bot.increment_command('buy')
+        data = self.get_user_data(interaction.guild.id, interaction.user.id)
         found = None
         for si, sd in self.shop_items.items():
             if item.lower() in si.lower():
@@ -190,14 +247,15 @@ class Economy(commands.Cog):
         data['balance'] -= item_data['price']
         data['total_spent'] += item_data['price']
         data['inventory'].append(name)
-        self.save_user_data(interaction.user.id, data)
+        self.save_user_data(interaction.guild.id, interaction.user.id, data)
         embed = discord.Embed(description=f"bought **{item_data['emoji']} {name}** for **${item_data['price']:,}**", color=0x1a1a2e)
         await interaction.response.send_message(embed=embed)
 
     @app_commands.command(name="inventory", description="View your items")
     async def inventory(self, interaction: discord.Interaction, user: discord.Member = None):
+        self.bot.increment_command('inventory')
         target = user or interaction.user
-        data = self.get_user_data(target.id)
+        data = self.get_user_data(interaction.guild.id, target.id)
         if not data['inventory']:
             await interaction.response.send_message("empty inventory.", ephemeral=True)
             return
@@ -207,364 +265,270 @@ class Economy(commands.Cog):
         embed = discord.Embed(title=f"{target.display_name}'s Inventory", description=text, color=0x1a1a2e)
         await interaction.response.send_message(embed=embed, ephemeral=(user is None))
 
-    @app_commands.command(name="profile", description="View economy profile")
-    async def profile(self, interaction: discord.Interaction, user: discord.Member = None):
-        target = user or interaction.user
-        data = self.get_user_data(target.id)
-        await interaction.response.defer()
-
-        all_data = self.db.get_all()
-        sorted_users = sorted(
-            all_data.items(),
-            key=lambda x: x[1].get('balance', 0) + x[1].get('bank', 0),
-            reverse=True
-        )
-        rank = next(
-            (i + 1 for i, (uid, _) in enumerate(sorted_users) if int(uid) == target.id),
-            len(sorted_users)
-        )
-
-        level_db = Database('data/leveling.json')
-        level_data = level_db.get(f"{interaction.guild.id}_{target.id}", {})
-        level = level_data.get('level', 0)
-
-        role_color = target.color
-        accent = (role_color.r, role_color.g, role_color.b) if role_color.value != 0 else (99, 102, 241)
-
-        try:
-            from utils.rank_card import generate_profile_card
-            avatar_url = target.avatar.url if target.avatar else target.default_avatar.url
-
-            card = await generate_profile_card(
-                username=target.display_name,
-                avatar_url=avatar_url,
-                balance=data.get('balance', 0),
-                bank=data.get('bank', 0),
-                total_earned=data.get('total_earned', 0),
-                rank=rank,
-                level=level,
-                streak=data.get('daily_streak', 0),
-                gems=data.get('gems', 0),
-                accent_color=accent
-            )
-            file = discord.File(card, filename="profile.png")
-            await interaction.followup.send(file=file)
-        except Exception as e:
-            print(f"Profile card error: {e}")
-            embed = discord.Embed(color=0x1a1a2e)
-            embed.set_author(name=f"{target.display_name}'s Profile", icon_url=target.avatar.url if target.avatar else None)
-            embed.add_field(name="Wallet", value=f"${data['balance']:,}", inline=True)
-            embed.add_field(name="Bank", value=f"${data['bank']:,}", inline=True)
-            embed.add_field(name="Net Worth", value=f"${data['balance'] + data['bank']:,}", inline=True)
-            embed.add_field(name="Earned", value=f"${data.get('total_earned', 0):,}", inline=True)
-            embed.add_field(name="Streak", value=f"{data.get('daily_streak', 0)} days", inline=True)
-            embed.add_field(name="Gems", value=f"{data.get('gems', 0)} 💎", inline=True)
-            await interaction.followup.send(embed=embed)
-
-    @app_commands.command(name="richest", description="Top 10 richest")
+    @app_commands.command(name="richest", description="Top 10 richest in this server")
     async def richest(self, interaction: discord.Interaction):
+        self.bot.increment_command('richest')
         await interaction.response.defer()
-
-        all_data = self.db.get_all()
-        # Filter to only members of this guild
+        guild_data = self._get_guild_data(interaction.guild.id)
         guild_member_ids = {str(m.id) for m in interaction.guild.members}
-        filtered = {
-            uid: data for uid, data in all_data.items()
-            if uid in guild_member_ids and isinstance(data, dict)
-        }
-        sorted_users = sorted(
-            filtered.items(),
-            key=lambda x: x[1].get('balance', 0) + x[1].get('bank', 0),
-            reverse=True
-        )[:10]
-
+        filtered = {uid: d for uid, d in guild_data.items() if uid in guild_member_ids and isinstance(d, dict)}
+        sorted_users = sorted(filtered.items(), key=lambda x: x[1].get('balance', 0) + x[1].get('bank', 0), reverse=True)[:10]
         if not sorted_users:
             await interaction.followup.send("no data yet.")
             return
-
-        users_list = []
+        medals = {1: "🥇", 2: "🥈", 3: "🥉"}
+        desc = ""
         for idx, (uid, d) in enumerate(sorted_users, 1):
             try:
                 u = await self.bot.fetch_user(int(uid))
                 name = u.display_name
-                avatar = u.avatar.url if u.avatar else u.default_avatar.url
-            except:
+            except Exception:
                 name = f"User {uid}"
-                avatar = ""
             net = d.get('balance', 0) + d.get('bank', 0)
-            users_list.append({
-                "name": name,
-                "value": f"${net:,}",
-                "avatar_url": avatar,
-                "rank": idx
-            })
-
-        try:
-            from utils.rank_card import generate_leaderboard_card
-            card = await generate_leaderboard_card(
-                title="Richest Users",
-                users=users_list,
-                accent_color=(99, 102, 241)
-            )
-            file = discord.File(card, filename="leaderboard.png")
-            await interaction.followup.send(file=file)
-        except Exception as e:
-            print(f"Leaderboard card error: {e}")
-            medals = {1: "🥇", 2: "🥈", 3: "🥉"}
-            desc = ""
-            for u in users_list:
-                r = u['rank']
-                medal = medals.get(r, f"`#{r}`")
-                desc += f"{medal} **{u['name']}** — {u['value']}\n"
-            embed = discord.Embed(title="Richest Users", description=desc, color=0x1a1a2e)
-            await interaction.followup.send(embed=embed)
+            medal = medals.get(idx, f"`#{idx}`")
+            desc += f"{medal} **{name}** — ${net:,}\n"
+        embed = discord.Embed(title="💰 Richest Users", description=desc, color=0x1a1a2e)
+        await interaction.followup.send(embed=embed)
 
     # ===== EARN GROUP =====
 
-    earn_group = app_commands.Group(name="earn", description="Ways to earn coins")
-
-    @earn_group.command(name="fish", description="Go fishing")
-    async def fish(self, interaction: discord.Interaction):
-        data = self.get_user_data(interaction.user.id)
+    @earn.command(name="fish", description="Go fishing for coins")
+    async def earn_fish(self, interaction: discord.Interaction):
+        self.bot.increment_command('earn_fish')
+        await interaction.response.defer(ephemeral=True)
+        data = self.get_user_data(interaction.guild.id, interaction.user.id)
         if not self.has_item(data, "Fishing Rod"):
-            await interaction.response.send_message("buy a **Fishing Rod** first. `/shop`", ephemeral=True)
+            await interaction.followup.send("buy a **Fishing Rod** first. `/shop`", ephemeral=True)
             return
         on_cd, remaining = self.on_cooldown(data.get('last_fish'), 0.5)
         if on_cd:
-            await interaction.response.send_message(f"rest for **{self.format_time(remaining)}**", ephemeral=True)
+            await interaction.followup.send(f"rest for **{self.format_time(remaining)}**", ephemeral=True)
             return
-        catch = random.choice(["🐟", "🐠", "🐡", "🦈", "🐙", "🦑", "🦐", "🦀", "🐌", "🐊"])
-        earned = random.randint(50, 300)
-        if self.lucky(data): earned = int(earned * 1.3)
+        catch = random.choice(["🐟", "🐠", "🐡", "🦈", "🐙", "🦑", "🦐", "🦀"])
+        earned = random.randint(50, 200)
+        if self.lucky(data):
+            earned = int(earned * 1.3)
         data['balance'] += earned
         data['last_fish'] = datetime.utcnow().isoformat()
-        data['fish_caught'] = data.get('fish_caught', 0) + 1
         data['total_earned'] += earned
-        self.save_user_data(interaction.user.id, data)
-        embed = discord.Embed(description=f"you caught a {catch} and sold it for **${earned:,}**", color=0x1a1a2e)
-        embed.add_field(name="Balance", value=f"${data['balance']:,}")
-        await interaction.response.send_message(embed=embed)
+        self.save_user_data(interaction.guild.id, interaction.user.id, data)
+        await interaction.followup.send(f"you caught a {catch} and sold it for **${earned:,}**\nBalance: ${data['balance']:,}", ephemeral=True)
 
-    @earn_group.command(name="hunt", description="Go hunting")
-    async def hunt(self, interaction: discord.Interaction):
-        data = self.get_user_data(interaction.user.id)
+    @earn.command(name="hunt", description="Go hunting for coins")
+    async def earn_hunt(self, interaction: discord.Interaction):
+        self.bot.increment_command('earn_hunt')
+        await interaction.response.defer(ephemeral=True)
+        data = self.get_user_data(interaction.guild.id, interaction.user.id)
         if not self.has_item(data, "Hunting Rifle"):
-            await interaction.response.send_message("buy a **Hunting Rifle** first. `/shop`", ephemeral=True)
+            await interaction.followup.send("buy a **Hunting Rifle** first. `/shop`", ephemeral=True)
             return
         on_cd, remaining = self.on_cooldown(data.get('last_hunt'), 0.5)
         if on_cd:
-            await interaction.response.send_message(f"rest for **{self.format_time(remaining)}**", ephemeral=True)
+            await interaction.followup.send(f"rest for **{self.format_time(remaining)}**", ephemeral=True)
             return
-        prey = random.choice(["🦌", "🐗", "🐰", "🦊", "🦝", "🐿️", "🦔", "🐀", "🦃", "🕊️"])
-        earned = random.randint(100, 500)
-        if self.lucky(data): earned = int(earned * 1.3)
+        prey = random.choice(["🦌", "🐗", "🐰", "🦊", "🦝", "🐿️"])
+        earned = random.randint(100, 350)
+        if self.lucky(data):
+            earned = int(earned * 1.3)
         data['balance'] += earned
         data['last_hunt'] = datetime.utcnow().isoformat()
-        data['animals_hunted'] = data.get('animals_hunted', 0) + 1
         data['total_earned'] += earned
-        self.save_user_data(interaction.user.id, data)
-        embed = discord.Embed(description=f"you hunted a {prey} and sold it for **${earned:,}**", color=0x1a1a2e)
-        embed.add_field(name="Balance", value=f"${data['balance']:,}")
-        await interaction.response.send_message(embed=embed)
+        self.save_user_data(interaction.guild.id, interaction.user.id, data)
+        await interaction.followup.send(f"you hunted a {prey} and sold it for **${earned:,}**\nBalance: ${data['balance']:,}", ephemeral=True)
 
-    @earn_group.command(name="mine", description="Mine for gems")
-    async def mine(self, interaction: discord.Interaction):
-        data = self.get_user_data(interaction.user.id)
+    @earn.command(name="mine", description="Go mining for coins")
+    async def earn_mine(self, interaction: discord.Interaction):
+        self.bot.increment_command('earn_mine')
+        await interaction.response.defer(ephemeral=True)
+        data = self.get_user_data(interaction.guild.id, interaction.user.id)
         if not self.has_item(data, "Pickaxe"):
-            await interaction.response.send_message("buy a **Pickaxe** first. `/shop`", ephemeral=True)
+            await interaction.followup.send("buy a **Pickaxe** first. `/shop`", ephemeral=True)
             return
         on_cd, remaining = self.on_cooldown(data.get('last_mine'), 0.5)
         if on_cd:
-            await interaction.response.send_message(f"rest for **{self.format_time(remaining)}**", ephemeral=True)
+            await interaction.followup.send(f"rest for **{self.format_time(remaining)}**", ephemeral=True)
             return
-        gem = random.choice(["💎", "💎", "💎", "🔷", "🔶", "♦️", "🔴", "🟢", "🟡"])
-        earned = random.randint(80, 400)
-        if self.lucky(data): earned = int(earned * 1.3)
+        earned = random.randint(80, 300)
+        if self.lucky(data):
+            earned = int(earned * 1.3)
         data['balance'] += earned
         data['last_mine'] = datetime.utcnow().isoformat()
-        data['times_mined'] = data.get('times_mined', 0) + 1
         data['total_earned'] += earned
         if random.random() < 0.15:
             gems = random.randint(1, 3)
             data['gems'] = data.get('gems', 0) + gems
-            embed = discord.Embed(description=f"you found a {gem}! sold for **${earned:,}** and found **{gems} gems** 💎", color=0x1a1a2e)
+            await interaction.followup.send(f"you mined and earned **${earned:,}** + **{gems} gems**!\nBalance: ${data['balance']:,}", ephemeral=True)
         else:
-            embed = discord.Embed(description=f"you mined a {gem} and sold it for **${earned:,}**", color=0x1a1a2e)
-        embed.add_field(name="Balance", value=f"${data['balance']:,}")
-        await interaction.response.send_message(embed=embed)
+            await interaction.followup.send(f"you mined and earned **${earned:,}**\nBalance: ${data['balance']:,}", ephemeral=True)
+        self.save_user_data(interaction.guild.id, interaction.user.id, data)
 
-    @earn_group.command(name="beg", description="Beg for coins")
-    async def beg(self, interaction: discord.Interaction):
-        data = self.get_user_data(interaction.user.id)
-        on_cd, remaining = self.on_cooldown(data.get('last_beg'), 0.2)
+    @earn.command(name="beg", description="Beg for coins")
+    async def earn_beg(self, interaction: discord.Interaction):
+        self.bot.increment_command('beg')
+        await interaction.response.defer(ephemeral=True)
+        data = self.get_user_data(interaction.guild.id, interaction.user.id)
+        on_cd, remaining = self.on_cooldown(data.get('last_beg'), 0.25)  # 15 min
         if on_cd:
-            await interaction.response.send_message(f"rest for **{self.format_time(remaining)}**", ephemeral=True)
+            await interaction.followup.send(f"rest for **{self.format_time(remaining)}**", ephemeral=True)
             return
-        earned = random.randint(10, 80)
+        if random.random() < 0.3:
+            await interaction.followup.send("nobody gave you anything. sad.", ephemeral=True)
+            data['last_beg'] = datetime.utcnow().isoformat()
+            self.save_user_data(interaction.guild.id, interaction.user.id, data)
+            return
+        earned = random.randint(1, 50)
         data['balance'] += earned
         data['last_beg'] = datetime.utcnow().isoformat()
         data['total_earned'] += earned
-        self.save_user_data(interaction.user.id, data)
-        responses = [
-            f"a kind soul gave you **${earned:,}**",
-            f"someone felt bad and tossed you **${earned:,}**",
-            f"you made **${earned:,}** from begging. sad.",
-            f"you got **${earned:,}** and a sandwich.",
-        ]
-        embed = discord.Embed(description=random.choice(responses), color=0x1a1a2e)
-        embed.add_field(name="Balance", value=f"${data['balance']:,}")
-        await interaction.response.send_message(embed=embed)
+        self.save_user_data(interaction.guild.id, interaction.user.id, data)
+        await interaction.followup.send(f"someone tossed you **${earned:,}**\nBalance: ${data['balance']:,}", ephemeral=True)
 
-    @earn_group.command(name="crime", description="Attempt a crime")
-    async def crime(self, interaction: discord.Interaction):
-        data = self.get_user_data(interaction.user.id)
-        on_cd, remaining = self.on_cooldown(data.get('last_crime'), 1)
+    @earn.command(name="crime", description="Commit a crime for coins")
+    async def earn_crime(self, interaction: discord.Interaction):
+        self.bot.increment_command('earn_crime')
+        await interaction.response.defer(ephemeral=True)
+        data = self.get_user_data(interaction.guild.id, interaction.user.id)
+        on_cd, remaining = self.on_cooldown(data.get('last_crime'), 1)  # 1 hour
         if on_cd:
-            await interaction.response.send_message(f"rest for **{self.format_time(remaining)}**", ephemeral=True)
+            await interaction.followup.send(f"rest for **{self.format_time(remaining)}**", ephemeral=True)
             return
-        success = random.random() < 0.55
+        success = random.random() < 0.6
         if success:
             earned = random.randint(200, 800)
-            if self.lucky(data): earned = int(earned * 1.3)
+            if self.lucky(data):
+                earned = int(earned * 1.3)
             data['balance'] += earned
-            data['last_crime'] = datetime.utcnow().isoformat()
-            data['successful_crimes'] = data.get('successful_crimes', 0) + 1
             data['total_earned'] += earned
-            self.save_user_data(interaction.user.id, data)
             crimes = ["hacked a bank", "stole a painting", "robbed a store", "embezzled funds", "picked pockets"]
-            embed = discord.Embed(description=f"you {random.choice(crimes)} and got **${earned:,}**", color=discord.Color.green())
+            await interaction.followup.send(f"you {random.choice(crimes)} and got **${earned:,}**\nBalance: ${data['balance']:,}", ephemeral=True)
         else:
-            fine = random.randint(100, 500)
+            fine = 100
             data['balance'] = max(0, data['balance'] - fine)
-            data['last_crime'] = datetime.utcnow().isoformat()
-            self.save_user_data(interaction.user.id, data)
-            embed = discord.Embed(description=f"you got caught. fined **${fine:,}**", color=discord.Color.red())
-        embed.add_field(name="Balance", value=f"${data['balance']:,}")
-        await interaction.response.send_message(embed=embed)
+            fails = [
+                "your getaway car wouldn't start. lost $100.",
+                "you tripped on the curb running away. lost $100.",
+                "the alarm went off. lost $100.",
+                "a dog chased you for 3 blocks. lost $100.",
+                "you dropped your loot in a sewer. lost $100.",
+                "the cops were already there. lost $100.",
+                "you robbed the wrong house. lost $100.",
+                "your accomplice ratted you out. lost $100.",
+                "you forgot your mask at home. lost $100.",
+                "the security guard was your mom. lost $100.",
+            ]
+            await interaction.followup.send(random.choice(fails) + f"\nBalance: ${data['balance']:,}", ephemeral=True)
+        data['last_crime'] = datetime.utcnow().isoformat()
+        self.save_user_data(interaction.guild.id, interaction.user.id, data)
 
-    @earn_group.command(name="rob", description="Rob another user")
-    async def rob(self, interaction: discord.Interaction, user: discord.Member):
+    @earn.command(name="rob", description="Rob another user")
+    async def earn_rob(self, interaction: discord.Interaction, user: discord.Member):
+        self.bot.increment_command('earn_rob')
+        await interaction.response.defer(ephemeral=True)
         if user.id == interaction.user.id or user.bot:
-            await interaction.response.send_message("can't rob yourself or bots.", ephemeral=True)
+            await interaction.followup.send("can't rob yourself or bots.", ephemeral=True)
             return
-        data = self.get_user_data(interaction.user.id)
+        data = self.get_user_data(interaction.guild.id, interaction.user.id)
         on_cd, remaining = self.on_cooldown(data.get('last_crime'), 1)
         if on_cd:
-            await interaction.response.send_message(f"rest for **{self.format_time(remaining)}**", ephemeral=True)
+            await interaction.followup.send(f"rest for **{self.format_time(remaining)}**", ephemeral=True)
             return
-        target_data = self.get_user_data(user.id)
-        if target_data['balance'] < 100:
-            await interaction.response.send_message(f"{user.mention} doesn't have enough money to rob.", ephemeral=True)
+        target_data = self.get_user_data(interaction.guild.id, user.id)
+        if target_data['balance'] < 200:
+            await interaction.followup.send(f"{user.mention} doesn't have enough money to rob.", ephemeral=True)
             return
         success = random.random() < 0.4
         if success:
-            stolen = random.randint(100, min(1000, target_data['balance']))
+            stolen = random.randint(int(target_data['balance'] * 0.1), int(target_data['balance'] * 0.3))
             data['balance'] += stolen
             target_data['balance'] -= stolen
-            target_data['times_robbed'] = target_data.get('times_robbed', 0) + 1
-            data['last_crime'] = datetime.utcnow().isoformat()
             data['total_earned'] += stolen
-            self.save_user_data(interaction.user.id, data)
-            self.save_user_data(user.id, target_data)
-            embed = discord.Embed(description=f"you robbed **${stolen:,}** from {user.mention}", color=discord.Color.green())
+            self.save_user_data(interaction.guild.id, user.id, target_data)
+            successes = [
+                f"you snatched ${stolen:,} from {user.mention} and got away clean.",
+                f"you pickpocketed {user.mention} for ${stolen:,}. smooth.",
+                f"you mugged {user.mention} and took ${stolen:,}. brutal.",
+                f"you scammed {user.mention} out of ${stolen:,}.",
+                f"you hacked {user.mention}'s wallet and took ${stolen:,}.",
+            ]
+            await interaction.followup.send(random.choice(successes) + f"\nBalance: ${data['balance']:,}", ephemeral=True)
         else:
-            fine = random.randint(50, 300)
+            fine = 100
             data['balance'] = max(0, data['balance'] - fine)
-            data['last_crime'] = datetime.utcnow().isoformat()
-            self.save_user_data(interaction.user.id, data)
-            embed = discord.Embed(description=f"you got caught robbing {user.mention}. fined **${fine:,}**", color=discord.Color.red())
-        embed.add_field(name="Balance", value=f"${data['balance']:,}")
-        await interaction.response.send_message(embed=embed)
+            await interaction.followup.send(f"you got caught robbing {user.mention}. lost ${fine}.\nBalance: ${data['balance']:,}", ephemeral=True)
+        data['last_crime'] = datetime.utcnow().isoformat()
+        self.save_user_data(interaction.guild.id, interaction.user.id, data)
 
     # ===== BANK GROUP =====
 
-    bank_group = app_commands.Group(name="bank", description="Banking commands")
-
-    @bank_group.command(name="deposit", description="Deposit to bank")
-    async def deposit(self, interaction: discord.Interaction, amount: str):
-        data = self.get_user_data(interaction.user.id)
-        amt = data['balance'] if amount.lower() == 'all' else int(amount) if amount.isdigit() else 0
-        if amt <= 0 or data['balance'] < amt:
-            await interaction.response.send_message("invalid amount.", ephemeral=True)
+    @bank.command(name="deposit", description="Deposit coins into your bank")
+    async def bank_deposit(self, interaction: discord.Interaction, amount: int):
+        self.bot.increment_command('bank_deposit')
+        await interaction.response.defer(ephemeral=True)
+        data = self.get_user_data(interaction.guild.id, interaction.user.id)
+        if amount <= 0 or data['balance'] < amount:
+            await interaction.followup.send("invalid amount.", ephemeral=True)
             return
-        data['balance'] -= amt
-        data['bank'] += amt
-        self.save_user_data(interaction.user.id, data)
-        embed = discord.Embed(description=f"deposited **${amt:,}**", color=0x1a1a2e)
-        embed.add_field(name="Wallet", value=f"${data['balance']:,}", inline=True)
-        embed.add_field(name="Bank", value=f"${data['bank']:,}", inline=True)
-        await interaction.response.send_message(embed=embed)
+        data['balance'] -= amount
+        data['bank'] += amount
+        self.save_user_data(interaction.guild.id, interaction.user.id, data)
+        await interaction.followup.send(f"deposited **${amount:,}**\nWallet: ${data['balance']:,} · Bank: ${data['bank']:,}", ephemeral=True)
 
-    @bank_group.command(name="withdraw", description="Withdraw from bank")
-    async def withdraw(self, interaction: discord.Interaction, amount: str):
-        data = self.get_user_data(interaction.user.id)
-        amt = data['bank'] if amount.lower() == 'all' else int(amount) if amount.isdigit() else 0
-        if amt <= 0 or data['bank'] < amt:
-            await interaction.response.send_message("invalid amount.", ephemeral=True)
+    @bank.command(name="withdraw", description="Withdraw coins from your bank")
+    async def bank_withdraw(self, interaction: discord.Interaction, amount: int):
+        self.bot.increment_command('bank_withdraw')
+        await interaction.response.defer(ephemeral=True)
+        data = self.get_user_data(interaction.guild.id, interaction.user.id)
+        if amount <= 0 or data['bank'] < amount:
+            await interaction.followup.send("invalid amount.", ephemeral=True)
             return
-        data['bank'] -= amt
-        data['balance'] += amt
-        self.save_user_data(interaction.user.id, data)
-        embed = discord.Embed(description=f"withdrew **${amt:,}**", color=0x1a1a2e)
-        embed.add_field(name="Wallet", value=f"${data['balance']:,}", inline=True)
-        embed.add_field(name="Bank", value=f"${data['bank']:,}", inline=True)
-        await interaction.response.send_message(embed=embed)
+        data['bank'] -= amount
+        data['balance'] += amount
+        self.save_user_data(interaction.guild.id, interaction.user.id, data)
+        await interaction.followup.send(f"withdrew **${amount:,}**\nWallet: ${data['balance']:,} · Bank: ${data['bank']:,}", ephemeral=True)
 
-    @bank_group.command(name="balance", description="Show bank balance separately")
-    async def bank_balance(self, interaction: discord.Interaction):
-        data = self.get_user_data(interaction.user.id)
-        embed = discord.Embed(title="🏦 Bank Balance", color=0x1a1a2e)
-        embed.add_field(name="Wallet", value=f"${data['balance']:,}", inline=True)
-        embed.add_field(name="Bank", value=f"${data['bank']:,}", inline=True)
-        embed.add_field(name="Net Worth", value=f"${data['balance'] + data['bank']:,}", inline=True)
-        await interaction.response.send_message(embed=embed)
+    # ===== ECO ADMIN GROUP =====
 
-    # ===== ADMIN GROUP =====
-
-    eco_admin = app_commands.Group(name="eco_admin", description="Economy admin commands")
-
-    @eco_admin.command(name="set", description="Set user balance")
-    async def setmoney(self, interaction: discord.Interaction, user: discord.Member, amount: int):
-        if interaction.user.id != OWNER_ID:
-            await interaction.response.send_message("no permission.", ephemeral=True)
-            return
-        data = self.get_user_data(user.id)
+    @eco_admin.command(name="set", description="Set a user's balance")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def eco_set(self, interaction: discord.Interaction, user: discord.Member, amount: int):
+        self.bot.increment_command('eco_set')
+        await interaction.response.defer(ephemeral=True)
+        data = self.get_user_data(interaction.guild.id, user.id)
         data['balance'] = max(0, amount)
-        self.save_user_data(user.id, data)
-        embed = discord.Embed(description=f"set {user.mention}'s balance to **${amount:,}**", color=0x1a1a2e)
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        self.save_user_data(interaction.guild.id, user.id, data)
+        await interaction.followup.send(f"set {user.mention}'s balance to **${amount:,}**", ephemeral=True)
 
-    @eco_admin.command(name="add", description="Add coins to user")
-    async def addmoney(self, interaction: discord.Interaction, user: discord.Member, amount: int):
-        if interaction.user.id != OWNER_ID:
-            await interaction.response.send_message("no permission.", ephemeral=True)
-            return
-        data = self.get_user_data(user.id)
+    @eco_admin.command(name="add", description="Add coins to a user")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def eco_add(self, interaction: discord.Interaction, user: discord.Member, amount: int):
+        self.bot.increment_command('eco_add')
+        await interaction.response.defer(ephemeral=True)
+        data = self.get_user_data(interaction.guild.id, user.id)
         data['balance'] += amount
         data['total_earned'] += amount
-        self.save_user_data(user.id, data)
-        embed = discord.Embed(description=f"added **${amount:,}** to {user.mention}", color=0x1a1a2e)
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        self.save_user_data(interaction.guild.id, user.id, data)
+        await interaction.followup.send(f"added **${amount:,}** to {user.mention}", ephemeral=True)
 
-    @eco_admin.command(name="remove", description="Remove coins from user")
-    async def removemoney(self, interaction: discord.Interaction, user: discord.Member, amount: int):
-        if interaction.user.id != OWNER_ID:
-            await interaction.response.send_message("no permission.", ephemeral=True)
-            return
-        data = self.get_user_data(user.id)
+    @eco_admin.command(name="remove", description="Remove coins from a user")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def eco_remove(self, interaction: discord.Interaction, user: discord.Member, amount: int):
+        self.bot.increment_command('eco_remove')
+        await interaction.response.defer(ephemeral=True)
+        data = self.get_user_data(interaction.guild.id, user.id)
         data['balance'] = max(0, data['balance'] - amount)
-        self.save_user_data(user.id, data)
-        embed = discord.Embed(description=f"removed **${amount:,}** from {user.mention}", color=0x1a1a2e)
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        self.save_user_data(interaction.guild.id, user.id, data)
+        await interaction.followup.send(f"removed **${amount:,}** from {user.mention}", ephemeral=True)
 
-    @eco_admin.command(name="reset", description="Reset user economy")
-    async def reseteconomy(self, interaction: discord.Interaction, user: discord.Member):
-        if interaction.user.id != OWNER_ID:
-            await interaction.response.send_message("no permission.", ephemeral=True)
-            return
-        self.save_user_data(user.id, {'balance': 0, 'bank': 0, 'inventory': [], 'total_earned': 0, 'total_spent': 0, 'daily_streak': 0, 'gems': 0})
-        embed = discord.Embed(description=f"reset {user.mention}'s economy.", color=0x1a1a2e)
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+    @eco_admin.command(name="reset", description="Reset a user's economy data")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def eco_reset(self, interaction: discord.Interaction, user: discord.Member):
+        self.bot.increment_command('eco_reset')
+        await interaction.response.defer(ephemeral=True)
+        self.save_user_data(interaction.guild.id, user.id, {
+            'balance': 0, 'bank': 0, 'inventory': [], 'total_earned': 0, 'total_spent': 0, 'daily_streak': 0, 'gems': 0
+        })
+        await interaction.followup.send(f"reset {user.mention}'s economy.", ephemeral=True)
+
 
 async def setup(bot):
     await bot.add_cog(Economy(bot))

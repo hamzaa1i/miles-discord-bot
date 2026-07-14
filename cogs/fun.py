@@ -4,17 +4,13 @@ from discord import app_commands
 import random
 import asyncio
 import aiohttp
-import os
-import pyfiglet
+from utils.ai_handler import call_ai_fast
 
 
 class Fun(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.github_token = os.getenv('GITHUB_TOKEN')
-        self.api_url = "https://models.inference.ai.azure.com/chat/completions"
 
-        # 50+ jokes
         self.jokes = [
             "I told my psychiatrist I keep thinking I'm a dog. He told me to get off the couch.",
             "My grief counselor died. He was so good at his job, I don't even care.",
@@ -71,7 +67,6 @@ class Fun(commands.Cog):
             "I tried to write a joke about a pencil, but it was pointless.",
         ]
 
-        # 60+ facts
         self.facts = [
             "Honey never spoils. Archaeologists found 3000-year-old honey in Egyptian tombs that was still edible.",
             "A day on Venus is longer than a year on Venus.",
@@ -94,8 +89,6 @@ class Fun(commands.Cog):
             "Your stomach gets a new lining every 3-4 days.",
             "Koalas have fingerprints nearly identical to humans.",
             "A bolt of lightning contains enough energy to toast 100,000 slices of bread.",
-            "There are more possible games of chess than there are atoms in the universe.",
-            "Octopuses can taste with their suckers.",
             "The longest word in English without a vowel is 'rhythms'.",
             "A blue whale's heart is the size of a small car.",
             "Vending machines kill more people than sharks do each year.",
@@ -139,7 +132,6 @@ class Fun(commands.Cog):
             "The national flag of Nepal is the only one that isn't rectangular.",
         ]
 
-        # 40+ pickup lines
         self.pickup_lines = [
             "Are you French? Because Eiffel for you.",
             "Do you have a name, or can I call you mine?",
@@ -185,7 +177,6 @@ class Fun(commands.Cog):
             "Do you believe in love at first sight, or should I walk by again?",
         ]
 
-        # 40+ would you rather
         self.wyr_questions = [
             "Would you rather be able to fly or be invisible?",
             "Would you rather have unlimited money or unlimited time?",
@@ -232,104 +223,28 @@ class Fun(commands.Cog):
             "Would you rather have a million dollars now or 10 million in 10 years?",
         ]
 
-        # 20 magic 8ball responses
         self.ball_responses = [
-            "It is certain.",
-            "Without a doubt.",
-            "Yes, definitely.",
-            "Most likely.",
-            "Signs point to yes.",
-            "Reply hazy, try again.",
-            "Ask again later.",
-            "Cannot predict now.",
-            "Don't count on it.",
-            "My sources say no.",
-            "Very doubtful.",
-            "Outlook not so good.",
-            "The void says yes.",
-            "The shadows are unclear.",
-            "Darkness confirms it.",
-            "Even the void doubts this.",
-            "Yes, but at what cost.",
-            "Concentrate and ask again.",
-            "Outlook is grim.",
+            "It is certain.", "Without a doubt.", "Yes, definitely.", "Most likely.",
+            "Signs point to yes.", "Reply hazy, try again.", "Ask again later.",
+            "Cannot predict now.", "Don't count on it.", "My sources say no.",
+            "Very doubtful.", "Outlook not so good.", "The void says yes.",
+            "The shadows are unclear.", "Darkness confirms it.", "Even the void doubts this.",
+            "Yes, but at what cost.", "Concentrate and ask again.", "Outlook is grim.",
             "Ask me when the moon rises.",
         ]
 
-        # 20+ typing race sentences (used by games.py)
-        self.typerace_sentences = [
-            "the quick brown fox jumps over the lazy dog.",
-            "she sells seashells by the seashore on sunny afternoons.",
-            "a journey of a thousand miles begins with a single step.",
-            "to be or not to be that is the question we all face.",
-            "the early bird catches the worm but the second mouse gets the cheese.",
-            "all that glitters is not gold but some of it certainly is.",
-            "the pen is mightier than the sword in most situations.",
-            "when life gives you lemons make lemonade and sell it.",
-            "an apple a day keeps the doctor away most of the time.",
-            "beauty is in the eye of the beholder and nowhere else.",
-            "actions speak louder than words ever could in this world.",
-            "the grass is always greener on the other side of the fence.",
-            "rome was not built in a day but it eventually fell.",
-            "better late than never unless you are attending a funeral.",
-            "every cloud has a silver lining somewhere if you look hard.",
-            "the cat sat on the mat while the dog slept on the floor.",
-            "music is the universal language of mankind across all cultures.",
-            "knowledge is power but only when properly applied to life.",
-            "time and tide wait for no man or woman on this earth.",
-            "the only thing we have to fear is fear itself and spiders.",
-            "you can't judge a book by its cover but you can try anyway.",
-            "the best things in life are free but the good ones cost money.",
-        ]
-
-    async def _send_joke(self, message):
-        """Helper used by intent_parser to send a random joke via a message reply."""
-        try:
-            embed = discord.Embed(description=random.choice(self.jokes), color=0x1a1a2e)
-            await message.reply(embed=embed, mention_author=False)
-        except Exception:
-            pass
-
     async def _ai_one_liner(self, system_prompt: str, user_prompt: str) -> str:
-        """Helper: call the AI for a one-liner response."""
-        if not self.github_token:
-            return None
-        try:
-            headers = {
-                "Authorization": f"Bearer {self.github_token}",
-                "Content-Type": "application/json"
-            }
-            payload = {
-                "model": "gpt-4o-mini",
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt}
-                ],
-                "temperature": 0.9,
-                "max_tokens": 200
-            }
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    self.api_url,
-                    headers=headers,
-                    json=payload,
-                    timeout=aiohttp.ClientTimeout(total=10)
-                ) as response:
-                    if response.status == 200:
-                        data = await response.json()
-                        return data['choices'][0]['message']['content']
-        except Exception as e:
-            print(f"AI helper error: {e}")
-        return None
+        """Call AI for a fast one-liner response."""
+        return await call_ai_fast([
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt}
+        ])
 
     @app_commands.command(name="roll", description="Roll a dice")
     async def roll(self, interaction: discord.Interaction, sides: int = 6):
         self.bot.increment_command('roll')
         if sides < 2 or sides > 1000:
-            await interaction.response.send_message(
-                "Sides must be between 2 and 1000.",
-                ephemeral=True
-            )
+            await interaction.response.send_message("sides must be between 2 and 1000.", ephemeral=True)
             return
         result = random.randint(1, sides)
         await interaction.response.send_message(f"🎲 rolled a **{result}** (d{sides})")
@@ -340,32 +255,19 @@ class Fun(commands.Cog):
         result = random.choice(["heads", "tails"])
         await interaction.response.send_message(f"🪙 {result}")
 
-
-
-
     @app_commands.command(name="say", description="Make the bot say something (owner only)")
     @app_commands.checks.has_permissions(administrator=True)
     async def say(self, interaction: discord.Interaction, text: str):
         self.bot.increment_command('say')
-        # Owner-only check
         owner_id = int(os.getenv('OWNER_ID', '0'))
         if interaction.user.id != owner_id:
-            try:
-                await interaction.response.send_message("❌ only my owner can use this.", ephemeral=True)
-            except discord.InteractionResponded:
-                await interaction.followup.send("❌ only my owner can use this.", ephemeral=True)
+            await interaction.response.send_message("❌ only my owner can use this.", ephemeral=True)
             return
         try:
             await interaction.channel.send(text)
-            try:
-                await interaction.response.send_message("done.", ephemeral=True)
-            except discord.InteractionResponded:
-                await interaction.followup.send("done.", ephemeral=True)
+            await interaction.response.send_message("done.", ephemeral=True)
         except Exception as e:
-            try:
-                await interaction.response.send_message(f"failed: {e}", ephemeral=True)
-            except discord.InteractionResponded:
-                await interaction.followup.send(f"failed: {e}", ephemeral=True)
+            await interaction.response.send_message(f"failed: {e}", ephemeral=True)
 
     @app_commands.command(name="joke", description="Get a random joke")
     async def joke(self, interaction: discord.Interaction):
@@ -529,57 +431,6 @@ class Fun(commands.Cog):
         ]
         await interaction.response.send_message(random.choice(topics))
 
-    @app_commands.command(name="reverse", description="Reverse text")
-    async def reverse(self, interaction: discord.Interaction, text: str):
-        self.bot.increment_command('reverse')
-        await interaction.response.send_message(text[::-1])
-
-    @app_commands.command(name="mock", description="Mock text in aLtErNaTiNg case")
-    async def mock(self, interaction: discord.Interaction, text: str):
-        self.bot.increment_command('mock')
-        mocked = "".join(c.upper() if i % 2 == 0 else c.lower() for i, c in enumerate(text))
-        await interaction.response.send_message(mocked)
-
-    @app_commands.command(name="pp", description="PP size meter with AI comment")
-    @app_commands.checks.cooldown(1, 10.0, key=lambda i: i.user.id)
-    async def pp(self, interaction: discord.Interaction, user: discord.Member = None):
-        self.bot.increment_command('pp')
-        await interaction.response.defer()
-        target = user or interaction.user
-        size = random.randint(1, 20)
-        bar = "8" + "=" * size + "D"
-        comment = await self._ai_one_liner(
-            "You are cyn, a sarcastic Discord bot. Make a single short funny comment about this PP size. Lowercase, max 15 words. No emojis.",
-            f"{target.display_name} got {size}/20 inches."
-        )
-        msg = f"📏 {target.display_name}'s PP\n```\n{bar}\n```\nSize: {size}/20 inches"
-        if comment:
-            msg += f"\n*{comment}*"
-        await interaction.followup.send(msg)
-
-    @app_commands.command(name="iq", description="IQ test with AI comment")
-    @app_commands.checks.cooldown(1, 10.0, key=lambda i: i.user.id)
-    async def iq(self, interaction: discord.Interaction, user: discord.Member = None):
-        self.bot.increment_command('iq')
-        await interaction.response.defer()
-        target = user or interaction.user
-        score = random.randint(1, 200)
-        if score < 70:
-            tier = "yikes."
-        elif score < 120:
-            tier = "average."
-        else:
-            tier = "genius."
-        comment = await self._ai_one_liner(
-            f"You are cyn. Comment on {target.display_name} having IQ {score}. Lowercase, max 15 words. No emojis.",
-            f"IQ: {score}"
-        )
-        msg = f"🧠 {target.display_name}'s IQ: **{score}** — {tier}"
-        if comment:
-            msg += f"\n*{comment}*"
-        await interaction.followup.send(msg)
-
-
     @app_commands.command(name="compliment", description="AI compliment")
     @app_commands.checks.cooldown(1, 10.0, key=lambda i: i.user.id)
     async def compliment(self, interaction: discord.Interaction, user: discord.Member = None):
@@ -590,7 +441,7 @@ class Fun(commands.Cog):
             f"Give a genuine funny compliment to {target.display_name}. Lowercase, max 2 sentences. No emojis.",
             target.display_name
         )
-        if not comp:
+        if not comp or "something broke" in comp:
             comp = f"{target.mention} you're doing better than you think."
         await interaction.followup.send(comp)
 
@@ -604,7 +455,7 @@ class Fun(commands.Cog):
             f"Roast {target.display_name} in 1-2 sentences. They asked for it. Funny, savage, not hateful. Lowercase. No emojis.",
             target.display_name
         )
-        if not roast:
+        if not roast or "something broke" in roast:
             roast = f"{target.mention} you asked for this. that's already a red flag."
         await interaction.followup.send(roast)
 
@@ -626,7 +477,7 @@ class Fun(commands.Cog):
             f"{user1.display_name} x {user2.display_name} = {score}%"
         )
         msg = f"💖 {user1.mention} 🖤 {user2.mention}\nCompatibility: {score}%\n{bar}\n{verdict}"
-        if comment:
+        if comment and "something broke" not in comment:
             msg += f"\n*{comment}*"
         await interaction.followup.send(msg)
 
@@ -641,7 +492,7 @@ class Fun(commands.Cog):
             thing
         )
         msg = f"I rate **{thing}** a **{score}/10**"
-        if comment:
+        if comment and "something broke" not in comment:
             msg += f"\n*{comment}*"
         await interaction.followup.send(msg)
 
@@ -652,15 +503,15 @@ class Fun(commands.Cog):
         if user.id == interaction.user.id:
             await interaction.response.send_message("you can't battle yourself.", ephemeral=True)
             return
-        if user.bot:
-            await interaction.response.send_message("bots don't battle. we judge.", ephemeral=True)
+        if user.id == interaction.client.user.id:
+            await interaction.response.send_message("can't battle me. pick a human.", ephemeral=True)
             return
         await interaction.response.defer()
         result = await self._ai_one_liner(
             f"Write a short funny battle scene between {interaction.user.display_name} and {user.display_name}. 3-4 sentences. Absurd. Someone wins. Lowercase. No emojis.",
             f"{interaction.user.display_name} vs {user.display_name}"
         )
-        if not result:
+        if not result or "something broke" in result:
             result = f"{interaction.user.mention} swung. {user.mention} dodged and somehow won. weird."
         await interaction.followup.send(f"⚔️ **Battle**\n\n{result}")
 
@@ -686,11 +537,12 @@ class Fun(commands.Cog):
             "Based on these Discord messages, describe the vibe in one sarcastic sentence. Lowercase. No emojis.",
             transcript
         )
-        if not result:
+        if not result or "something broke" in result:
             result = "the vibe is... present."
         await interaction.followup.send(f"🔮 {result}")
 
 
+import os
 
 async def setup(bot):
     await bot.add_cog(Fun(bot))
