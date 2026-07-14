@@ -325,21 +325,6 @@ class Welcome(commands.Cog):
         await interaction.response.send_message(f"✅ goodbye messages **{status}**")
 
 
-    @app_commands.command(name="autorole", description="Set the role automatically assigned to new members")
-    @app_commands.checks.has_permissions(manage_roles=True)
-    async def autorole(self, interaction: discord.Interaction, role: discord.Role = None):
-        config = self.get_config(interaction.guild.id)
-        if role is None:
-            config['autorole_id'] = None
-            self.db.set(str(interaction.guild.id), config)
-            await interaction.response.send_message("✅ autorole disabled.")
-            return
-        if role.position >= interaction.guild.me.top_role.position:
-            await interaction.response.send_message("i can't assign that role — it's above my top role.", ephemeral=True)
-            return
-        config['autorole_id'] = str(role.id)
-        self.db.set(str(interaction.guild.id), config)
-        await interaction.response.send_message(f"✅ autorole set to {role.mention}")
 
 
 async def setup(bot):

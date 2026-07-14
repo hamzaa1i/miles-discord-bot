@@ -60,11 +60,9 @@ class Moderation(commands.Cog):
     @mod.command(name="kick", description="Kick a member")
     @app_commands.checks.has_permissions(kick_members=True)
     async def kick(self, interaction: discord.Interaction, member: discord.Member, reason: str = "No reason"):
+        await interaction.response.defer(ephemeral=True)
         if member.top_role >= interaction.user.top_role:
-            try:
-                await interaction.response.send_message("can't kick someone with equal or higher role.", ephemeral=True)
-            except discord.InteractionResponded:
-                pass
+            await interaction.followup.send("can't kick someone with equal or higher role.", ephemeral=True)
             return
         try:
             try:
@@ -76,24 +74,16 @@ class Moderation(commands.Cog):
             self.log_action(interaction.guild.id, "kick", str(interaction.user), str(member), reason)
             embed = discord.Embed(description=f"kicked **{member}**\nreason: {reason}", color=0xe67e22)
             embed.set_footer(text=f"by {interaction.user}")
-            try:
-                await interaction.response.send_message(embed=embed)
-            except discord.InteractionResponded:
-                await interaction.followup.send(embed=embed)
+            await interaction.followup.send(embed=embed)
         except discord.Forbidden:
-            try:
-                await interaction.response.send_message("i don't have permission to kick this member.", ephemeral=True)
-            except discord.InteractionResponded:
-                pass
+            await interaction.followup.send("i don't have permission to kick this member.", ephemeral=True)
 
     @mod.command(name="ban", description="Ban a member")
     @app_commands.checks.has_permissions(ban_members=True)
     async def ban(self, interaction: discord.Interaction, member: discord.Member, reason: str = "No reason"):
+        await interaction.response.defer(ephemeral=True)
         if member.top_role >= interaction.user.top_role:
-            try:
-                await interaction.response.send_message("can't ban someone with equal or higher role.", ephemeral=True)
-            except discord.InteractionResponded:
-                pass
+            await interaction.followup.send("can't ban someone with equal or higher role.", ephemeral=True)
             return
         try:
             try:
@@ -104,53 +94,37 @@ class Moderation(commands.Cog):
             await member.ban(reason=reason, delete_message_days=0)
             self.log_action(interaction.guild.id, "ban", str(interaction.user), str(member), reason)
             embed = discord.Embed(description=f"banned **{member}**\nreason: {reason}", color=0xe67e22)
-            try:
-                await interaction.response.send_message(embed=embed)
-            except discord.InteractionResponded:
-                await interaction.followup.send(embed=embed)
+            await interaction.followup.send(embed=embed)
         except discord.Forbidden:
-            try:
-                await interaction.response.send_message("i don't have permission.", ephemeral=True)
-            except discord.InteractionResponded:
-                pass
+            await interaction.followup.send("i don't have permission.", ephemeral=True)
 
     @mod.command(name="unban", description="Unban a user")
     @app_commands.checks.has_permissions(ban_members=True)
     async def unban(self, interaction: discord.Interaction, user_id: str):
+        await interaction.response.defer(ephemeral=True)
         try:
             user = await self.bot.fetch_user(int(user_id))
             await interaction.guild.unban(user)
             self.log_action(interaction.guild.id, "unban", str(interaction.user), str(user), "Unbanned")
             embed = discord.Embed(description=f"unbanned **{user}**", color=0x57f287)
-            try:
-                await interaction.response.send_message(embed=embed)
-            except discord.InteractionResponded:
-                await interaction.followup.send(embed=embed)
+            await interaction.followup.send(embed=embed)
         except discord.NotFound:
-            try:
-                await interaction.response.send_message("user not found or not banned.", ephemeral=True)
-            except discord.InteractionResponded:
-                pass
+            await interaction.followup.send("user not found or not banned.", ephemeral=True)
 
     @mod.command(name="timeout", description="Timeout a member")
     @app_commands.checks.has_permissions(moderate_members=True)
     async def timeout(self, interaction: discord.Interaction, member: discord.Member, duration: str, reason: str = "No reason"):
+        await interaction.response.defer(ephemeral=True)
         time_units = {'s': 1, 'm': 60, 'h': 3600, 'd': 86400}
         try:
             unit = duration[-1].lower()
             amount = int(duration[:-1])
             seconds = amount * time_units[unit]
             if seconds > 2419200:
-                try:
-                    await interaction.response.send_message("max timeout is 28 days.", ephemeral=True)
-                except discord.InteractionResponded:
-                    pass
+                await interaction.followup.send("max timeout is 28 days.", ephemeral=True)
                 return
         except Exception:
-            try:
-                await interaction.response.send_message("invalid format. use like: 10m, 1h, 2d", ephemeral=True)
-            except discord.InteractionResponded:
-                pass
+            await interaction.followup.send("invalid format. use like: 10m, 1h, 2d", ephemeral=True)
             return
         try:
             await member.timeout(timedelta(seconds=seconds), reason=reason)
@@ -169,6 +143,7 @@ class Moderation(commands.Cog):
     @mod.command(name="warn", description="Warn a member")
     @app_commands.checks.has_permissions(moderate_members=True)
     async def warn(self, interaction: discord.Interaction, member: discord.Member, reason: str):
+        await interaction.response.defer(ephemeral=True)
         self.log_action(interaction.guild.id, "warn", str(interaction.user), str(member), reason)
         self.add_warning(interaction.guild.id, member.id, reason, str(interaction.user))
         try:
@@ -177,10 +152,7 @@ class Moderation(commands.Cog):
         except Exception:
             pass
         embed = discord.Embed(description=f"warned **{member}**\nreason: {reason}", color=0xe67e22)
-        try:
-            await interaction.response.send_message(embed=embed)
-        except discord.InteractionResponded:
-            await interaction.followup.send(embed=embed)
+        await interaction.followup.send(embed=embed)
 
     @mod.command(name="purge", description="Delete messages")
     @app_commands.checks.has_permissions(manage_messages=True)
@@ -232,58 +204,40 @@ class Moderation(commands.Cog):
     @mod.command(name="slowmode", description="Set channel slowmode (0 disables)")
     @app_commands.checks.has_permissions(manage_channels=True)
     async def slowmode(self, interaction: discord.Interaction, seconds: int = 0):
+        await interaction.response.defer(ephemeral=True)
         if seconds < 0 or seconds > 21600:
-            try:
-                await interaction.response.send_message("slowmode must be 0-21600 seconds.", ephemeral=True)
-            except discord.InteractionResponded:
-                pass
+            await interaction.followup.send("slowmode must be 0-21600 seconds.", ephemeral=True)
             return
         try:
             await interaction.channel.edit(slowmode_delay=seconds)
-            msg = "✅ slowmode disabled." if seconds == 0 else f"✅ slowmode set to **{seconds}s**"
-            try:
-                await interaction.response.send_message(msg)
-            except discord.InteractionResponded:
-                await interaction.followup.send(msg)
+            msg = "slowmode disabled." if seconds == 0 else f"slowmode set to {seconds}s."
+            await interaction.followup.send(msg)
         except discord.Forbidden:
-            try:
-                await interaction.response.send_message("i don't have permission.", ephemeral=True)
-            except discord.InteractionResponded:
-                pass
+            await interaction.followup.send("i don't have permission.", ephemeral=True)
 
     @mod.command(name="lock", description="Lock a channel")
     @app_commands.checks.has_permissions(manage_channels=True)
     async def lock(self, interaction: discord.Interaction, reason: str = "No reason"):
+        await interaction.response.defer(ephemeral=True)
         try:
             overwrite = interaction.channel.overwrites_for(interaction.guild.default_role)
             overwrite.send_messages = False
             await interaction.channel.set_permissions(interaction.guild.default_role, overwrite=overwrite, reason=f"Lock by {interaction.user}: {reason}")
-            try:
-                await interaction.response.send_message(f"🔒 channel locked. reason: {reason}")
-            except discord.InteractionResponded:
-                await interaction.followup.send(f"🔒 channel locked. reason: {reason}")
+            await interaction.followup.send(f"🔒 channel locked. reason: {reason}")
         except discord.Forbidden:
-            try:
-                await interaction.response.send_message("i don't have permission.", ephemeral=True)
-            except discord.InteractionResponded:
-                pass
+            await interaction.followup.send("i don't have permission.", ephemeral=True)
 
     @mod.command(name="unlock", description="Unlock a channel")
     @app_commands.checks.has_permissions(manage_channels=True)
     async def unlock(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
         try:
             overwrite = interaction.channel.overwrites_for(interaction.guild.default_role)
             overwrite.send_messages = None
             await interaction.channel.set_permissions(interaction.guild.default_role, overwrite=overwrite, reason=f"Unlock by {interaction.user}")
-            try:
-                await interaction.response.send_message("🔓 channel unlocked.")
-            except discord.InteractionResponded:
-                await interaction.followup.send("🔓 channel unlocked.")
+            await interaction.followup.send("🔓 channel unlocked.")
         except discord.Forbidden:
-            try:
-                await interaction.response.send_message("i don't have permission.", ephemeral=True)
-            except discord.InteractionResponded:
-                pass
+            await interaction.followup.send("i don't have permission.", ephemeral=True)
 
 
 

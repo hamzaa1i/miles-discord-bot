@@ -340,49 +340,6 @@ class Marriage(commands.Cog):
             embed.description = "not married. living the free life."
         await interaction.followup.send(embed=embed)
 
-    @app_commands.command(name="marriage_top", description="Top 10 longest marriages in the server")
-    async def marriage_top(self, interaction: discord.Interaction):
-        self.bot.increment_command('marriage_top')
-        await interaction.response.defer()
-        all_data = self.db.get_all()
-        guild_member_ids = {str(m.id) for m in interaction.guild.members}
-        marriages = []
-        for uid, data in all_data.items():
-            if uid not in guild_member_ids:
-                continue
-            if data.get('partner_id') and data.get('married_at'):
-                try:
-                    since = datetime.fromisoformat(data['married_at'])
-                    days = (datetime.utcnow() - since).days
-                    marriages.append((uid, data['partner_id'], days))
-                except Exception:
-                    pass
-        # Deduplicate (each marriage appears twice)
-        seen = set()
-        unique = []
-        for uid, pid, days in marriages:
-            key = tuple(sorted([uid, pid]))
-            if key not in seen:
-                seen.add(key)
-                unique.append((uid, pid, days))
-        unique.sort(key=lambda x: x[2], reverse=True)
-        if not unique:
-            await interaction.followup.send("no marriages in this server.")
-            return
-        embed = discord.Embed(title="💍 Longest Marriages", color=discord.Color.pink())
-        medals = {1: "🥇", 2: "🥈", 3: "🥉"}
-        desc = ""
-        for idx, (uid, pid, days) in enumerate(unique[:10], 1):
-            try:
-                u1 = await self.bot.fetch_user(int(uid))
-                u2 = await self.bot.fetch_user(int(pid))
-                name = f"{u1.display_name} ❤️ {u2.display_name}"
-            except Exception:
-                name = f"User {uid} ❤️ User {pid}"
-            medal = medals.get(idx, f"#{idx}")
-            desc += f"{medal} **{name}** — {days} days\n"
-        embed.description = desc
-        await interaction.followup.send(embed=embed)
 
 
 async def setup(bot):

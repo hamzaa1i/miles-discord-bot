@@ -108,6 +108,7 @@ class Reputation(commands.Cog):
     @rep.command(name="leaderboard", description="Top 10 reputation in the server")
     async def rep_leaderboard(self, interaction: discord.Interaction):
         self.bot.increment_command('rep_leaderboard')
+        await interaction.response.defer()
         all_data = self.db.get_all()
         # Filter to members of this guild
         guild_member_ids = {str(m.id) for m in interaction.guild.members}
@@ -119,7 +120,7 @@ class Reputation(commands.Cog):
         filtered.sort(key=lambda x: x[1], reverse=True)
         top = filtered[:10]
         if not top:
-            await interaction.response.send_message("no rep data yet.", ephemeral=True)
+            await interaction.followup.send("no rep data yet.")
             return
         embed = discord.Embed(title="🏆 Reputation Leaderboard", color=0x1a1a2e)
         medals = {1: "🥇", 2: "🥈", 3: "🥉"}
@@ -134,7 +135,7 @@ class Reputation(commands.Cog):
             medal = medals.get(idx, f"`#{idx}`")
             desc += f"{medal} **{name}** — {rep} rep\n"
         embed.description = desc
-        await interaction.response.send_message(embed=embed)
+        await interaction.followup.send(embed=embed)
 
     @rep.command(name="reset", description="Reset a user's reputation to 0 (owner only)")
     async def rep_reset(self, interaction: discord.Interaction, user: discord.Member):

@@ -1,7 +1,7 @@
 """
 utils/ai_handler.py — Single source of truth for all AI calls.
 
-Uses Groq API (console.groq.com) with llama-3.1-70b-versatile for
+Uses Groq API (console.groq.com) with llama-3.3-70b-versatile for
 high quality responses and llama-3.1-8b-instant for fast short responses.
 """
 import os
@@ -20,7 +20,7 @@ def get_client() -> AsyncGroq:
 
 async def call_ai(
     messages: list,
-    model: str = "llama-3.1-70b-versatile",
+    model: str = "llama-3.3-70b-versatile",
     max_tokens: int = 300,
     temperature: float = 0.9
 ) -> str:

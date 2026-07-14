@@ -131,25 +131,6 @@ class TruthDare(commands.Cog):
         embed.set_footer(text="do it or admit you're scared.")
         await interaction.response.send_message(embed=embed)
 
-    @app_commands.command(name="tod", description="Random truth or dare")
-    async def tod(self, interaction: discord.Interaction, user: discord.Member = None):
-        self.bot.increment_command('tod')
-        target = user or interaction.user
-        if random.choice([True, False]):
-            content = random.choice(self.truths)
-            title = "Truth"
-            footer = "answer honestly."
-        else:
-            content = random.choice(self.dares)
-            title = "Dare"
-            footer = "do it."
-        embed = discord.Embed(
-            title=title,
-            description=f"{target.mention} {content}",
-            color=0x1a1a2e
-        )
-        embed.set_footer(text=footer)
-        await interaction.response.send_message(embed=embed)
 
 
 async def setup(bot):

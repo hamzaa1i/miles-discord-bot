@@ -102,30 +102,6 @@ class Confess(commands.Cog):
         except Exception:
             pass
 
-    @app_commands.command(name="confess_setup", description="Set the confession channel (admin)")
-    @app_commands.checks.has_permissions(administrator=True)
-    async def confess_setup(self, interaction: discord.Interaction, channel: discord.TextChannel):
-        self.bot.increment_command('confess_setup')
-        config = self.get_config(interaction.guild.id)
-        config['channel_id'] = str(channel.id)
-        self.save_config(interaction.guild.id, config)
-        try:
-            await interaction.response.send_message(
-                f"✅ confessions will be posted to {channel.mention}.\n"
-                f"users can now use `/confess <text>` to submit anonymous confessions."
-            )
-        except discord.InteractionResponded:
-            await interaction.followup.send(
-                f"✅ confessions will be posted to {channel.mention}.\n"
-                f"users can now use `/confess <text>` to submit anonymous confessions."
-            )
-
-    def _next_id(self, guild_id: int) -> int:
-        try:
-            confessions = self.db.get(f"confessions_{guild_id}", [])
-            return len(confessions) + 1 if isinstance(confessions, list) else 1
-        except Exception:
-            return 1
 
 
 async def setup(bot):

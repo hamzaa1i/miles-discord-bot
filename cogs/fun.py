@@ -5,6 +5,7 @@ import random
 import asyncio
 import aiohttp
 from utils.ai_handler import call_ai_fast
+import os
 
 
 class Fun(commands.Cog):

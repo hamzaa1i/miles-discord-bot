@@ -182,6 +182,7 @@ class ServerStats(commands.Cog):
 
     @app_commands.command(name="serverinfo", description="Server information")
     async def serverinfo(self, interaction: discord.Interaction):
+        await interaction.response.defer()
         guild = interaction.guild
 
         embed = discord.Embed(color=0x1a1a2e)
@@ -222,10 +223,11 @@ class ServerStats(commands.Cog):
         )
 
         view = RolesView(guild)
-        await interaction.response.send_message(embed=embed, view=view)
+        await interaction.followup.send(embed=embed, view=view)
 
     @app_commands.command(name="whois", description="Complete info about a user")
     async def whois(self, interaction: discord.Interaction, user: discord.Member = None):
+        await interaction.response.defer()
         user = user or interaction.user
 
         status_map = {
@@ -322,6 +324,7 @@ class ServerStats(commands.Cog):
 
     @app_commands.command(name="avatar", description="Show user avatar")
     async def avatar(self, interaction: discord.Interaction, user: discord.Member = None):
+        await interaction.response.defer()
         user = user or interaction.user
         embed = discord.Embed(
             title=f"{user.display_name}'s Avatar",
@@ -341,10 +344,11 @@ class ServerStats(commands.Cog):
                 links += f" | [GIF]({user.avatar.with_format('gif').url})"
             embed.add_field(name="Download", value=links)
 
-        await interaction.response.send_message(embed=embed)
+        await interaction.followup.send(embed=embed)
 
     @app_commands.command(name="membercount", description="Member count breakdown")
     async def membercount(self, interaction: discord.Interaction):
+        await interaction.response.defer()
         guild = interaction.guild
         total = guild.member_count
         humans = sum(1 for m in guild.members if not m.bot)

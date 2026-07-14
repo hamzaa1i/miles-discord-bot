@@ -9,6 +9,7 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 import aiohttp
+import json
 from utils.constants import COLOR_INFO
 
 
@@ -56,7 +57,7 @@ class Weather(commands.Cog):
                 async with session.get(
                     url,
                     timeout=aiohttp.ClientTimeout(total=15),
-                    headers={"User-Agent": "curl/7.68.0"}
+                    headers={"User-Agent": "curl/7.68.0", "Accept": "application/json"}
                 ) as r:
                     if r.status == 404:
                         return discord.Embed(
@@ -69,22 +70,17 @@ class Weather(commands.Cog):
                             description=f"couldn't fetch weather for {city} (status {r.status})",
                             color=0xed4245
                         )
-                    try:
-                        data = await r.json()
-                    except Exception:
-                        # wttr.in sometimes returns HTML instead of JSON
-                        try:
-                            raw_text = await r.text()
-                            # Try to find weather info in plain text
-                            if 'Unknown location' in raw_text or 'ERROR' in raw_text:
-                                return discord.Embed(
-                                    description=f"couldn't find weather for **{city}**.",
-                                    color=0xed4245
-                                )
-                        except Exception:
-                            pass
+                    text_resp = await r.text()
+                    if not text_resp.strip().startswith("{"):
                         return discord.Embed(
-                            description=f"couldn't parse weather data for **{city}**. try a different city name.",
+                            description=f"couldn't find weather for **{city}**.",
+                            color=0xed4245
+                        )
+                    try:
+                        data = json.loads(text_resp)
+                    except Exception:
+                        return discord.Embed(
+                            description=f"couldn't parse weather data for **{city}**.",
                             color=0xed4245
                         )
 
