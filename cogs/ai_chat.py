@@ -93,7 +93,7 @@ RESPONSE RULES:
         messages.extend(history)
         messages.append({"role": "user", "content": message})
 
-        ai_response = await call_ai(messages, model="llama3-70b-8192", max_tokens=200, temperature=0.85)
+        ai_response = await call_ai(messages, model="llama-3.3-70b-versatile", max_tokens=200, temperature=0.85)
 
         self.conversation_history[user_id].append({"role": "user", "content": message})
         self.conversation_history[user_id].append({"role": "assistant", "content": ai_response})
@@ -621,6 +621,8 @@ RESPONSE RULES:
 
         if self.bot.user not in message.mentions:
             return
+
+        print(f"[on_message] Received mention from {message.author} in {message.guild}: {message.content[:50]}")
 
         try:
             is_limited, remaining = self.check_rate_limit(message.author.id)
