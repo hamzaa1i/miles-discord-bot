@@ -297,25 +297,6 @@ class Welcome(commands.Cog):
         status = "enabled" if enabled else "disabled"
         await interaction.response.send_message(f"✅ welcome messages **{status}**")
 
-    @welcome.command(name="test", description="Send a test welcome message")
-    @app_commands.checks.has_permissions(manage_guild=True)
-    async def welcome_test(self, interaction: discord.Interaction):
-        config = self.get_config(interaction.guild.id)
-        channel_id = config.get('channel_id')
-        if not channel_id:
-            await interaction.response.send_message("no welcome channel set.", ephemeral=True)
-            return
-        channel = interaction.guild.get_channel(int(channel_id))
-        if not channel:
-            await interaction.response.send_message("channel not found.", ephemeral=True)
-            return
-        msg_text = config.get('message', 'Welcome {user} to {server}!').format(
-            user=interaction.user.mention, server=interaction.guild.name, membercount=interaction.guild.member_count
-        )
-        embed = discord.Embed(title=f"Welcome to {interaction.guild.name}!", description=msg_text, color=0x2b2d31)
-        embed.set_thumbnail(url=interaction.user.avatar.url if interaction.user.avatar else interaction.user.default_avatar.url)
-        await channel.send(embed=embed)
-        await interaction.response.send_message("✅ test sent.", ephemeral=True)
 
     @goodbye.command(name="channel", description="Set goodbye channel")
     @app_commands.checks.has_permissions(manage_guild=True)

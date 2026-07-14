@@ -89,53 +89,6 @@ intents.message_content = True
 intents.members = True
 intents.presences = True
 
-# =====================================================================
-# Monkey-patch: Remove discord.py's hardcoded 100-command global limit.
-# We use guild-only sync (copy_global_to + sync(guild=guild)) which has
-# no practical limit. discord.py enforces the 100 limit at add_command
-# time, so we patch add_command to skip the limit checks entirely.
-# =====================================================================
-import discord.app_commands.tree as _tree
-from discord.app_commands.errors import CommandAlreadyRegistered
-from discord.utils import MISSING
-
-_original_add_command = _tree.CommandTree.add_command
-
-def _patched_add_command(self, command, *, guild=None, guilds=MISSING, override=False):
-    """Patched add_command that removes the 100-command and 5-guild-command limits."""
-    from discord.app_commands.commands import ContextMenu
-    if isinstance(command, ContextMenu):
-        return _original_add_command(self, command, guild=guild, guilds=guilds, override=override)
-
-    root = command.root_parent or command
-    name = root.name
-
-    if guild is not None and guilds is not MISSING:
-        raise TypeError('cannot mix guild and guilds keywords')
-
-    if guild is not MISSING and guild is not None:
-        guild_id = guild.id
-        commands = self._guild_commands.setdefault(guild_id, {})
-        found = name in commands
-        if found and not override:
-            raise CommandAlreadyRegistered(name, guild_id)
-        commands[name] = root
-    elif guilds:
-        for g in guilds:
-            guild_id = g.id
-            commands = self._guild_commands.setdefault(guild_id, {})
-            found = name in commands
-            if found and not override:
-                raise CommandAlreadyRegistered(name, guild_id)
-            commands[name] = root
-    else:
-        found = name in self._global_commands
-        if found and not override:
-            raise CommandAlreadyRegistered(name, None)
-        self._global_commands[name] = root
-
-_tree.CommandTree.add_command = _patched_add_command
-
 
 # ==================== FIX 5 — Data Directory and Files ====================
 DEFAULT_DATA_FILES = [
@@ -237,17 +190,37 @@ class CynBot(commands.Bot):
         # Guild-only sync — no global sync (avoids Discord's 100-command global limit).
         # Commands are copied to each guild and synced per-guild (instant, no 1hr wait).
         if not self.synced:
+            # Clear any old global commands first
+            self.tree.clear_commands(guild=None)
+
+            success_count = 0
+            fail_count = 0
             for guild in self.guilds:
                 try:
                     self.tree.copy_global_to(guild=guild)
                     synced = await self.tree.sync(guild=guild)
                     print(f"✅ Synced {len(synced)} commands to {guild.name}")
                     logger.info(f"✅ Synced {len(synced)} commands to guild: {guild.name}")
+                    success_count += 1
                 except Exception as e:
                     print(f"❌ Failed to sync to {guild.name}: {e}")
                     logger.error(f"❌ Failed to sync to guild {guild.name}: {e}")
+                    fail_count += 1
+
             self.synced = True
-            print("Command sync complete.")
+            print(f"Sync complete: {success_count} success, {fail_count} failed")
+
+        # Test Groq API
+        try:
+            from utils.ai_handler import call_ai_fast
+            result = await call_ai_fast([
+                {"role": "user", "content": "say ok"}
+            ])
+            print(f"✅ Groq API working: {result[:50]}")
+            logger.info(f"✅ Groq API working: {result[:50]}")
+        except Exception as e:
+            print(f"❌ Groq API failed: {type(e).__name__}: {e}")
+            logger.error(f"❌ Groq API failed: {type(e).__name__}: {e}")
 
         # Start cycling status every 5 minutes
         if not self.change_status.is_running():

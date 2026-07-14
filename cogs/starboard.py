@@ -219,32 +219,8 @@ class Starboard(commands.Cog):
 
 
 
-    @starboard.command(name="emoji", description="Change the star emoji")
-    @app_commands.checks.has_permissions(administrator=True)
-    async def starboard_emoji(self, interaction: discord.Interaction, emoji: str):
-        config = self.get_config(interaction.guild.id)
-        config['emoji'] = emoji
-        self.save_config(interaction.guild.id, config)
-        await interaction.response.send_message(f"✅ starboard emoji set to {emoji}")
 
-    @starboard.command(name="threshold", description="Change the required star count")
-    @app_commands.checks.has_permissions(administrator=True)
-    async def starboard_threshold(self, interaction: discord.Interaction, number: int):
-        if number < 1: number = 1
-        config = self.get_config(interaction.guild.id)
-        config['threshold'] = number
-        self.save_config(interaction.guild.id, config)
-        await interaction.response.send_message(f"✅ threshold set to **{number}**")
 
-    @starboard.command(name="unignore", description="Stop ignoring a channel")
-    @app_commands.checks.has_permissions(administrator=True)
-    async def starboard_unignore(self, interaction: discord.Interaction, channel: discord.TextChannel):
-        config = self.get_config(interaction.guild.id)
-        ignored = config.get('ignored_channels', [])
-        ignored = [c for c in ignored if str(c) != str(channel.id)]
-        config['ignored_channels'] = ignored
-        self.save_config(interaction.guild.id, config)
-        await interaction.response.send_message(f"✅ {channel.mention} no longer ignored.")
 
 
 async def setup(bot):

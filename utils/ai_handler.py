@@ -1,23 +1,26 @@
 """
 utils/ai_handler.py — Single source of truth for all AI calls.
 
-Uses Groq API (console.groq.com) with llama3-70b for complex tasks
-and mixtral-8x7b for fast one-liners.
+Uses Groq API (console.groq.com) with llama-3.1-70b-versatile for
+high quality responses and llama-3.1-8b-instant for fast short responses.
 """
 import os
 from groq import AsyncGroq
 
-_client = None
+_client: AsyncGroq | None = None
 
 def get_client() -> AsyncGroq:
     global _client
     if _client is None:
-        _client = AsyncGroq(api_key=os.getenv("GROQ_API_KEY"))
+        api_key = os.getenv("GROQ_API_KEY")
+        if not api_key:
+            raise ValueError("GROQ_API_KEY environment variable not set")
+        _client = AsyncGroq(api_key=api_key)
     return _client
 
 async def call_ai(
     messages: list,
-    model: str = "llama3-70b-8192",
+    model: str = "llama-3.1-70b-versatile",
     max_tokens: int = 300,
     temperature: float = 0.9
 ) -> str:
@@ -31,13 +34,16 @@ async def call_ai(
         )
         return response.choices[0].message.content.strip()
     except Exception as e:
-        print(f"[AI Error] {e}")
+        print(f"[AI Error] {type(e).__name__}: {e}")
         return "something broke on my end. try again."
 
-async def call_ai_fast(messages: list, max_tokens: int = 150) -> str:
+async def call_ai_fast(
+    messages: list,
+    max_tokens: int = 150
+) -> str:
     return await call_ai(
         messages,
-        model="mixtral-8x7b-32768",
+        model="llama-3.1-8b-instant",
         max_tokens=max_tokens,
         temperature=0.85
     )

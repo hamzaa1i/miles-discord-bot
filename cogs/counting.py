@@ -205,15 +205,6 @@ class Counting(commands.Cog):
         await interaction.response.send_message(f"save-on-fail is now **{status}**.")
 
 
-    @counting.command(name="toggle_save", description="Toggle whether count resets or saves on fail")
-    @app_commands.checks.has_permissions(manage_channels=True)
-    async def counting_toggle_save(self, interaction: discord.Interaction):
-        self.bot.increment_command('counting_toggle_save')
-        config = self.get_config(interaction.guild.id)
-        config['save_count_on_fail'] = not config.get('save_count_on_fail', False)
-        self.save_config(interaction.guild.id, config)
-        status = "on (count preserved)" if config['save_count_on_fail'] else "off (count resets to 0)"
-        await interaction.response.send_message(f"save-on-fail is now **{status}**.")
 
 
 async def setup(bot):

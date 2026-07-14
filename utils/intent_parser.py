@@ -1,6 +1,6 @@
 """
 utils/intent_parser.py — Natural language → command intent parser.
-Uses Groq API (mixtral-8x7b for speed).
+Uses Groq API (llama-3.1-8b-instant for speed).
 """
 import json
 import os
@@ -16,7 +16,6 @@ INTENT_SYSTEM_PROMPT = (
     "- ban: {user_id, reason}\n"
     "- kick: {user_id, reason}\n"
     "- mute: {user_id, duration_seconds, reason}\n"
-    "- unmute: {user_id}\n"
     "- purge: {amount}\n"
     "- warn: {user_id, reason}\n"
     "- slowmode: {seconds}\n"
@@ -43,9 +42,7 @@ INTENT_SYSTEM_PROMPT = (
     "- eco_add: {user_id, amount}\n"
     "- eco_remove: {user_id, amount}\n"
     "- eco_reset: {user_id}\n"
-    "- inventory: {}\n"
     "- richest: {}\n"
-    "- rank: {user_id} (optional)\n"
     "- remind: {duration_seconds, reminder_text}\n"
     "- serverinfo: {}\n"
     "- ping: {}\n"
@@ -56,40 +53,28 @@ INTENT_SYSTEM_PROMPT = (
     "- poll: {question}\n"
     "- joke: {}\n"
     "- meme: {}\n"
-    "- fact: {}\n"
-    "- quote: {}\n"
     "- roast: {user_id} (optional)\n"
-    "- compliment: {user_id} (optional)\n"
-    "- rate: {thing}\n"
-    "- ship: {user_id1, user_id2}\n"
-    "- battle: {user_id}\n"
-    "- vibe: {}\n"
     "- flip: {}\n"
     "- roll: {sides}\n"
-    "- truth: {}\n"
-    "- dare: {}\n"
     "- weather: {city}\n"
-    "- suggest: {text}\n"
-    "- birthday_check: {user_id}\n"
     "- rep_give: {user_id, reason}\n"
-    "- rep_check: {user_id}\n"
     "- marry: {user_id}\n"
     "- divorce: {}\n"
     "- chat: {} (default fallback)"
 )
 
 KNOWN_INTENTS = {
-    'ban', 'kick', 'mute', 'unmute', 'purge', 'warn', 'slowmode', 'lock', 'unlock',
+    'ban', 'kick', 'mute', 'purge', 'warn', 'slowmode', 'lock', 'unlock',
     'hide', 'show', 'nuke', 'role_add', 'role_remove',
     'balance', 'pay', 'daily', 'work',
     'earn_fish', 'earn_hunt', 'earn_mine', 'earn_beg', 'earn_crime', 'earn_rob',
     'bank_deposit', 'bank_withdraw',
     'eco_set', 'eco_add', 'eco_remove', 'eco_reset',
-    'inventory', 'richest',
-    'rank', 'remind', 'serverinfo', 'ping', 'botinfo', 'uptime', 'whois', 'avatar',
-    'poll', 'joke', 'meme', 'fact', 'quote', 'roast', 'compliment', 'rate', 'ship',
-    'battle', 'vibe', 'flip', 'roll', 'truth', 'dare', 'weather',
-    'suggest', 'birthday_check', 'rep_give', 'rep_check', 'marry', 'divorce',
+    'richest',
+    'remind', 'serverinfo', 'ping', 'botinfo', 'uptime', 'whois', 'avatar',
+    'poll', 'joke', 'meme', 'roast',
+    'flip', 'roll', 'weather',
+    'rep_give', 'marry', 'divorce',
     'chat',
 }
 

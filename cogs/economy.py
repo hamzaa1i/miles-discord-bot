@@ -217,53 +217,7 @@ class Economy(commands.Cog):
         embed = discord.Embed(description=f"sent **${amount:,}** to {user.mention}", color=0x1a1a2e)
         await interaction.response.send_message(embed=embed)
 
-    @app_commands.command(name="shop", description="View the shop")
-    async def shop(self, interaction: discord.Interaction):
-        self.bot.increment_command('shop')
-        embed = discord.Embed(title="Shop", description="use `/buy <item>` to purchase", color=0x1a1a2e)
-        for name, d in self.shop_items.items():
-            embed.add_field(name=f"{d['emoji']} **{name}** — ${d['price']:,}", value=d['description'], inline=False)
-        await interaction.response.send_message(embed=embed)
 
-    @app_commands.command(name="buy", description="Purchase an item")
-    async def buy(self, interaction: discord.Interaction, item: str):
-        self.bot.increment_command('buy')
-        data = self.get_user_data(interaction.guild.id, interaction.user.id)
-        found = None
-        for si, sd in self.shop_items.items():
-            if item.lower() in si.lower():
-                found = (si, sd)
-                break
-        if not found:
-            await interaction.response.send_message("item not found.", ephemeral=True)
-            return
-        name, item_data = found
-        if data['balance'] < item_data['price']:
-            await interaction.response.send_message(f"need ${item_data['price']:,}, have ${data['balance']:,}", ephemeral=True)
-            return
-        if item_data['type'] == 'tool' and name in data['inventory']:
-            await interaction.response.send_message(f"you already own **{name}**", ephemeral=True)
-            return
-        data['balance'] -= item_data['price']
-        data['total_spent'] += item_data['price']
-        data['inventory'].append(name)
-        self.save_user_data(interaction.guild.id, interaction.user.id, data)
-        embed = discord.Embed(description=f"bought **{item_data['emoji']} {name}** for **${item_data['price']:,}**", color=0x1a1a2e)
-        await interaction.response.send_message(embed=embed)
-
-    @app_commands.command(name="inventory", description="View your items")
-    async def inventory(self, interaction: discord.Interaction, user: discord.Member = None):
-        self.bot.increment_command('inventory')
-        target = user or interaction.user
-        data = self.get_user_data(interaction.guild.id, target.id)
-        if not data['inventory']:
-            await interaction.response.send_message("empty inventory.", ephemeral=True)
-            return
-        from collections import Counter
-        counts = Counter(data['inventory'])
-        text = "\n".join([f"{self.shop_items.get(i, {}).get('emoji', '•')} **{i}** x{c}" for i, c in counts.items()])
-        embed = discord.Embed(title=f"{target.display_name}'s Inventory", description=text, color=0x1a1a2e)
-        await interaction.response.send_message(embed=embed, ephemeral=(user is None))
 
     @app_commands.command(name="richest", description="Top 10 richest in this server")
     async def richest(self, interaction: discord.Interaction):
