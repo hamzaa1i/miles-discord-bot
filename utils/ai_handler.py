@@ -7,7 +7,7 @@ high quality responses and llama-3.1-8b-instant for fast short responses.
 import os
 from groq import AsyncGroq
 
-_client: AsyncGroq | None = None
+_client = None
 
 def get_client() -> AsyncGroq:
     global _client
@@ -25,6 +25,18 @@ async def call_ai(
     temperature: float = 0.9
 ) -> str:
     try:
+        # Validate inputs before sending
+        if not messages:
+            print("[AI] Error: empty messages list")
+            return "something broke. try again."
+        for msg in messages:
+            if not msg.get("content"):
+                print(f"[AI] Error: empty content in message role={msg.get('role')}")
+                msg["content"] = " "
+            # Truncate very long messages to avoid 400 errors
+            if len(str(msg["content"])) > 8000:
+                msg["content"] = str(msg["content"])[:8000]
+
         client = get_client()
         response = await client.chat.completions.create(
             model=model,
@@ -35,6 +47,7 @@ async def call_ai(
         return response.choices[0].message.content.strip()
     except Exception as e:
         print(f"[AI Error] {type(e).__name__}: {e}")
+        print(f"[AI Error] Model: {model}, max_tokens: {max_tokens}")
         return "something broke on my end. try again."
 
 async def call_ai_fast(

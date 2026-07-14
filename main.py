@@ -190,8 +190,18 @@ class CynBot(commands.Bot):
         # Guild-only sync — no global sync (avoids Discord's 100-command global limit).
         # Commands are copied to each guild and synced per-guild (instant, no 1hr wait).
         if not self.synced:
-            # Clear any old global commands first
-            self.tree.clear_commands(guild=None)
+            # Debug: count commands in tree before sync
+            all_cmds = self.tree.get_commands()
+            cmd_count = 0
+            for c in all_cmds:
+                if hasattr(c, 'commands'):
+                    cmd_count += len(c.commands)
+                else:
+                    cmd_count += 1
+            print(f"[Debug] Commands in tree before sync: {len(all_cmds)} ({cmd_count} total including subcommands)")
+
+            # Do NOT call tree.clear_commands() — it wipes the global commands
+            # that copy_global_to needs to copy FROM.
 
             success_count = 0
             fail_count = 0

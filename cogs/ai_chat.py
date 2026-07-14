@@ -616,8 +616,13 @@ RESPONSE RULES:
     async def on_message(self, message):
         if message.author.bot:
             return
+        if not message.guild:
+            return
 
-        if self.bot.user in message.mentions:
+        if self.bot.user not in message.mentions:
+            return
+
+        try:
             is_limited, remaining = self.check_rate_limit(message.author.id)
             if is_limited:
                 try:
@@ -648,7 +653,8 @@ RESPONSE RULES:
 
             try:
                 intent_data = await parse_intent(content, self)
-            except Exception:
+            except Exception as e:
+                print(f"[on_message] Intent parse error: {type(e).__name__}: {e}")
                 intent_data = {"intent": "chat", "params": {}}
 
             if intent_data.get('intent') != 'chat':
@@ -666,6 +672,15 @@ RESPONSE RULES:
                     await message.channel.send(response)
                 except:
                     pass
+
+        except Exception as e:
+            print(f"[on_message Error] {type(e).__name__}: {e}")
+            import traceback
+            traceback.print_exc()
+            try:
+                await message.channel.send("something went wrong internally.")
+            except:
+                pass
 
     @app_commands.command(name="chat", description="Talk to cyn")
     @app_commands.checks.cooldown(1, 5.0, key=lambda i: i.user.id)
