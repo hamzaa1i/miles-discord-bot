@@ -1,3 +1,11 @@
+import sys
+# BUG 5 — line buffering so print() shows up immediately in Render logs
+try:
+    sys.stdout.reconfigure(line_buffering=True)
+    sys.stderr.reconfigure(line_buffering=True)
+except Exception:
+    pass
+
 import discord
 from discord.ext import commands, tasks
 from discord import app_commands
@@ -341,10 +349,10 @@ async def on_interaction(interaction: discord.Interaction):
             if args_parts:
                 args_str = " | " + ", ".join(args_parts)
 
-        print(f"[SLASH] {guild_name} | {channel_name} | {user} → /{cmd_name}{args_str}")
+        logger.info(f"[SLASH] {guild_name} | {channel_name} | {user} → /{cmd_name}{args_str}")
     except Exception as e:
         # Never let logging break the interaction
-        print(f"[SLASH LOG ERROR] {type(e).__name__}: {e}")
+        logger.error(f"[SLASH LOG ERROR] {type(e).__name__}: {e}")
 
 
 # FIX 6 (part 2) — global slash-command error handler
