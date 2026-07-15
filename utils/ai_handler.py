@@ -5,6 +5,7 @@ Uses Groq API (console.groq.com) with llama-3.3-70b-versatile for
 high quality responses and llama-3.1-8b-instant for fast short responses.
 """
 import os
+import time
 from groq import AsyncGroq
 
 _client = None
@@ -60,6 +61,7 @@ async def call_ai(
     max_tokens: int = 300,
     temperature: float = 0.9
 ) -> str:
+    start = time.time()
     try:
         # Validate model name
         if model not in VALID_MODELS:
@@ -99,21 +101,26 @@ async def call_ai(
             max_tokens=max_tokens,
             temperature=temperature
         )
-        return response.choices[0].message.content.strip()
+        result = response.choices[0].message.content.strip()
+        elapsed = time.time() - start
+        print(f"[GROQ] model={model} tokens={max_tokens} "
+              f"time={elapsed:.2f}s messages={len(clean_messages)}")
+        return result
 
     except Exception as e:
-        print(f"[AI ERROR] {type(e).__name__}: {e}")
-        print(f"[AI ERROR] model={model} max_tokens={max_tokens} temp={temperature}")
+        elapsed = time.time() - start
+        print(f"[GROQ ERROR] {type(e).__name__}: {e} time={elapsed:.2f}s")
+        print(f"[GROQ ERROR] model={model} max_tokens={max_tokens} temp={temperature}")
         try:
-            print(f"[AI ERROR] messages count={len(messages)}")
+            print(f"[GROQ ERROR] messages count={len(messages)}")
             for i, m in enumerate(messages):
                 if isinstance(m, dict):
                     content_preview = str(m.get('content', 'NONE'))[:100]
-                    print(f"[AI ERROR] msg[{i}] role={m.get('role')} content={content_preview}")
+                    print(f"[GROQ ERROR] msg[{i}] role={m.get('role')} content={content_preview}")
                 else:
-                    print(f"[AI ERROR] msg[{i}] NOT_A_DICT: {str(m)[:100]}")
+                    print(f"[GROQ ERROR] msg[{i}] NOT_A_DICT: {str(m)[:100]}")
         except Exception as log_err:
-            print(f"[AI ERROR] failed to log messages: {log_err}")
+            print(f"[GROQ ERROR] failed to log messages: {log_err}")
         return "something broke on my end. try again."
 
 

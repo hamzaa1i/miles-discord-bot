@@ -165,7 +165,7 @@ async def parse_intent(message_content: str, ai_handler) -> dict:
         raw = await call_ai_fast([
             {"role": "system", "content": INTENT_SYSTEM_PROMPT},
             {"role": "user", "content": message_content}
-        ], max_tokens=200)
+        ], max_tokens=100)
 
         if not raw or "something broke" in raw:
             return fallback

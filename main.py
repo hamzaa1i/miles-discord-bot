@@ -309,6 +309,44 @@ async def on_guild_join(guild: discord.Guild):
         logger.error(f"❌ Failed to sync to new guild {guild.name}: {e}")
 
 
+# IMPROVEMENT 1 — Log every slash command invocation to console for Render logs.
+# Fires for every application command interaction (slash commands, button clicks
+# on message components, select menus, etc.) before the command runs.
+@bot.event
+async def on_interaction(interaction: discord.Interaction):
+    # Only log application command invocations (not button/select interactions)
+    if interaction.type != discord.InteractionType.application_command:
+        return
+    try:
+        guild_name = interaction.guild.name if interaction.guild else "DM"
+        if hasattr(interaction.channel, 'name'):
+            channel_name = f"#{interaction.channel.name}"
+        else:
+            channel_name = "DM"
+        user = f"{interaction.user.display_name} ({interaction.user.id})"
+        cmd_name = interaction.data.get('name', 'unknown') if interaction.data else 'unknown'
+        options = interaction.data.get('options', []) if interaction.data else []
+
+        # Format options/args
+        args_str = ""
+        if options:
+            args_parts = []
+            for opt in options:
+                if 'options' in opt:
+                    # subcommand group: /parent child arg=val
+                    for sub in opt['options']:
+                        args_parts.append(f"{sub['name']}={sub.get('value', '')}")
+                else:
+                    args_parts.append(f"{opt['name']}={opt.get('value', '')}")
+            if args_parts:
+                args_str = " | " + ", ".join(args_parts)
+
+        print(f"[SLASH] {guild_name} | {channel_name} | {user} → /{cmd_name}{args_str}")
+    except Exception as e:
+        # Never let logging break the interaction
+        print(f"[SLASH LOG ERROR] {type(e).__name__}: {e}")
+
+
 # FIX 6 (part 2) — global slash-command error handler
 @bot.tree.error
 async def on_app_command_error(
