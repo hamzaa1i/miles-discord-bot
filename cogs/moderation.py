@@ -3,9 +3,9 @@ cogs/moderation.py — essential moderation commands.
 
 Trimmed to stay under Discord's 100 global slash command limit.
 Kept: /mod kick, /mod ban, /mod unban, /mod timeout, /mod untimeout,
-      /mod warn, /mod purge, /mod nuke, /mod slowmode, /mod lock,
-      /mod unlock (11 subcommands).
-Removed: /mod warn list/clear/case, /mod role add/remove, /mod nickname,
+      /mod warn, /mod warn_clear, /mod unmute, /mod purge, /mod nuke,
+      /mod slowmode, /mod lock, /mod unlock (13 subcommands).
+Removed: /mod warn list/case, /mod role add/remove, /mod nickname,
          /mod softban, /mod hide, /mod show, /mod massrole add/remove,
          /mod logs (11 subcommands removed).
 """
@@ -14,6 +14,8 @@ from discord.ext import commands
 from discord import app_commands
 from datetime import timedelta
 import asyncio
+import os
+import json
 from utils.database import Database
 
 
@@ -239,7 +241,69 @@ class Moderation(commands.Cog):
         except discord.Forbidden:
             await interaction.followup.send("i don't have permission.", ephemeral=True)
 
+    # NEW COMMAND 1 — /mod warn_clear
+    @mod.command(name="warn_clear",
+                 description="Clear all warnings for a user")
+    @app_commands.describe(user="The user to clear warnings for")
+    async def mod_warn_clear(
+        self,
+        interaction: discord.Interaction,
+        user: discord.Member
+    ):
+        await interaction.response.defer(ephemeral=True)
 
+        # Permission check
+        owner_id = int(os.getenv("OWNER_ID", "0"))
+        if (interaction.user.id != owner_id and
+                not interaction.user.guild_permissions.administrator):
+            await interaction.followup.send("no permission.")
+            return
+
+        try:
+            with open("data/warnings.json", "r") as f:
+                warn_data = json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            warn_data = {}
+
+        guild_key = str(interaction.guild_id)
+        user_key = str(user.id)
+
+        if guild_key not in warn_data or user_key not in warn_data[guild_key]:
+            await interaction.followup.send(f"no warnings found for {user.display_name}.")
+            return
+
+        count = len(warn_data[guild_key][user_key])
+        warn_data[guild_key][user_key] = []
+
+        with open("data/warnings.json", "w") as f:
+            json.dump(warn_data, f, indent=2)
+
+        await interaction.followup.send(
+            f"cleared {count} warning(s) for {user.display_name}."
+        )
+
+    # NEW COMMAND 2 — /mod unmute
+    @mod.command(name="unmute",
+                 description="Remove timeout from a user (unmute)")
+    @app_commands.describe(user="The user to unmute")
+    async def mod_unmute(
+        self,
+        interaction: discord.Interaction,
+        user: discord.Member
+    ):
+        await interaction.response.defer(ephemeral=True)
+
+        if not interaction.user.guild_permissions.moderate_members:
+            await interaction.followup.send("you need moderate members permission.")
+            return
+
+        try:
+            await user.timeout(None)  # None removes the timeout
+            await interaction.followup.send(f"removed timeout from {user.display_name}.")
+        except discord.Forbidden:
+            await interaction.followup.send("i don't have permission to do that.")
+        except Exception as e:
+            await interaction.followup.send(f"failed: {e}")
 
 
 

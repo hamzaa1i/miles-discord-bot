@@ -93,40 +93,58 @@ class AIChat(commands.Cog):
         if not self.check_reminders.is_running():
             self.check_reminders.start()
 
-    # BUG 2 + 3 — server summary with EXACT channel names by category.
-    # Removed: channel content hints, "some members" list (was being hallucinated).
-    # Added: explicit note that cyn can see names but NOT message history.
+    # FIX 3 — server summary with member roles/status + exact channel names.
+    # Members now include their top role so the AI can tell staff from regulars.
     async def get_server_summary(self, guild: discord.Guild) -> str:
         if not guild:
             return ""
         try:
-            # List channels grouped by category with their EXACT names
-            text_channels = []
-            for cat in guild.by_category():
-                for ch in cat[1]:
-                    if isinstance(ch, discord.TextChannel):
-                        text_channels.append(f"#{ch.name}")
-                    elif isinstance(ch, discord.VoiceChannel):
-                        text_channels.append(f"🔊{ch.name}")
+            # FIX 3 — Channel list with exact names (only channels the bot can see)
+            channel_list = []
+            for channel in guild.text_channels:
+                try:
+                    if channel.permissions_for(guild.me).view_channel:
+                        channel_list.append(f"#{channel.name}")
+                except Exception:
+                    pass
+            for channel in guild.voice_channels:
+                try:
+                    if channel.permissions_for(guild.me).view_channel:
+                        channel_list.append(f"🔊{channel.name}")
+                except Exception:
+                    pass
 
+            # FIX 3 — Role list
             roles = [r.name for r in reversed(guild.roles)
                      if not r.is_default() and not r.managed][:10]
 
-            members = [m.display_name for m in guild.members
-                       if not m.bot][:20]
+            # FIX 3 — Member list with their top role / status
+            member_info = []
+            for m in guild.members:
+                if m.bot:
+                    continue
+                top_role = next(
+                    (r.name for r in reversed(m.roles) if not r.is_default()),
+                    "no role"
+                )
+                status = "server owner" if m.id == guild.owner_id else top_role
+                member_info.append(f"{m.display_name} ({status})")
 
             owner_name = guild.owner.display_name if guild.owner else "unknown"
 
             return (
                 f"SERVER: {guild.name}\n"
                 f"OWNER: {owner_name}\n"
-                f"MEMBERS: {guild.member_count} total\n"
-                f"CHANNELS (exact names): {', '.join(text_channels[:15])}\n"
+                f"MEMBERS ({guild.member_count} total): "
+                f"{', '.join(member_info[:25])}\n"
+                f"CHANNELS (exact names, you can see these exist but NOT their content): "
+                f"{', '.join(channel_list[:20])}\n"
                 f"ROLES: {', '.join(roles) if roles else 'none'}\n"
-                f"HUMAN MEMBERS: {', '.join(members)}\n"
                 f"CREATED: {guild.created_at.strftime('%Y-%m-%d')}\n"
-                f"NOTE: you can see channel names but NOT their content.\n"
-                f"If asked what is in a channel, say you can't read messages.\n"
+                f"\nIMPORTANT: You can see channel NAMES but NOT message history.\n"
+                f"If asked what is IN a channel, say you can see it exists but cannot read its messages.\n"
+                f"If asked to identify a channel by name, use ONLY the exact names listed above.\n"
+                f"Never guess or make up channel content.\n"
             )
         except Exception as e:
             print(f"[server_summary] error: {type(e).__name__}: {e}")
@@ -273,7 +291,8 @@ etc), do it — don't just talk about it. Answer naturally as cyn."""
 
     async def get_ai_response(self, user_id: int, message: str, is_owner: bool = False,
                               guild: discord.Guild = None, author_name: str = None,
-                              channel=None, member: discord.Member = None) -> str:
+                              channel=None, member: discord.Member = None,
+                              extra_context: str = "") -> str:
         # IMPROVEMENT 3A + 3C — build server + user context
         server_summary = ""
         if guild:
@@ -282,12 +301,18 @@ etc), do it — don't just talk about it. Answer naturally as cyn."""
 
         # BUG 2 — removed recent channel context (was causing hallucination).
         # The AI can see channel names in the server summary, but NOT message history.
+        # FIX 4 — except when the user EXPLICITLY asks about a channel, in which
+        # case we fetch its actual messages and inject them as extra_context.
 
         # BUG 2 + OWNER OBSESSION — build the full system prompt with context
         system_prompt = self._build_system_prompt(
             is_owner=is_owner, guild=guild, channel=channel, member=member,
             server_summary=server_summary, user_context=user_context
         )
+
+        # FIX 4 — append extra context (e.g. fetched channel messages) if provided
+        if extra_context:
+            system_prompt += extra_context
 
         # IMPROVEMENT 2B — per-channel conversation memory
         # Key on channel_id so the AI remembers the channel conversation
@@ -454,7 +479,7 @@ etc), do it — don't just talk about it. Answer naturally as cyn."""
             # NOTE: message.mentions includes the bot itself when someone says
             # "@cyn warn @Diva" — so we must filter the bot out before picking
             # the target. Otherwise the self-target guard fires incorrectly.
-            if intent in ("ban", "kick", "warn", "mute", "timeout"):
+            if intent in ("ban", "kick", "warn", "warn_clear", "mute", "timeout", "unmute"):
                 # Filter out the bot itself and any bot accounts from mentions
                 human_mentions = [m for m in message.mentions if m.id != self.bot.user.id]
                 if not human_mentions:
@@ -692,6 +717,7 @@ etc), do it — don't just talk about it. Answer naturally as cyn."""
 
                 async def do_warn():
                     # Fetch the member fresh — never capture a Member object
+                    logger.info(f"[WARN] Executing warn on user {target_id} by {mod_name}")
                     g = self.bot.get_guild(guild_id)
                     if not g:
                         await self._safe_reply(message, "couldn't find the server.")
@@ -739,7 +765,7 @@ etc), do it — don't just talk about it. Answer naturally as cyn."""
                         with open("data/warnings.json", "w") as f:
                             _json.dump(warn_data, f, indent=2)
                     except Exception as e:
-                        print(f"[warn] failed to save warnings.json: {e}")
+                        logger.error(f"[warn] failed to save warnings.json: {e}")
 
                     # DM the warned user
                     try:
@@ -748,6 +774,8 @@ etc), do it — don't just talk about it. Answer naturally as cyn."""
                         )
                     except Exception:
                         pass
+
+                    logger.info(f"[WARN] ✅ Successfully warned {target_name} (case #{next_id})")
 
                     await self._safe_reply(
                         message,
@@ -760,6 +788,74 @@ etc), do it — don't just talk about it. Answer naturally as cyn."""
                     requester_name=mod_name
                 )
                 await self._safe_reply(message, embed=embed, view=view)
+                return True
+
+            # ---- warn_clear (NEW) ----
+            if intent == 'warn_clear':
+                # Need administrator or owner
+                owner_id = int(os.getenv("OWNER_ID", "0"))
+                if (author.id != owner_id and
+                        not (guild and author.guild_permissions.administrator)):
+                    await self._safe_reply(message, "you need administrator for that.")
+                    return True
+                # Capture primitives
+                wc_target_id = target.id
+                wc_target_name = target.display_name
+                wc_guild_id = guild.id if guild else 0
+                try:
+                    with open("data/warnings.json", "r") as f:
+                        warn_data = _json.load(f)
+                except (FileNotFoundError, _json.JSONDecodeError):
+                    warn_data = {}
+                gk = str(wc_guild_id)
+                uk = str(wc_target_id)
+                if gk not in warn_data or uk not in warn_data[gk] or not warn_data[gk][uk]:
+                    await self._safe_reply(message, f"no warnings found for {wc_target_name}.")
+                    return True
+                count = len(warn_data[gk][uk])
+                warn_data[gk][uk] = []
+                try:
+                    with open("data/warnings.json", "w") as f:
+                        _json.dump(warn_data, f, indent=2)
+                except Exception as e:
+                    logger.error(f"[warn_clear] failed to save: {e}")
+                    await self._safe_reply(message, "couldn't save the clear.")
+                    return True
+                logger.info(f"[WARN_CLEAR] cleared {count} warnings for {wc_target_name}")
+                await self._safe_reply(
+                    message,
+                    f"cleared {count} warning(s) for {wc_target_name}."
+                )
+                return True
+
+            # ---- unmute (NEW) ----
+            if intent == 'unmute':
+                if not self.check_mod_permission(message, required_perm="timeout"):
+                    await self._safe_reply(message, "you don't have permission for that.")
+                    return True
+                # Capture primitives
+                um_target_id = target.id
+                um_target_name = target.display_name
+                um_guild_id = guild.id if guild else 0
+                try:
+                    g = self.bot.get_guild(um_guild_id)
+                    if not g:
+                        await self._safe_reply(message, "couldn't find the server.")
+                        return True
+                    member = g.get_member(um_target_id) or await g.fetch_member(um_target_id)
+                    if not member:
+                        await self._safe_reply(message, "couldn't find that user.")
+                        return True
+                    await member.timeout(None)
+                    logger.info(f"[UNMUTE] removed timeout from {um_target_name}")
+                    await self._safe_reply(
+                        message,
+                        f"removed timeout from {um_target_name}."
+                    )
+                except discord.Forbidden:
+                    await self._safe_reply(message, "i don't have permission to do that.")
+                except Exception as e:
+                    await self._safe_reply(message, f"failed: {e}")
                 return True
 
             # ---- delete_message (FIX 3) ----
@@ -1198,6 +1294,88 @@ etc), do it — don't just talk about it. Answer naturally as cyn."""
 
         return False
 
+    # FIX 1 — Resolve Discord mention IDs to human-readable names BEFORE
+    # passing the content to the AI. Without this, the AI sees raw IDs like
+    # <#1513480933997809806> and cannot tell which channel/user/role is meant.
+    def resolve_mentions(self, content: str, guild: discord.Guild) -> str:
+        """Replace Discord mention IDs with actual names."""
+        import re
+
+        if not guild:
+            return content
+
+        # Resolve channel mentions: <#1234567890> → #channel-name
+        def replace_channel(match):
+            try:
+                channel_id = int(match.group(1))
+            except (TypeError, ValueError):
+                return match.group(0)
+            channel = guild.get_channel(channel_id)
+            if channel:
+                return f"#{channel.name}"
+            return match.group(0)  # keep original if not found
+
+        content = re.sub(r'<#(\d+)>', replace_channel, content)
+
+        # Resolve user mentions: <@1234567890> or <@!1234567890> → @DisplayName
+        # NOTE: skip the bot itself — that's already stripped earlier, but
+        # just in case, we let it resolve to @cyn which is fine.
+        def replace_user(match):
+            try:
+                user_id = int(match.group(1))
+            except (TypeError, ValueError):
+                return match.group(0)
+            member = guild.get_member(user_id)
+            if member:
+                return f"@{member.display_name}"
+            return match.group(0)
+
+        content = re.sub(r'<@!?(\d+)>', replace_user, content)
+
+        # Resolve role mentions: <@&1234567890> → @role-name
+        def replace_role(match):
+            try:
+                role_id = int(match.group(1))
+            except (TypeError, ValueError):
+                return match.group(0)
+            role = guild.get_role(role_id)
+            if role:
+                return f"@{role.name}"
+            return match.group(0)
+
+        content = re.sub(r'<@&(\d+)>', replace_role, content)
+
+        return content
+
+    # FIX 4 — Actually fetch recent messages from a channel the bot can see.
+    # Used when someone asks "what's in #channel" / "tell me about #channel".
+    async def get_channel_messages(
+        self,
+        channel: discord.TextChannel,
+        limit: int = 15
+    ) -> str:
+        """Fetch recent messages from a channel the bot can see."""
+        try:
+            if not channel.permissions_for(channel.guild.me).read_message_history:
+                return f"i don't have permission to read #{channel.name}."
+
+            messages = []
+            async for msg in channel.history(limit=limit):
+                if not msg.author.bot:
+                    timestamp = msg.created_at.strftime("%H:%M")
+                    messages.append(
+                        f"[{timestamp}] {msg.author.display_name}: {msg.content[:200]}"
+                    )
+
+            if not messages:
+                return f"#{channel.name} has no recent messages i can see."
+
+            messages.reverse()  # chronological order
+            return f"Recent messages in #{channel.name}:\n" + "\n".join(messages)
+
+        except Exception as e:
+            return f"couldn't read #{channel.name}: {e}"
+
     # IMPROVEMENT — fast-path: skip intent parser for obvious chat messages.
     # This cuts API calls from 2 to 1 for pure conversation.
     def is_obvious_chat(self, content: str) -> bool:
@@ -1281,11 +1459,46 @@ etc), do it — don't just talk about it. Answer naturally as cyn."""
                         pass
                 return
 
+            # FIX 1 — Resolve all Discord mention IDs to human-readable names
+            # BEFORE passing to the AI / intent parser. This way when volc says
+            # "@cyn tell me about <#1513480933997809806>", the AI receives
+            # "tell me about #reve-stitching" and can respond correctly.
+            if message.guild:
+                content = self.resolve_mentions(content, message.guild)
+                logger.info(f"[RESOLVED] content after mention resolution: {content[:100]}")
+
             self.update_rate_limit(message.author.id)
             is_owner_msg = message.author.id == OWNER_ID
 
+            # FIX 4 — Check if user is asking about a specific channel's content.
+            # If so, fetch the recent messages from that channel so the AI
+            # can actually answer "what's in #channel" instead of hallucinating.
+            extra_context = ""
+            import re as _re_mod
+            channel_ask_pattern = _re_mod.search(
+                r'(?:what(?:\'s| is| are)? (?:in|happening in|going on in)|'
+                r'show me|read|check|tell me about) #([\w\-]+)',
+                content,
+                _re_mod.IGNORECASE
+            )
+            if channel_ask_pattern and message.guild:
+                channel_name = channel_ask_pattern.group(1)
+                # Find the channel by name
+                target_channel = discord.utils.get(
+                    message.guild.text_channels,
+                    name=channel_name
+                )
+                if target_channel:
+                    channel_content = await self.get_channel_messages(target_channel)
+                    logger.info(f"[CHANNEL READ] Fetched messages from #{channel_name}")
+                    extra_context = f"\n\nCHANNEL CONTENT REQUESTED:\n{channel_content}"
+                else:
+                    logger.info(f"[CHANNEL READ] Channel #{channel_name} not found in guild")
+                    extra_context = f"\n\nNOTE: user asked about #{channel_name} but that channel doesn't exist in this server."
+
             # IMPROVEMENT — fast-path: skip intent parser for obvious chat.
             # This cuts API calls from 2 to 1 for pure conversation.
+            # NOTE: runs AFTER mention resolution so it sees the resolved text.
             if self.is_obvious_chat(content):
                 intent_data = {"intent": "chat", "params": {}}
                 logger.info(f"[FAST-PATH] {message.author.display_name} → skipped intent parser")
@@ -1310,7 +1523,8 @@ etc), do it — don't just talk about it. Answer naturally as cyn."""
                 response = await self.get_ai_response(
                     message.author.id, content, is_owner=is_owner_msg,
                     guild=message.guild, author_name=message.author.display_name,
-                    channel=message.channel, member=message.author
+                    channel=message.channel, member=message.author,
+                    extra_context=extra_context
                 )
 
             # IMPROVEMENT 1 — log the response

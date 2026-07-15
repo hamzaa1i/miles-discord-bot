@@ -182,28 +182,9 @@ class Starboard(commands.Cog):
 
     starboard = app_commands.Group(name="starboard", description="Starboard management")
 
-    @starboard.command(name="setup", description="Setup the starboard")
-    @app_commands.checks.has_permissions(administrator=True)
-    async def starboard_setup(
-        self,
-        interaction: discord.Interaction,
-        channel: discord.TextChannel,
-        threshold: int = 3
-    ):
-        self.bot.increment_command('starboard_setup')
-        if threshold < 1:
-            threshold = 1
-        config = self.get_config(interaction.guild.id)
-        config['channel_id'] = str(channel.id)
-        config['threshold'] = threshold
-        self.save_config(interaction.guild.id, config)
-        await interaction.response.send_message(
-            f"✅ starboard set up in {channel.mention}.\n"
-            f"threshold: **{threshold}** ⭐\n"
-            f"emoji: {config['emoji']}"
-        )
-
-
+    # NOTE: /starboard setup was removed to stay under Discord's 100-command
+    # limit. Starboard config must now be set via data/starboard.json directly.
+    # The starboard listener still works — it reads config from the JSON file.
 
     @starboard.command(name="ignore", description="Ignore a channel from starboard")
     @app_commands.checks.has_permissions(administrator=True)

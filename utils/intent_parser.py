@@ -18,6 +18,10 @@ INTENT_SYSTEM_PROMPT = (
     "- mute: {user_id, duration_seconds, reason} — REQUIRES a @mention of the target in the message\n"
     "- purge: {amount}\n"
     "- warn: {user_id, reason} — REQUIRES a @mention of the target in the message\n"
+    "- warn_clear: {user_id} — clear all warnings for a user.\n"
+    "  REQUIRES a @mention. Needs administrator permission.\n"
+    "- unmute: {user_id} — remove timeout from a user.\n"
+    "  REQUIRES a @mention. Needs moderate_members permission.\n"
     "- delete_message: {message_id} — user wants to delete a specific message by ID, "
     "OR wants to delete the message they are replying to. Look for patterns like "
     "'delete message: 1234567890' or 'delete this message' or 'delete [id]'. "
@@ -83,7 +87,8 @@ INTENT_SYSTEM_PROMPT = (
 )
 
 KNOWN_INTENTS = {
-    'ban', 'kick', 'mute', 'purge', 'warn', 'delete_message',
+    'ban', 'kick', 'mute', 'purge', 'warn', 'warn_clear', 'unmute',
+    'delete_message',
     'slowmode', 'lock', 'unlock',
     'hide', 'show', 'nuke', 'role_add', 'role_remove',
     'balance', 'pay', 'daily', 'work',
