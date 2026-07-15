@@ -65,6 +65,7 @@ async def call_ai(
     temperature: float = 0.9
 ) -> str:
     start = time.time()
+    clean_messages = []
     try:
         # Validate model name
         if model not in VALID_MODELS:
@@ -112,6 +113,26 @@ async def call_ai(
 
     except Exception as e:
         elapsed = time.time() - start
+        error_str = str(e)
+
+        # FIX 4 — Rate limit on 70b → try 8b as fallback (separate quota)
+        if "429" in error_str and model == "llama-3.3-70b-versatile":
+            logger.warning(f"[GROQ] 70b rate limited, falling back to 8b")
+            try:
+                client = get_client()
+                response = await client.chat.completions.create(
+                    model="llama-3.1-8b-instant",
+                    messages=clean_messages if clean_messages else _validate_messages(messages),
+                    max_tokens=min(max_tokens, 200),
+                    temperature=temperature
+                )
+                result = response.choices[0].message.content.strip()
+                logger.info(f"[GROQ FALLBACK] 8b responded successfully")
+                return result
+            except Exception as e2:
+                logger.error(f"[GROQ] 8b fallback also failed: {type(e2).__name__}: {e2}")
+                return "i'm being rate limited right now. try again in a few minutes."
+
         logger.error(f"[GROQ ERROR] {type(e).__name__}: {e} time={elapsed:.2f}s")
         logger.error(f"[GROQ ERROR] model={model} max_tokens={max_tokens} temp={temperature}")
         try:
@@ -124,6 +145,10 @@ async def call_ai(
                     logger.error(f"[GROQ ERROR] msg[{i}] NOT_A_DICT: {str(m)[:100]}")
         except Exception as log_err:
             logger.error(f"[GROQ ERROR] failed to log messages: {log_err}")
+
+        # FIX 4 — friendlier message so users know it's temporary
+        if "429" in error_str:
+            return "i'm being rate limited right now. try again in a few minutes."
         return "something broke on my end. try again."
 
 
