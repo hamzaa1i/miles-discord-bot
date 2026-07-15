@@ -13,11 +13,16 @@ INTENT_SYSTEM_PROMPT = (
     "Format: {\"intent\": \"command_name\", \"params\": {}}\n\n"
     "If no command matches, return: {\"intent\": \"chat\", \"params\": {}}\n\n"
     "Possible intents and their params:\n"
-    "- ban: {user_id, reason}\n"
-    "- kick: {user_id, reason}\n"
-    "- mute: {user_id, duration_seconds, reason}\n"
+    "- ban: {user_id, reason} — REQUIRES a @mention of the target in the message\n"
+    "- kick: {user_id, reason} — REQUIRES a @mention of the target in the message\n"
+    "- mute: {user_id, duration_seconds, reason} — REQUIRES a @mention of the target in the message\n"
     "- purge: {amount}\n"
-    "- warn: {user_id, reason}\n"
+    "- warn: {user_id, reason} — REQUIRES a @mention of the target in the message\n"
+    "- delete_message: {message_id} — user wants to delete a specific message by ID, "
+    "OR wants to delete the message they are replying to. Look for patterns like "
+    "'delete message: 1234567890' or 'delete this message' or 'delete [id]'. "
+    "If no message ID is visible, return {\"message_id\": null} and the bot will try "
+    "the replied-to message.\n"
     "- slowmode: {seconds}\n"
     "- lock: {}\n"
     "- unlock: {}\n"
@@ -44,7 +49,13 @@ INTENT_SYSTEM_PROMPT = (
     "- eco_reset: {user_id}\n"
     "- richest: {}\n"
     "- remind: {duration_seconds, reminder_text}\n"
-    "- serverinfo: {}\n"
+    "- serverinfo: {} — ONLY when user explicitly asks for server information, "
+    "stats, or details about the CURRENT server. "
+    "Examples that ARE serverinfo: 'show server info', 'server stats', "
+    "'server details', 'info about this server'. "
+    "NOT serverinfo: 'how many servers are you in', 'what servers are you in', "
+    "'how many servers do you have', 'how many guilds'. Those questions are about "
+    "the BOT, not the current server — return 'chat' for them.\n"
     "- ping: {}\n"
     "- botinfo: {}\n"
     "- uptime: {}\n"
@@ -60,11 +71,16 @@ INTENT_SYSTEM_PROMPT = (
     "- rep_give: {user_id, reason}\n"
     "- marry: {user_id}\n"
     "- divorce: {}\n"
-    "- chat: {} (default fallback)"
+    "- chat: {} (default fallback)\n\n"
+    "IMPORTANT: Moderation intents (ban, kick, warn, mute) ONLY apply when there "
+    "is a @mention pattern (like <@123456> or @username format) visible in the "
+    "message. If a user says 'warn diva' with no @mention, return 'chat' intent, "
+    "NOT 'warn' — the bot cannot reliably identify who 'diva' is without a mention."
 )
 
 KNOWN_INTENTS = {
-    'ban', 'kick', 'mute', 'purge', 'warn', 'slowmode', 'lock', 'unlock',
+    'ban', 'kick', 'mute', 'purge', 'warn', 'delete_message',
+    'slowmode', 'lock', 'unlock',
     'hide', 'show', 'nuke', 'role_add', 'role_remove',
     'balance', 'pay', 'daily', 'work',
     'earn_fish', 'earn_hunt', 'earn_mine', 'earn_beg', 'earn_crime', 'earn_rob',
@@ -104,11 +120,20 @@ def normalize_params(params: dict) -> dict:
     for k, v in params.items():
         if k in ('user_id', 'target_user_id', 'user_id1', 'user_id2'):
             cleaned[k] = _extract_user_id(v)
-        elif k in ('amount', 'sides', 'duration_seconds', 'seconds'):
-            try:
-                cleaned[k] = int(v)
-            except (TypeError, ValueError):
+        elif k in ('amount', 'sides', 'duration_seconds', 'seconds', 'message_id'):
+            if v is None:
                 cleaned[k] = None
+            else:
+                try:
+                    cleaned[k] = int(v)
+                except (TypeError, ValueError):
+                    # message_id may be a string with extra chars — try to extract digits
+                    if k == 'message_id' and isinstance(v, str):
+                        import re as _re
+                        m = _re.search(r'\d{10,}', v)
+                        cleaned[k] = int(m.group(0)) if m else None
+                    else:
+                        cleaned[k] = None
         elif isinstance(v, list):
             cleaned[k] = [str(x) for x in v]
         else:

@@ -79,5 +79,15 @@ A dark, natural-sounding Discord companion with server tools, economy, AI featur
 - ⚠️ Music is disabled (no FFmpeg on Render free tier)
 - For persistent data, upgrade to Render paid tier or use external DB
 
+### Discord slash-command cache
+When commands are added/removed/changed, Discord's client may still show old
+commands in the UI. To force a refresh:
+1. **Completely quit and reopen Discord** (Cmd+Q on Mac, right-click tray icon
+   → Quit on Windows, swipe away on mobile), OR
+2. Wait up to **1 hour** for Discord to refresh the command list automatically.
+
+The bot's slash commands ARE registered (synced per-guild on startup) — this
+is purely a client-side cache issue on Discord's end.
+
 ## License
 MIT

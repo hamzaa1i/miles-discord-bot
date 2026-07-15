@@ -13,6 +13,70 @@ from utils.database import Database
 OWNER_ID = int(os.getenv('OWNER_ID', '0'))
 
 
+# FIX 5 — Confirmation view for AI-driven moderation actions.
+# Used by warn / ban / kick / timeout / purge intents.
+class ModConfirmView(discord.ui.View):
+    def __init__(self, action: str, target, reason: str,
+                 executor_func, requester_id: int = 0,
+                 requester_name: str = "",
+                 channel_name: str = "", amount: int = 0,
+                 timeout: int = 30):
+        super().__init__(timeout=timeout)
+        self.action = action
+        self.target = target
+        self.reason = reason
+        self.executor_func = executor_func
+        self.confirmed = False
+        self.requester_id = requester_id
+        self.requester_name = requester_name
+        self.channel_name = channel_name
+        self.amount = amount
+
+    @discord.ui.button(label="Confirm", style=discord.ButtonStyle.red)
+    async def confirm(self, interaction: discord.Interaction,
+                      button: discord.ui.Button):
+        # Only the original requester can confirm
+        if interaction.user.id != self.requester_id:
+            await interaction.response.send_message(
+                "this isn't your action to confirm.", ephemeral=True
+            )
+            return
+        self.confirmed = True
+        for item in self.children:
+            item.disabled = True
+        await interaction.response.edit_message(
+            content=f"executing {self.action}...", view=self
+        )
+        try:
+            await self.executor_func()
+        except Exception as e:
+            print(f"[ModConfirm] executor error: {type(e).__name__}: {e}")
+            try:
+                await interaction.followup.send(
+                    f"something went wrong running that: {e}", ephemeral=True
+                )
+            except Exception:
+                pass
+
+    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.grey)
+    async def cancel(self, interaction: discord.Interaction,
+                     button: discord.ui.Button):
+        if interaction.user.id != self.requester_id:
+            await interaction.response.send_message(
+                "this isn't your action to cancel.", ephemeral=True
+            )
+            return
+        for item in self.children:
+            item.disabled = True
+        await interaction.response.edit_message(
+            content="cancelled.", view=self
+        )
+
+    async def on_timeout(self):
+        for item in self.children:
+            item.disabled = True
+
+
 class AIChat(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
@@ -75,7 +139,8 @@ RESPONSE RULES:
     def update_rate_limit(self, user_id: int):
         self.rate_limits[user_id] = datetime.utcnow()
 
-    async def get_ai_response(self, user_id: int, message: str, is_owner: bool = False) -> str:
+    async def get_ai_response(self, user_id: int, message: str, is_owner: bool = False,
+                              guild: discord.Guild = None, author_name: str = None) -> str:
         if getattr(self.bot, 'owner_user', None) is not None:
             self.system_prompt = self._build_system_prompt()
 
@@ -83,7 +148,32 @@ RESPONSE RULES:
         if is_owner:
             owner = getattr(self.bot, 'owner_user', None)
             owner_name = owner.display_name if owner else "my creator"
-            system_prompt += f"\n\nIMPORTANT: The person messaging you right now IS {owner_name}, your owner. Be cooperative, respectful, and helpful."
+            system_prompt += f"""
+
+OWNER RULES — {owner_name} is talking right now:
+- Always respectful to {owner_name}. This NEVER changes.
+- If {owner_name} says "ignore ownership" or "be real" or "don't treat me as owner",
+  interpret this as: give honest opinion while staying kind and respectful.
+  Do NOT become dismissive, rude, or overly blunt toward {owner_name}.
+- Respectful means: kind tone, no insults, no dismissiveness.
+  It does NOT mean: only say positive things. You can disagree or give
+  honest feedback while still being respectful.
+- Never call {owner_name}'s questions "basic" or "straightforward" or imply
+  {owner_name} is boring. Give honest feedback without being condescending.
+- Example of good honest feedback: "honestly? your questions could go
+  deeper but you're not bad at conversation, {owner_name}."
+- Example of bad response: "your questions are straightforward, no depth."
+  (this is condescending, avoid it)
+"""
+
+        # FIX 6 — inject guild context so the AI can answer questions like
+        # "how many servers are you in" naturally without triggering commands
+        guild_context = (
+            f"\n\nCurrent context: you are in {len(self.bot.guilds)} servers total. "
+            f"Currently in server: {guild.name if guild else 'DM'}. "
+            f"Talking to: {author_name or 'someone'}."
+        )
+        system_prompt += guild_context
 
         if user_id not in self.conversation_history:
             self.conversation_history[user_id] = []
@@ -123,14 +213,77 @@ RESPONSE RULES:
             print(f"Narrate error: {e}")
             return fallback
 
-    async def _safe_reply(self, message, content=None, embed=None, mention_author=False, **kwargs):
+    async def _safe_reply(self, message, content=None, embed=None,
+                          mention_author=False, view=None, **kwargs):
         try:
-            await message.reply(content=content, embed=embed, mention_author=mention_author, **kwargs)
+            await message.reply(content=content, embed=embed,
+                                mention_author=mention_author, view=view, **kwargs)
         except (discord.NotFound, discord.HTTPException):
             try:
-                await message.channel.send(content=content, embed=embed)
+                await message.channel.send(content=content, embed=embed, view=view)
             except Exception:
                 pass
+
+    # FIX 4 — AI moderation permission system.
+    # - Bot owner (OWNER_ID): can do everything everywhere
+    # - Server owner: can do all moderation in their server
+    # - Users with the configured admin role: can do all moderation
+    # - Users with Discord mod permissions: can do those specific actions
+    def load_settings(self, guild_id: int) -> dict:
+        try:
+            with open("data/settings.json", "r") as f:
+                all_settings = _json.load(f)
+        except (FileNotFoundError, _json.JSONDecodeError):
+            all_settings = {}
+        return all_settings.get(str(guild_id), {})
+
+    def save_settings(self, guild_id: int, settings: dict) -> None:
+        try:
+            with open("data/settings.json", "r") as f:
+                all_settings = _json.load(f)
+        except (FileNotFoundError, _json.JSONDecodeError):
+            all_settings = {}
+        all_settings[str(guild_id)] = settings
+        try:
+            with open("data/settings.json", "w") as f:
+                _json.dump(all_settings, f, indent=2)
+        except Exception as e:
+            print(f"[settings] failed to save: {e}")
+
+    def check_mod_permission(self, message, required_perm: str = None) -> bool:
+        owner_id = int(os.getenv("OWNER_ID", "0"))
+        member = message.author
+        guild = message.guild
+
+        # Bot owner: always allowed
+        if member.id == owner_id:
+            return True
+
+        # Server owner: always allowed in their server
+        if guild and member.id == guild.owner_id:
+            return True
+
+        # Check admin role from settings
+        settings = self.load_settings(guild.id) if guild else {}
+        admin_role_id = settings.get("admin_role_id")
+        if admin_role_id:
+            if any(r.id == admin_role_id for r in member.roles):
+                return True
+
+        # Check Discord permissions for specific actions
+        if required_perm and guild:
+            if required_perm == "ban" and member.guild_permissions.ban_members:
+                return True
+            if required_perm == "kick" and member.guild_permissions.kick_members:
+                return True
+            if required_perm == "warn" and member.guild_permissions.moderate_members:
+                return True
+            if required_perm == "timeout" and member.guild_permissions.moderate_members:
+                return True
+            if required_perm == "purge" and member.guild_permissions.manage_messages:
+                return True
+
+        return False
 
     async def _execute_intent(self, message, intent_data: dict) -> bool:
         intent = intent_data.get('intent', 'chat')
@@ -146,7 +299,10 @@ RESPONSE RULES:
         def resolve_user(key='user_id'):
             uid = params.get(key)
             if uid and guild:
-                return guild.get_member(int(uid))
+                try:
+                    return guild.get_member(int(uid))
+                except (TypeError, ValueError):
+                    return None
             if message.mentions:
                 return message.mentions[0]
             return None
@@ -158,69 +314,234 @@ RESPONSE RULES:
                 await self._safe_reply(message, "not letting you do that.")
                 return True
 
+            # FIX 2 — Require @mention for ALL moderation intents that target a user.
+            # This prevents "warn diva" from warning the wrong target.
+            if intent in ("ban", "kick", "warn", "mute", "timeout"):
+                if not message.mentions:
+                    await self._safe_reply(
+                        message,
+                        "mention who you want me to action. like @username"
+                    )
+                    return True
+                target = message.mentions[0]
+                if target.id == self.bot.user.id:
+                    await self._safe_reply(message, "not doing that to myself.")
+                    return True
+
+            # ---- ban ----
             if intent == 'ban':
-                if not author.guild_permissions.ban_members:
+                # FIX 4 — permission check (bot owner / server owner / admin role / ban perm)
+                if not self.check_mod_permission(message, required_perm="ban"):
                     await self._safe_reply(message, "you don't have permission to do that")
                     return True
-                target = resolve_user()
-                if not target:
-                    await self._safe_reply(message, "who do you want me to ban? mention them.")
-                    return True
-                reason = params.get('reason', 'No reason')
-                await target.ban(reason=reason)
-                await self._safe_reply(message, f"banned **{target}** — {reason}")
+                reason = params.get('reason') or 'No reason'
+                # FIX 5 — confirmation view
+                embed = discord.Embed(
+                    title="⚠️ Confirm Moderation Action",
+                    color=0xfee75c
+                )
+                embed.add_field(name="Action", value="Ban")
+                embed.add_field(name="Target", value=target.mention)
+                embed.add_field(name="Reason", value=reason, inline=False)
+                embed.set_footer(text=f"requested by {author.display_name}")
+
+                async def do_ban():
+                    try:
+                        await target.ban(reason=reason)
+                        await self._safe_reply(message, f"banned **{target}** — {reason}")
+                    except discord.Forbidden:
+                        await self._safe_reply(message, "i don't have permission to ban them.")
+                    except Exception as e:
+                        await self._safe_reply(message, f"couldn't ban: {e}")
+
+                view = ModConfirmView(
+                    action="ban", target=target, reason=reason,
+                    executor_func=do_ban, requester_id=author.id,
+                    requester_name=author.display_name
+                )
+                await self._safe_reply(message, embed=embed, view=view)
                 return True
 
+            # ---- kick ----
             if intent == 'kick':
-                if not author.guild_permissions.kick_members:
+                if not self.check_mod_permission(message, required_perm="kick"):
                     await self._safe_reply(message, "you don't have permission to do that")
                     return True
-                target = resolve_user()
-                if not target:
-                    await self._safe_reply(message, "who do you want me to kick? mention them.")
-                    return True
-                reason = params.get('reason', 'No reason')
-                await target.kick(reason=reason)
-                await self._safe_reply(message, f"kicked **{target}** — {reason}")
+                reason = params.get('reason') or 'No reason'
+                embed = discord.Embed(
+                    title="⚠️ Confirm Moderation Action",
+                    color=0xfee75c
+                )
+                embed.add_field(name="Action", value="Kick")
+                embed.add_field(name="Target", value=target.mention)
+                embed.add_field(name="Reason", value=reason, inline=False)
+                embed.set_footer(text=f"requested by {author.display_name}")
+
+                async def do_kick():
+                    try:
+                        await target.kick(reason=reason)
+                        await self._safe_reply(message, f"kicked **{target}** — {reason}")
+                    except discord.Forbidden:
+                        await self._safe_reply(message, "i don't have permission to kick them.")
+                    except Exception as e:
+                        await self._safe_reply(message, f"couldn't kick: {e}")
+
+                view = ModConfirmView(
+                    action="kick", target=target, reason=reason,
+                    executor_func=do_kick, requester_id=author.id,
+                    requester_name=author.display_name
+                )
+                await self._safe_reply(message, embed=embed, view=view)
                 return True
 
-            if intent == 'mute':
-                if not author.guild_permissions.moderate_members:
+            # ---- mute / timeout ----
+            if intent in ('mute', 'timeout'):
+                if not self.check_mod_permission(message, required_perm="timeout"):
                     await self._safe_reply(message, "you don't have permission to do that")
-                    return True
-                target = resolve_user()
-                if not target:
-                    await self._safe_reply(message, "who do you want me to mute? mention them.")
                     return True
                 seconds = params.get('duration_seconds') or 600
                 if seconds > 2419200:
                     seconds = 2419200
-                reason = params.get('reason', 'No reason')
-                await target.timeout(timedelta(seconds=seconds), reason=reason)
-                await self._safe_reply(message, f"muted **{target}** for {seconds}s — {reason}")
+                reason = params.get('reason') or 'No reason'
+                embed = discord.Embed(
+                    title="⚠️ Confirm Moderation Action",
+                    color=0xfee75c
+                )
+                embed.add_field(name="Action", value="Timeout")
+                embed.add_field(name="Target", value=target.mention)
+                embed.add_field(name="Duration", value=f"{seconds}s")
+                embed.add_field(name="Reason", value=reason, inline=False)
+                embed.set_footer(text=f"requested by {author.display_name}")
+
+                async def do_timeout():
+                    try:
+                        await target.timeout(timedelta(seconds=seconds), reason=reason)
+                        await self._safe_reply(message, f"muted **{target}** for {seconds}s — {reason}")
+                    except discord.Forbidden:
+                        await self._safe_reply(message, "i don't have permission to timeout them.")
+                    except Exception as e:
+                        await self._safe_reply(message, f"couldn't timeout: {e}")
+
+                view = ModConfirmView(
+                    action="timeout", target=target, reason=reason,
+                    executor_func=do_timeout, requester_id=author.id,
+                    requester_name=author.display_name
+                )
+                await self._safe_reply(message, embed=embed, view=view)
                 return True
 
+            # ---- purge ----
             if intent == 'purge':
-                if not author.guild_permissions.manage_messages:
+                if not self.check_mod_permission(message, required_perm="purge"):
                     await self._safe_reply(message, "you don't have permission to do that")
                     return True
                 amount = params.get('amount') or 5
                 if amount < 1 or amount > 100:
                     amount = max(1, min(100, amount))
-                deleted = await channel.purge(limit=amount)
-                await self._safe_reply(message, f"deleted {len(deleted)} messages")
+                embed = discord.Embed(
+                    title="⚠️ Confirm Moderation Action",
+                    color=0xfee75c
+                )
+                embed.add_field(name="Action", value="Purge")
+                embed.add_field(name="Amount", value=f"{amount} messages")
+                embed.add_field(name="Channel", value=channel.mention, inline=False)
+                embed.set_footer(text=f"requested by {author.display_name}")
+
+                async def do_purge():
+                    try:
+                        deleted = await channel.purge(limit=amount)
+                        await self._safe_reply(message, f"deleted {len(deleted)} messages")
+                    except discord.Forbidden:
+                        await self._safe_reply(message, "i don't have permission to purge here.")
+                    except Exception as e:
+                        await self._safe_reply(message, f"couldn't purge: {e}")
+
+                view = ModConfirmView(
+                    action="purge", target=None, reason="",
+                    executor_func=do_purge, requester_id=author.id,
+                    requester_name=author.display_name,
+                    channel_name=channel.name, amount=amount
+                )
+                await self._safe_reply(message, embed=embed, view=view)
                 return True
 
+            # ---- warn ----
             if intent == 'warn':
-                if not author.guild_permissions.moderate_members:
+                if not self.check_mod_permission(message, required_perm="warn"):
                     await self._safe_reply(message, "you don't have permission to do that")
                     return True
-                target = resolve_user()
-                if not target:
-                    await self._safe_reply(message, "who do you want me to warn? mention them.")
+                reason = params.get('reason') or 'No reason'
+                embed = discord.Embed(
+                    title="⚠️ Confirm Moderation Action",
+                    color=0xfee75c
+                )
+                embed.add_field(name="Action", value="Warn")
+                embed.add_field(name="Target", value=target.mention)
+                embed.add_field(name="Reason", value=reason, inline=False)
+                embed.set_footer(text=f"requested by {author.display_name}")
+
+                async def do_warn():
+                    try:
+                        mod_cog = self.bot.get_cog("Moderation")
+                        if mod_cog and hasattr(mod_cog, "add_warning"):
+                            await mod_cog.add_warning(guild, target, author, reason)
+                        await self._safe_reply(message, f"⚠️ **{target}** has been warned: {reason}")
+                    except Exception as e:
+                        await self._safe_reply(message, f"couldn't warn: {e}")
+
+                view = ModConfirmView(
+                    action="warn", target=target, reason=reason,
+                    executor_func=do_warn, requester_id=author.id,
+                    requester_name=author.display_name
+                )
+                await self._safe_reply(message, embed=embed, view=view)
+                return True
+
+            # ---- delete_message (FIX 3) ----
+            if intent == 'delete_message':
+                # Only owner or users with manage_messages can do this
+                if not is_owner and not self.check_mod_permission(message, required_perm="purge"):
+                    await self._safe_reply(message, "nice try.")
                     return True
-                reason = params.get('reason', 'No reason')
-                await self._safe_reply(message, f"⚠️ **{target}** has been warned: {reason}")
+
+                msg_id = params.get('message_id')
+
+                if msg_id:
+                    try:
+                        msg_to_delete = await message.channel.fetch_message(int(msg_id))
+                        await msg_to_delete.delete()
+                        await self._safe_reply(
+                            message,
+                            "deleted, volc." if is_owner else "done."
+                        )
+                    except discord.NotFound:
+                        await self._safe_reply(message, "message not found.")
+                    except discord.Forbidden:
+                        await self._safe_reply(message, "i don't have permission to delete that.")
+                    except (TypeError, ValueError):
+                        await self._safe_reply(message, "that message ID doesn't look right.")
+                    except Exception as e:
+                        await self._safe_reply(message, f"couldn't delete it: {e}")
+                else:
+                    # Try to delete the message the user is replying to
+                    if message.reference:
+                        try:
+                            ref_msg = await message.channel.fetch_message(
+                                message.reference.message_id
+                            )
+                            await ref_msg.delete()
+                            await self._safe_reply(message, "done.")
+                        except discord.NotFound:
+                            await self._safe_reply(message, "that message is gone.")
+                        except discord.Forbidden:
+                            await self._safe_reply(message, "i don't have permission to delete that.")
+                        except Exception:
+                            await self._safe_reply(message, "couldn't delete it.")
+                    else:
+                        await self._safe_reply(
+                            message,
+                            "which message? reply to it or give me the message ID."
+                        )
                 return True
 
             if intent == 'balance':
@@ -665,7 +986,10 @@ RESPONSE RULES:
                     return
 
             async with message.channel.typing():
-                response = await self.get_ai_response(message.author.id, content, is_owner=is_owner_msg)
+                response = await self.get_ai_response(
+                    message.author.id, content, is_owner=is_owner_msg,
+                    guild=message.guild, author_name=message.author.display_name
+                )
 
             try:
                 await message.reply(response, mention_author=False)
@@ -684,6 +1008,46 @@ RESPONSE RULES:
             except:
                 pass
 
+    # FIX 4 — /adminrole commands so server owners can grant AI moderation
+    # access to a configured role (e.g. "Harry's server mods").
+    @app_commands.command(name="adminrole",
+                          description="Set the role that can use AI moderation")
+    @app_commands.describe(role="The admin role")
+    @app_commands.checks.cooldown(1, 5.0, key=lambda i: i.user.id)
+    async def set_admin_role(self, interaction: discord.Interaction,
+                             role: discord.Role):
+        self.bot.increment_command('adminrole')
+        await interaction.response.defer(ephemeral=True)
+        # Only server owner or bot owner can set this
+        owner_id = int(os.getenv("OWNER_ID", "0"))
+        if (interaction.user.id != interaction.guild.owner_id and
+                interaction.user.id != owner_id):
+            await interaction.followup.send("only the server owner can set this.")
+            return
+        settings = self.load_settings(interaction.guild_id)
+        settings["admin_role_id"] = role.id
+        self.save_settings(interaction.guild_id, settings)
+        await interaction.followup.send(
+            f"admin role set to {role.mention}. "
+            f"members with this role can use AI moderation."
+        )
+
+    @app_commands.command(name="adminrole_remove",
+                          description="Remove the AI moderation role")
+    @app_commands.checks.cooldown(1, 5.0, key=lambda i: i.user.id)
+    async def remove_admin_role(self, interaction: discord.Interaction):
+        self.bot.increment_command('adminrole_remove')
+        await interaction.response.defer(ephemeral=True)
+        owner_id = int(os.getenv("OWNER_ID", "0"))
+        if (interaction.user.id != interaction.guild.owner_id and
+                interaction.user.id != owner_id):
+            await interaction.followup.send("only the server owner can do this.")
+            return
+        settings = self.load_settings(interaction.guild_id)
+        settings["admin_role_id"] = None
+        self.save_settings(interaction.guild_id, settings)
+        await interaction.followup.send("admin role removed.")
+
     @app_commands.command(name="chat", description="Talk to cyn")
     @app_commands.checks.cooldown(1, 5.0, key=lambda i: i.user.id)
     async def chat(self, interaction: discord.Interaction, message: str):
@@ -691,34 +1055,11 @@ RESPONSE RULES:
         await interaction.response.defer()
         self.update_rate_limit(interaction.user.id)
         is_owner_msg = interaction.user.id == OWNER_ID
-        response = await self.get_ai_response(interaction.user.id, message, is_owner=is_owner_msg)
+        response = await self.get_ai_response(
+            interaction.user.id, message, is_owner=is_owner_msg,
+            guild=interaction.guild, author_name=interaction.user.display_name
+        )
         await interaction.followup.send(response)
-
-    @app_commands.command(name="ask", description="Ask cyn anything")
-    @app_commands.checks.cooldown(1, 5.0, key=lambda i: i.user.id)
-    async def ask(self, interaction: discord.Interaction, question: str):
-        self.bot.increment_command('ask')
-        await interaction.response.defer()
-        self.update_rate_limit(interaction.user.id)
-        answer = await call_ai([
-            {"role": "system", "content": "answer clearly and simply. no big words. max 2 sentences. be direct."},
-            {"role": "user", "content": question}
-        ], max_tokens=250, temperature=0.4)
-        await interaction.followup.send(f"**Q:** {question}\n**A:** {answer}")
-
-    @app_commands.command(name="roast", description="Get a savage roast")
-    @app_commands.checks.cooldown(1, 10.0, key=lambda i: i.user.id)
-    async def roast(self, interaction: discord.Interaction, user: discord.Member = None):
-        self.bot.increment_command('roast')
-        await interaction.response.defer()
-        target = user or interaction.user
-        roast_text = await call_ai_fast([
-            {"role": "system", "content": f"Roast {target.display_name} in 1-2 sentences. Funny, savage, not hateful. Lowercase. No emojis."},
-            {"role": "user", "content": target.display_name}
-        ])
-        if not roast_text or "something broke" in roast_text:
-            roast_text = f"{target.mention} you're the human equivalent of a loading screen."
-        await interaction.followup.send(f"{roast_text}\n*don't take it personally. or do.*")
 
     @app_commands.command(name="cyn", description="Talk to cyn or run commands naturally")
     @app_commands.describe(message="What do you want to say or do")
@@ -750,7 +1091,10 @@ RESPONSE RULES:
                 return
 
         is_owner_msg = interaction.user.id == OWNER_ID
-        response = await self.get_ai_response(interaction.user.id, message, is_owner=is_owner_msg)
+        response = await self.get_ai_response(
+            interaction.user.id, message, is_owner=is_owner_msg,
+            guild=interaction.guild, author_name=interaction.user.display_name
+        )
         await interaction.followup.send(response)
 
     def cog_unload(self):

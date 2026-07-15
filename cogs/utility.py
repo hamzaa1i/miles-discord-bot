@@ -1,10 +1,10 @@
 """
 cogs/utility.py — general utility commands (trimmed).
 
-Kept: /math, /password, /snipe, /urban, /announce
-Removed (to stay under Discord's 100-command limit): /weather (moved to
-weather.py), /encode, /decode, /timestamp, /editsnipe, /color, /qr,
-/pin, /unpin.
+Kept: /math, /snipe, /afk
+Removed (to stay under Discord's 100-command limit): /password, /announce,
+/weather (moved to weather.py), /encode, /decode, /timestamp, /editsnipe,
+/color, /qr, /pin, /unpin.
 
 Snipe cache: module-level dict storing up to 5 most recent deleted
 messages per channel.
@@ -14,12 +14,9 @@ from discord.ext import commands
 from discord import app_commands
 import ast
 import math
-import secrets
-import string
 import aiohttp
 from datetime import datetime
 from utils.constants import COLOR_INFO, COLOR_ERROR
-from utils.checks import is_mod
 
 
 # ==================== Safe math evaluator ====================
@@ -131,22 +128,6 @@ class Utility(commands.Cog):
             except discord.InteractionResponded:
                 await interaction.followup.send(f"couldn't evaluate: `{e}`", ephemeral=True)
 
-    @app_commands.command(name="password", description="Generate a random secure password")
-    async def password(self, interaction: discord.Interaction, length: int = 16):
-        self.bot.increment_command('password')
-        if length < 4 or length > 128:
-            try:
-                await interaction.response.send_message("length must be 4-128.", ephemeral=True)
-            except discord.InteractionResponded:
-                pass
-            return
-        alphabet = string.ascii_letters + string.digits + "!@#$%^&*()_+-=[]{}|;:,.<>?"
-        pw = ''.join(secrets.choice(alphabet) for _ in range(length))
-        try:
-            await interaction.response.send_message(f"🔐 your password:\n```\n{pw}\n```", ephemeral=True)
-        except discord.InteractionResponded:
-            await interaction.followup.send(f"🔐 your password:\n```\n{pw}\n```", ephemeral=True)
-
     @app_commands.command(name="snipe", description="Show the nth most recent deleted message (1=most recent)")
     async def snipe(self, interaction: discord.Interaction, index: int = 1):
         self.bot.increment_command('snipe')
@@ -183,43 +164,6 @@ class Utility(commands.Cog):
         except discord.InteractionResponded:
             await interaction.followup.send(embed=embed)
 
-
-    @app_commands.command(name="announce", description="Send an announcement embed to a channel")
-    @is_mod()
-    async def announce(
-        self,
-        interaction: discord.Interaction,
-        channel: discord.TextChannel,
-        title: str,
-        message: str
-    ):
-        self.bot.increment_command('announce')
-        embed = discord.Embed(
-            title=title,
-            description=message,
-            color=COLOR_INFO,
-            timestamp=datetime.utcnow()
-        )
-        embed.set_footer(text=f"Announced by {interaction.user} • {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}")
-        try:
-            await channel.send(embed=embed)
-            try:
-                await interaction.response.send_message(
-                    f"✅ announcement sent to {channel.mention}.", ephemeral=True
-                )
-            except discord.InteractionResponded:
-                await interaction.followup.send(
-                    f"✅ announcement sent to {channel.mention}.", ephemeral=True
-                )
-        except discord.Forbidden:
-            try:
-                await interaction.response.send_message(
-                    "i don't have permission to send to that channel.", ephemeral=True
-                )
-            except discord.InteractionResponded:
-                await interaction.followup.send(
-                    "i don't have permission to send to that channel.", ephemeral=True
-                )
 
 
 

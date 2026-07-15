@@ -318,7 +318,7 @@ class ServerStats(commands.Cog):
         embed.set_footer(text=f"ID: {user.id}")
 
         view = WhoisView(user)
-        await interaction.response.send_message(embed=embed, view=view)
+        await interaction.followup.send(embed=embed, view=view)
 
 
 
@@ -345,30 +345,6 @@ class ServerStats(commands.Cog):
             embed.add_field(name="Download", value=links)
 
         await interaction.followup.send(embed=embed)
-
-    @app_commands.command(name="membercount", description="Member count breakdown")
-    async def membercount(self, interaction: discord.Interaction):
-        await interaction.response.defer()
-        guild = interaction.guild
-        total = guild.member_count
-        humans = sum(1 for m in guild.members if not m.bot)
-        bots = sum(1 for m in guild.members if m.bot)
-        online = sum(1 for m in guild.members if m.status != discord.Status.offline and not m.bot)
-
-        embed = discord.Embed(
-            title=f"{guild.name} — Members",
-            color=0x1a1a2e
-        )
-        embed.add_field(name="Total", value=f"{total:,}", inline=True)
-        embed.add_field(name="Humans", value=f"{humans:,}", inline=True)
-        embed.add_field(name="Bots", value=f"{bots:,}", inline=True)
-        embed.add_field(name="Online", value=f"{online:,}", inline=True)
-        embed.add_field(name="Offline", value=f"{humans - online:,}", inline=True)
-
-        if guild.icon:
-            embed.set_thumbnail(url=guild.icon.url)
-
-        await interaction.response.send_message(embed=embed)
 
 
 

@@ -17,14 +17,14 @@ CATEGORIES = {
             ("@cyn <message>", "Chat naturally with cyn via mention"),
             ("/cyn <message>", "Slash alternative to @mention"),
             ("/chat <message>", "Slash-command AI conversation"),
-            ("/ask <question>", "Ask cyn anything"),
-            ("/roast [user]", "AI-generated savage roast"),
             ("/summarize <text>", "Summarize text in 3-5 bullets"),
             ("/translate <language> <text>", "Translate text to a language"),
             ("/explain <topic>", "Explain a topic like you're 12"),
             ("/advice <situation>", "Blunt, sarcastic advice"),
             ("/roast_server", "AI roasts the current server"),
             ("/code <language> <description>", "Generate a code snippet"),
+            ("@cyn warn/ban/kick @user", "AI moderation with confirmation"),
+            ("@cyn delete message: <id>", "Delete a message by ID or reply"),
         ],
     },
     "fun": {
@@ -110,10 +110,8 @@ CATEGORIES = {
         "commands": [
             ("/weather <city>", "Current weather for a city"),
             ("/math <expression>", "Safely evaluate a math expression"),
-            ("/password [length=16]", "Generate a secure password"),
             ("/snipe [index=1]", "Show nth most recent deleted message"),
             ("/afk [reason]", "Set your AFK status"),
-            ("/announce <channel> <title> <msg>", "Send announcement embed (mod)"),
         ],
     },
     "community": {
@@ -142,7 +140,7 @@ CATEGORIES = {
     "settings": {
         "emoji": "⚙️",
         "name": "Settings",
-        "desc": "Logging, reaction roles, auto-responder, starboard, welcome",
+        "desc": "Logging, reaction roles, auto-responder, starboard, welcome, AI mod role",
         "color": COLOR_DEFAULT,
         "commands": [
             ("/setlog #channel", "Set the logging channel"),
@@ -165,6 +163,8 @@ CATEGORIES = {
             ("/goodbye channel #channel", "Set goodbye channel"),
             ("/goodbye message [text]", "Set goodbye message"),
             ("/goodbye toggle", "Enable/disable goodbye messages"),
+            ("/adminrole <role>", "Set the AI moderation role (server owner only)"),
+            ("/adminrole_remove", "Remove the AI moderation role"),
         ],
     },
     "info": {
@@ -179,7 +179,6 @@ CATEGORIES = {
             ("/serverinfo", "Server information"),
             ("/whois [user]", "User information"),
             ("/avatar [user]", "Show user avatar"),
-            ("/membercount", "Member count breakdown"),
         ],
     },
 }

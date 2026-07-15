@@ -105,6 +105,8 @@ DEFAULT_DATA_FILES = [
     "automod.json", "modmail.json", "custom_embeds.json",
     "poll.json", "suggestion.json", "marriage.json",
     "reputation_db.json", "trivia.json",
+    # FIX 4 — per-guild AI moderation role settings
+    "settings.json",
 ]
 
 
