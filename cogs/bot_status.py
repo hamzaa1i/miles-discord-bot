@@ -1,14 +1,20 @@
 """
 cogs/bot_status.py — automatic status rotation + manual /status commands.
 
-The status cycles automatically every 5 minutes through 8 statuses,
+The status cycles automatically every 5 minutes through 10 statuses,
 each using the CORRECT discord.ActivityType so Discord shows
 "Listening to", "Playing", "Watching", "Competing" properly.
 
-Commands (all owner-only except /status current):
+FIX 3 — Added discord.Status.online to every change_presence call so
+the bot always shows as online (green dot). Discord only shows activity
+text in the full profile popup for bot accounts — this is a Discord-side
+display decision, not an API issue. Added /status info to explain this.
+
+Commands:
   /status set [type] [text]  — set a custom pinned status (stops rotation)
   /status reset              — clear custom status, resume rotation
   /status current            — show current status (anyone can use)
+  /status info               — explain how Discord displays bot status (anyone)
 
 Data stored in data/bot_status.json:
   {"custom": null}  or  {"custom": {"type": "listening", "text": "..."}}
@@ -24,15 +30,18 @@ class BotStatus(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.custom_status = None  # None = auto-rotate; dict = custom pinned
+        # FIX 3B — More varied and interesting status rotation list (10 statuses)
         self.status_list = [
             (discord.ActivityType.listening, "@cyn"),
             (discord.ActivityType.playing, "with {users} users"),
             (discord.ActivityType.watching, "{servers} servers"),
-            (discord.ActivityType.competing, "being the best bot"),
+            (discord.ActivityType.competing, "being cyn"),
             (discord.ActivityType.listening, "your problems"),
+            (discord.ActivityType.watching, "you type"),
             (discord.ActivityType.playing, "with fire"),
-            (discord.ActivityType.watching, "you sleep"),
-            (discord.ActivityType.competing, "to annoy volc"),
+            (discord.ActivityType.listening, "the void"),
+            (discord.ActivityType.competing, "with herself"),
+            (discord.ActivityType.watching, "the chaos unfold"),
         ]
         self.status_index = 0
         # Load custom status from file if set
@@ -75,8 +84,12 @@ class BotStatus(commands.Cog):
             text = text.replace("{users}", str(user_count))
             text = text.replace("{servers}", str(server_count))
 
+            # FIX 3A — Always set status=online so the green dot shows
             activity = discord.Activity(type=activity_type, name=text)
-            await self.bot.change_presence(activity=activity)
+            await self.bot.change_presence(
+                status=discord.Status.online,
+                activity=activity
+            )
 
             self.status_index = (self.status_index + 1) % len(self.status_list)
         except Exception as e:
@@ -132,9 +145,13 @@ class BotStatus(commands.Cog):
         self.custom_status = {"type": status_type.value, "text": text}
         self._save_custom_status()
 
+        # FIX 3A — Always set status=online
         activity = discord.Activity(type=activity_type, name=display_text)
         try:
-            await self.bot.change_presence(activity=activity)
+            await self.bot.change_presence(
+                status=discord.Status.online,
+                activity=activity
+            )
         except Exception as e:
             await interaction.followup.send(f"failed to set status: `{e}`", ephemeral=True)
             return
@@ -173,8 +190,12 @@ class BotStatus(commands.Cog):
             user_count = sum(g.member_count for g in self.bot.guilds)
             server_count = len(self.bot.guilds)
             text = text.replace("{users}", str(user_count)).replace("{servers}", str(server_count))
+            # FIX 3A — Always set status=online
             activity = discord.Activity(type=activity_type, name=text)
-            await self.bot.change_presence(activity=activity)
+            await self.bot.change_presence(
+                status=discord.Status.online,
+                activity=activity
+            )
             self.status_index = (self.status_index + 1) % len(self.status_list)
         except Exception:
             pass
@@ -193,7 +214,6 @@ class BotStatus(commands.Cog):
         activity = self.bot.guilds[0].me.activity if self.bot.guilds else None
         if not activity:
             try:
-                # Fallback: use the bot's own activity
                 activity = self.bot.activity
             except Exception:
                 activity = None
@@ -225,6 +245,107 @@ class BotStatus(commands.Cog):
                 inline=False
             )
             embed.set_footer(text="use /status set to pin a custom status")
+
+        # FIX 3D — Add note about Discord display behavior
+        embed.add_field(
+            name="ℹ️ Display Note",
+            value=(
+                "Discord only shows activity text in the full profile popup — "
+                "click my avatar to see it."
+            ),
+            inline=False
+        )
+
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
+    # FIX 3C — /status info: explains how Discord displays bot statuses
+    @status.command(name="info",
+                    description="Learn how Discord displays bot status (anyone)")
+    async def status_info(self, interaction: discord.Interaction):
+        self.bot.increment_command('status_info')
+        await interaction.response.defer(ephemeral=True)
+
+        # Get current status info
+        activity = self.bot.guilds[0].me.activity if self.bot.guilds else None
+        if not activity:
+            try:
+                activity = self.bot.activity
+            except Exception:
+                activity = None
+
+        embed = discord.Embed(
+            title="📊 Bot Status Info",
+            color=0x1a1a2e,
+            timestamp=discord.utils.utcnow()
+        )
+
+        if self.custom_status:
+            embed.add_field(
+                name="Current Mode",
+                value="custom (pinned)",
+                inline=False
+            )
+            embed.add_field(
+                name="Status Type",
+                value=self.custom_status.get("type", "unknown"),
+                inline=True
+            )
+            embed.add_field(
+                name="Status Text",
+                value=f"`{self.custom_status.get('text', 'unknown')}`",
+                inline=True
+            )
+        else:
+            embed.add_field(
+                name="Current Mode",
+                value="auto-rotating (changes every 5 min)",
+                inline=False
+            )
+            if activity:
+                type_name = str(activity.type).replace("ActivityType.", "").title()
+                embed.add_field(
+                    name="Current Type",
+                    value=type_name,
+                    inline=True
+                )
+                embed.add_field(
+                    name="Current Text",
+                    value=f"`{activity.name}`",
+                    inline=True
+                )
+
+        # Calculate approximate next rotation time
+        import time as _time
+        # The rotate_status task runs every 5 minutes (300s).
+        # We can approximate the next rotation based on the current_loop count.
+        try:
+            loops = self.rotate_status.current_loop
+            next_in = 5  # approximate: up to 5 minutes
+            embed.add_field(
+                name="Next Rotation",
+                value=f"approximately {next_in} minutes",
+                inline=True
+            )
+        except Exception:
+            embed.add_field(
+                name="Next Rotation",
+                value="within 5 minutes",
+                inline=True
+            )
+
+        embed.add_field(
+            name="📝 How to See My Status",
+            value=(
+                "Discord changed how bot statuses are displayed. The activity text "
+                "('Playing', 'Watching', 'Listening to', 'Competing') **only shows "
+                "in the full profile popup** — click my avatar to see it.\n\n"
+                "It does NOT show in the member list sidebar or hover card anymore "
+                "for bot accounts. This is a Discord client-side change, not a bug."
+            ),
+            inline=False
+        )
+
+        embed.set_footer(text="cyn • /status info")
 
         await interaction.followup.send(embed=embed, ephemeral=True)
 

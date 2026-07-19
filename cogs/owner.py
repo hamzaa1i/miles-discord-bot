@@ -13,13 +13,15 @@ Commands:
   /owner shutdown     — shut down the bot gracefully
   /owner eval [code]  — execute Python code and return result
   /owner dm [user_id] [message] — send a DM to any user by ID
-  /owner announce [message]     — send a message to the first text channel of every server
+  /owner announce [message] [channel(optional)] [embed(optional)] — send an announcement
   /owner createrole [name] [color] [admin] — create a role
   /owner giverole [role] [member] — give a role to a member
   /owner removerole [role] [member] — remove a role from a member
-  /owner allroles [member] — give all assignable roles to a member
   /owner servers — list all servers the bot is in
   /owner say [message] [channel] — send a message as the bot
+  /owner leave [guild_id] — leave a server by ID (with confirmation)
+  /owner personality [note] — set server personality note
+  /owner personality_clear — clear server personality note
 """
 import discord
 from discord.ext import commands
@@ -34,6 +36,49 @@ import contextlib
 
 
 OWNER_ID = int(os.getenv('OWNER_ID', '0'))
+
+
+# FIX 4 — Confirmation view for /owner leave
+class LeaveConfirmView(discord.ui.View):
+    def __init__(self, owner_id: int, timeout: int = 30):
+        super().__init__(timeout=timeout)
+        self.owner_id = owner_id
+        self.confirmed = False
+
+    @discord.ui.button(label="Confirm Leave", style=discord.ButtonStyle.danger)
+    async def confirm(self, interaction: discord.Interaction,
+                      button: discord.ui.Button):
+        if interaction.user.id != self.owner_id:
+            await interaction.response.send_message(
+                "not your command.", ephemeral=True
+            )
+            return
+        self.confirmed = True
+        for item in self.children:
+            item.disabled = True
+        await interaction.response.edit_message(
+            content="leaving server...", view=self
+        )
+        self.stop()
+
+    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary)
+    async def cancel(self, interaction: discord.Interaction,
+                     button: discord.ui.Button):
+        if interaction.user.id != self.owner_id:
+            await interaction.response.send_message(
+                "not your command.", ephemeral=True
+            )
+            return
+        for item in self.children:
+            item.disabled = True
+        await interaction.response.edit_message(
+            content="cancelled.", view=self
+        )
+        self.stop()
+
+    async def on_timeout(self):
+        for item in self.children:
+            item.disabled = True
 
 
 class Owner(commands.Cog):
@@ -251,36 +296,78 @@ class Owner(commands.Cog):
         except Exception as e:
             await interaction.followup.send(f"failed: `{e}`", ephemeral=True)
 
-    @owner.command(name="announce", description="Send a message to the first text channel of every server (owner only)")
-    @app_commands.describe(message="The announcement to send")
-    async def owner_announce(self, interaction: discord.Interaction, message: str):
+    @owner.command(name="announce",
+                   description="Send an announcement to a channel or all servers (owner only)")
+    @app_commands.describe(
+        message="The announcement to send",
+        channel="Specific channel to send to (if omitted, sends to all servers)",
+        embed="Send as an embed (default: yes)"
+    )
+    async def owner_announce(
+        self,
+        interaction: discord.Interaction,
+        message: str,
+        channel: discord.TextChannel = None,
+        embed: bool = True
+    ):
         self.bot.increment_command('owner_announce')
         await interaction.response.defer(ephemeral=True)
         if not self._check_owner(interaction):
             await interaction.followup.send("not your command.", ephemeral=True)
             return
 
+        # If a specific channel is provided, send only to that channel
+        if channel:
+            try:
+                if embed:
+                    announce_embed = discord.Embed(
+                        title="📢 Announcement",
+                        description=message,
+                        color=0xfee75c,
+                        timestamp=datetime.now(timezone.utc)
+                    )
+                    announce_embed.set_footer(text="cyn • bot owner announcement")
+                    await channel.send(embed=announce_embed)
+                else:
+                    await channel.send(message)
+                await interaction.followup.send(
+                    f"✅ sent to {channel.mention}",
+                    ephemeral=True
+                )
+            except discord.Forbidden:
+                await interaction.followup.send(
+                    "can't send to that channel.",
+                    ephemeral=True
+                )
+            except Exception as e:
+                await interaction.followup.send(f"failed: `{e}`", ephemeral=True)
+            return
+
+        # No channel provided: send to the first text channel of every server
         success = 0
         fail = 0
         for guild in self.bot.guilds:
             try:
                 # Find the first text channel where we can send
-                channel = None
+                target = None
                 for ch in guild.text_channels:
                     if ch.permissions_for(guild.me).send_messages:
-                        channel = ch
+                        target = ch
                         break
-                if not channel:
+                if not target:
                     fail += 1
                     continue
-                embed = discord.Embed(
-                    title="📢 Announcement",
-                    description=message,
-                    color=0xfee75c,
-                    timestamp=datetime.now(timezone.utc)
-                )
-                embed.set_footer(text=f"cyn • bot owner announcement")
-                await channel.send(embed=embed)
+                if embed:
+                    announce_embed = discord.Embed(
+                        title="📢 Announcement",
+                        description=message,
+                        color=0xfee75c,
+                        timestamp=datetime.now(timezone.utc)
+                    )
+                    announce_embed.set_footer(text="cyn • bot owner announcement")
+                    await target.send(embed=announce_embed)
+                else:
+                    await target.send(message)
                 success += 1
             except Exception:
                 fail += 1
@@ -383,37 +470,6 @@ class Owner(commands.Cog):
             )
         except discord.Forbidden:
             await interaction.followup.send("i don't have permission.", ephemeral=True)
-
-    @owner.command(name="allroles", description="Give all assignable roles to a member (owner only)")
-    @app_commands.describe(member="Member to give all roles to (defaults to you)")
-    async def owner_allroles(self, interaction: discord.Interaction, member: discord.Member = None):
-        self.bot.increment_command('owner_allroles')
-        await interaction.response.defer(ephemeral=True)
-        if not self._check_owner(interaction):
-            await interaction.followup.send("not your command.", ephemeral=True)
-            return
-
-        if not interaction.guild:
-            await interaction.followup.send("this command only works in a server.", ephemeral=True)
-            return
-
-        target = member or interaction.user
-        roles = [
-            r for r in interaction.guild.roles
-            if r.name != "@everyone"
-            and not r.managed
-            and r.position < interaction.guild.me.top_role.position
-        ]
-        try:
-            await target.add_roles(*roles, reason="Owner command")
-            await interaction.followup.send(
-                f"✅ gave {len(roles)} roles to {target.mention}",
-                ephemeral=True
-            )
-        except discord.Forbidden:
-            await interaction.followup.send("i don't have permission.", ephemeral=True)
-        except Exception as e:
-            await interaction.followup.send(f"failed: `{e}`", ephemeral=True)
 
     @owner.command(name="servers", description="List all servers the bot is in (owner only)")
     async def owner_servers(self, interaction: discord.Interaction):
@@ -529,6 +585,66 @@ class Owner(commands.Cog):
             )
         except Exception as e:
             await interaction.followup.send(f"failed: `{e}`", ephemeral=True)
+
+    # FIX 4 — /owner leave: make the bot leave a server by ID
+    @owner.command(name="leave",
+                   description="Make the bot leave a server by ID (owner only)")
+    @app_commands.describe(guild_id="The server ID to leave")
+    async def owner_leave(self, interaction: discord.Interaction, guild_id: str):
+        self.bot.increment_command('owner_leave')
+        await interaction.response.defer(ephemeral=True)
+        if not self._check_owner(interaction):
+            await interaction.followup.send("not your command.", ephemeral=True)
+            return
+
+        # Parse guild ID
+        try:
+            gid = int(guild_id)
+        except ValueError:
+            await interaction.followup.send("invalid guild ID.", ephemeral=True)
+            return
+
+        # Look up the guild
+        guild = self.bot.get_guild(gid)
+        if not guild:
+            await interaction.followup.send(
+                "not in any server with that ID.",
+                ephemeral=True
+            )
+            return
+
+        # Show confirmation view with guild details
+        embed = discord.Embed(
+            title="⚠️ Leave Server?",
+            color=0xe74c3c,
+            description=(
+                f"**Server:** {guild.name}\n"
+                f"**ID:** {guild.id}\n"
+                f"**Members:** {guild.member_count}\n\n"
+                f"Are you sure you want the bot to leave this server?"
+            )
+        )
+        view = LeaveConfirmView(owner_id=OWNER_ID, timeout=30)
+        await interaction.followup.send(embed=embed, view=view, ephemeral=True)
+
+        # Wait for the view to complete
+        await view.wait()
+
+        if not view.confirmed:
+            return  # cancelled or timed out
+
+        # Leave the guild
+        try:
+            await guild.leave()
+            await interaction.followup.send(
+                f"✅ left **{guild.name}** ({guild.id})",
+                ephemeral=True
+            )
+        except Exception as e:
+            await interaction.followup.send(
+                f"failed to leave: `{e}`",
+                ephemeral=True
+            )
 
 
 async def setup(bot):
