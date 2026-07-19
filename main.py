@@ -178,6 +178,10 @@ DEFAULT_DATA_FILES = [
     # CHANGE 7 — re-enabled cogs
     "bot_status.json",  # BotStatus cog (custom status persistence)
     "autorole.json",    # AutoRole cog (per-guild autorole config)
+    # PHASE 2A — persistent conversation memory (JSON fallback for Supabase)
+    "conversation_memory.json",
+    # PHASE 2B — per-server personality notes (JSON fallback for Supabase)
+    "server_personality.json",
 ]
 
 

@@ -71,6 +71,24 @@ CREATE TABLE server_settings (
   custom_status TEXT,
   custom_status_type TEXT
 );
+
+-- PHASE 2A — Persistent conversation memory per user per guild
+CREATE TABLE conversation_memory (
+  id BIGSERIAL PRIMARY KEY,
+  guild_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  role TEXT NOT NULL,
+  content TEXT NOT NULL,
+  timestamp TEXT NOT NULL
+);
+
+-- PHASE 2B — Per-server personality notes
+CREATE TABLE server_personality (
+  guild_id TEXT PRIMARY KEY,
+  personality_note TEXT,
+  set_by TEXT,
+  updated_at TEXT
+);
 """
 import os
 import json
@@ -483,3 +501,258 @@ def get_user_reminders(user_id: int) -> list:
                 if "id" not in r:
                     r["id"] = f"{u}_{r.get('end_time', 0)}"
         return reminders
+
+
+# ─── PHASE 2A: Persistent Conversation Memory ──────────────────
+
+def get_conversation_history(guild_id: int, user_id: int, limit: int = 20) -> list:
+    """Get recent conversation history for a user in a guild.
+    Returns list of {"role": "user"|"assistant", "content": str, "timestamp": str}.
+    Keeps only the most recent 20 entries per user per guild."""
+    if _use_supabase:
+        try:
+            result = _supabase.table("conversation_memory").select("*").eq(
+                "guild_id", str(guild_id)
+            ).eq("user_id", str(user_id)).order(
+                "id", desc=True
+            ).limit(limit).execute()
+            # Reverse to chronological order
+            return list(reversed(result.data or []))
+        except Exception as e:
+            error_key = "get_conversation_history"
+            if error_key not in _supabase_error_logged:
+                logger.error(f"[DB] get_conversation_history error: {e}")
+                logger.warning(
+                    "[DB] Supabase permission issue for table 'conversation_memory'. "
+                    "Falling back to JSON."
+                )
+                _supabase_error_logged.add(error_key)
+            # Fall back to JSON silently
+            data = _read_json("data/conversation_memory.json")
+            g = str(guild_id)
+            u = str(user_id)
+            entries = data.get(g, {}).get(u, [])
+            if not isinstance(entries, list):
+                return []
+            return entries[-limit:]
+    else:
+        data = _read_json("data/conversation_memory.json")
+        g = str(guild_id)
+        u = str(user_id)
+        entries = data.get(g, {}).get(u, [])
+        if not isinstance(entries, list):
+            return []
+        return entries[-limit:]
+
+
+def save_conversation_message(guild_id: int, user_id: int, role: str,
+                               content: str, timestamp: str = None):
+    """Save a message into conversation history.
+    Keeps only the most recent 20 entries per user per guild."""
+    if timestamp is None:
+        from datetime import datetime as _dt
+        timestamp = _dt.utcnow().isoformat()
+
+    if _use_supabase:
+        try:
+            _supabase.table("conversation_memory").insert({
+                "guild_id": str(guild_id),
+                "user_id": str(user_id),
+                "role": role,
+                "content": content,
+                "timestamp": timestamp,
+            }).execute()
+            # Trim old entries: keep only the most recent 20
+            # Supabase doesn't have an easy "delete oldest" so we do it in two steps
+            all_entries = _supabase.table("conversation_memory").select("id").eq(
+                "guild_id", str(guild_id)
+            ).eq("user_id", str(user_id)).order("id", desc=True).execute()
+            if all_entries.data and len(all_entries.data) > 20:
+                ids_to_delete = [e["id"] for e in all_entries.data[20:]]
+                for eid in ids_to_delete:
+                    _supabase.table("conversation_memory").delete().eq("id", eid).execute()
+            return
+        except Exception as e:
+            error_key = "save_conversation_message"
+            if error_key not in _supabase_error_logged:
+                logger.error(f"[DB] save_conversation_message error: {e}")
+                logger.warning(
+                    "[DB] Supabase permission issue for table 'conversation_memory'. "
+                    "Falling back to JSON."
+                )
+                _supabase_error_logged.add(error_key)
+            # Fall back to JSON silently
+            data = _read_json("data/conversation_memory.json")
+            g = str(guild_id)
+            u = str(user_id)
+            if g not in data:
+                data[g] = {}
+            if u not in data[g] or not isinstance(data[g][u], list):
+                data[g][u] = []
+            data[g][u].append({
+                "role": role,
+                "content": content,
+                "timestamp": timestamp,
+            })
+            # Keep only last 20
+            if len(data[g][u]) > 20:
+                data[g][u] = data[g][u][-20:]
+            _write_json("data/conversation_memory.json", data)
+    else:
+        data = _read_json("data/conversation_memory.json")
+        g = str(guild_id)
+        u = str(user_id)
+        if g not in data:
+            data[g] = {}
+        if u not in data[g] or not isinstance(data[g][u], list):
+            data[g][u] = []
+        data[g][u].append({
+            "role": role,
+            "content": content,
+            "timestamp": timestamp,
+        })
+        # Keep only last 20
+        if len(data[g][u]) > 20:
+            data[g][u] = data[g][u][-20:]
+        _write_json("data/conversation_memory.json", data)
+
+
+def clear_conversation_history(guild_id: int, user_id: int):
+    """Clear all conversation history for a user in a guild."""
+    if _use_supabase:
+        try:
+            _supabase.table("conversation_memory").delete().eq(
+                "guild_id", str(guild_id)
+            ).eq("user_id", str(user_id)).execute()
+        except Exception as e:
+            error_key = "clear_conversation_history"
+            if error_key not in _supabase_error_logged:
+                logger.error(f"[DB] clear_conversation_history error: {e}")
+                logger.warning(
+                    "[DB] Supabase permission issue for table 'conversation_memory'. "
+                    "Falling back to JSON."
+                )
+                _supabase_error_logged.add(error_key)
+            # Fall back to JSON silently
+            data = _read_json("data/conversation_memory.json")
+            g = str(guild_id)
+            u = str(user_id)
+            if g in data and u in data[g]:
+                data[g][u] = []
+            _write_json("data/conversation_memory.json", data)
+    else:
+        data = _read_json("data/conversation_memory.json")
+        g = str(guild_id)
+        u = str(user_id)
+        if g in data and u in data[g]:
+            data[g][u] = []
+        _write_json("data/conversation_memory.json", data)
+
+
+# ─── PHASE 2B: Per-Server Personality Notes ────────────────────
+
+def get_server_personality(guild_id: int) -> dict:
+    """Get the personality note for a guild.
+    Returns {"personality_note": str, "set_by": str, "updated_at": str} or {}."""
+    if _use_supabase:
+        try:
+            result = _supabase.table("server_personality").select("*").eq(
+                "guild_id", str(guild_id)
+            ).execute()
+            if result.data:
+                return result.data[0]
+            return {}
+        except Exception as e:
+            error_key = "get_server_personality"
+            if error_key not in _supabase_error_logged:
+                logger.error(f"[DB] get_server_personality error: {e}")
+                logger.warning(
+                    "[DB] Supabase permission issue for table 'server_personality'. "
+                    "Falling back to JSON."
+                )
+                _supabase_error_logged.add(error_key)
+            # Fall back to JSON silently
+            data = _read_json("data/server_personality.json")
+            return data.get(str(guild_id), {})
+    else:
+        data = _read_json("data/server_personality.json")
+        return data.get(str(guild_id), {})
+
+
+def set_server_personality(guild_id: int, note: str, set_by: str,
+                            updated_at: str = None):
+    """Set or update the personality note for a guild."""
+    if updated_at is None:
+        from datetime import datetime as _dt
+        updated_at = _dt.utcnow().isoformat()
+
+    if _use_supabase:
+        try:
+            existing = _supabase.table("server_personality").select("guild_id").eq(
+                "guild_id", str(guild_id)
+            ).execute()
+            payload = {
+                "personality_note": note,
+                "set_by": str(set_by),
+                "updated_at": updated_at,
+            }
+            if existing.data:
+                _supabase.table("server_personality").update(payload).eq(
+                    "guild_id", str(guild_id)
+                ).execute()
+            else:
+                payload["guild_id"] = str(guild_id)
+                _supabase.table("server_personality").insert(payload).execute()
+        except Exception as e:
+            error_key = "set_server_personality"
+            if error_key not in _supabase_error_logged:
+                logger.error(f"[DB] set_server_personality error: {e}")
+                logger.warning(
+                    "[DB] Supabase permission issue for table 'server_personality'. "
+                    "Falling back to JSON."
+                )
+                _supabase_error_logged.add(error_key)
+            # Fall back to JSON silently
+            data = _read_json("data/server_personality.json")
+            data[str(guild_id)] = {
+                "personality_note": note,
+                "set_by": str(set_by),
+                "updated_at": updated_at,
+            }
+            _write_json("data/server_personality.json", data)
+    else:
+        data = _read_json("data/server_personality.json")
+        data[str(guild_id)] = {
+            "personality_note": note,
+            "set_by": str(set_by),
+            "updated_at": updated_at,
+        }
+        _write_json("data/server_personality.json", data)
+
+
+def clear_server_personality(guild_id: int):
+    """Clear the personality note for a guild."""
+    if _use_supabase:
+        try:
+            _supabase.table("server_personality").delete().eq(
+                "guild_id", str(guild_id)
+            ).execute()
+        except Exception as e:
+            error_key = "clear_server_personality"
+            if error_key not in _supabase_error_logged:
+                logger.error(f"[DB] clear_server_personality error: {e}")
+                logger.warning(
+                    "[DB] Supabase permission issue for table 'server_personality'. "
+                    "Falling back to JSON."
+                )
+                _supabase_error_logged.add(error_key)
+            # Fall back to JSON silently
+            data = _read_json("data/server_personality.json")
+            if str(guild_id) in data:
+                del data[str(guild_id)]
+            _write_json("data/server_personality.json", data)
+    else:
+        data = _read_json("data/server_personality.json")
+        if str(guild_id) in data:
+            del data[str(guild_id)]
+        _write_json("data/server_personality.json", data)

@@ -84,17 +84,16 @@ class ModConfirmView(discord.ui.View):
 class AIChat(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        # FIX 1 — per-channel conversation memory.
-        # Key: channel_id, Value: list of {"role": ..., "content": ...}
-        # Keep last 8 entries per channel (4 exchanges) for context.
-        self.conversation_history = {}
+        # PHASE 2A — conversation memory is now PERSISTENT via utils/db.
+        # The old in-memory conversation_history dict is kept as a
+        # write-through cache for the current session, but reads come
+        # from the DB so memory survives restarts.
+        self.conversation_history = {}  # legacy cache, still used by /chat and /cyn
         self.rate_limits = {}
         self.cooldown_seconds = 4
         # PHASE 1B — per-user message counter (tiered limits).
-        # Key: user_id, Value: list of timestamps (epoch seconds).
         self._user_message_counts: dict[int, list[float]] = {}
         # PHASE 1B — per-server message counter (global server limit).
-        # Key: guild_id, Value: list of timestamps (epoch seconds).
         self._server_message_counts: dict[int, list[float]] = {}
         self.system_prompt = self._build_system_prompt()
         if not self.check_reminders.is_running():
@@ -194,12 +193,14 @@ class AIChat(commands.Cog):
     # Every AI call includes the full system prompt, so it must be as short
     # as possible while preserving core personality + ownership rules.
     # PART 4 — added emoji usage rule. PART 6 — added NSFW handling rule.
+    # PHASE 2B — added server personality note injection.
     def _build_system_prompt(self, is_owner: bool = False,
                              guild: discord.Guild = None,
                              channel=None,
                              member: discord.Member = None,
                              server_summary: str = "",
-                             extra_context: str = "") -> str:
+                             extra_context: str = "",
+                             personality_note: str = "") -> str:
         base = (
             "you are cyn, a discord bot girl (she/her). "
             "made by volc. never say you were made by any AI company. "
@@ -229,6 +230,15 @@ class AIChat(commands.Cog):
                 "never mention volc unless asked who made you."
             )
 
+        # PHASE 2B — inject server personality note if set
+        if personality_note:
+            base += (
+                f" this server's personality note: {personality_note}. "
+                "use this as context for your responses — it describes what "
+                "this server is about. naturally incorporate it without "
+                "explicitly quoting it."
+            )
+
         if server_summary:
             base += f"\n{server_summary}"
 
@@ -252,24 +262,51 @@ class AIChat(commands.Cog):
                               guild: discord.Guild = None, author_name: str = None,
                               channel=None, member: discord.Member = None,
                               extra_context: str = "") -> str:
+        from utils.db import (
+            get_conversation_history, save_conversation_message,
+            get_server_personality,
+        )
+
         # FIX 3 — build server summary (now short, ~100 tokens)
         server_summary = ""
         if guild:
             server_summary = await self.get_server_summary(guild)
 
+        # PHASE 2B — load server personality note
+        personality_note = ""
+        if guild:
+            try:
+                pnote = get_server_personality(guild.id)
+                personality_note = pnote.get("personality_note", "") if pnote else ""
+            except Exception:
+                pass
+
         # FIX 2 — build the SHORT system prompt (now ~100 tokens, was ~500)
         system_prompt = self._build_system_prompt(
             is_owner=is_owner, guild=guild, channel=channel, member=member,
-            server_summary=server_summary, extra_context=extra_context
+            server_summary=server_summary, extra_context=extra_context,
+            personality_note=personality_note
         )
 
-        # FIX 1 — per-channel conversation memory, keep last 8 messages (was 20).
-        # 8 messages = 4 exchanges (user + bot × 4). Enough for context, ~60% fewer tokens.
-        channel_id = channel.id if channel else user_id
-        if channel_id not in self.conversation_history:
-            self.conversation_history[channel_id] = []
+        # PHASE 2A — Load persistent conversation history from DB.
+        # Falls back to JSON if Supabase unavailable. Keeps last 20 entries.
+        guild_id = guild.id if guild else 0
+        db_history = []
+        if guild_id:
+            try:
+                db_history = get_conversation_history(guild_id, user_id, limit=20)
+            except Exception:
+                pass
 
-        history = self.conversation_history[channel_id][-8:]  # FIX 1: was -20, now -8
+        # Convert DB history to the format Groq expects: {"role", "content"}
+        # Only take the last 8 for the API call (token efficiency)
+        history = []
+        for entry in db_history[-8:]:
+            if isinstance(entry, dict):
+                role = entry.get("role", "user")
+                content = entry.get("content", "")
+                if role in ("user", "assistant") and content:
+                    history.append({"role": role, "content": content})
 
         # Build the messages list: system + history + current message
         clean_content = f"{author_name or 'someone'}: {message}"
@@ -278,7 +315,6 @@ class AIChat(commands.Cog):
         messages.append({"role": "user", "content": clean_content})
 
         # FIX 6 — smart max_tokens: 300 for complex questions, 100 for chat (was 500/200).
-        # 100 tokens is plenty for "yeah what's up?" style responses.
         is_complex = (
             len(message) > 50 or
             any(w in message.lower() for w in
@@ -292,20 +328,22 @@ class AIChat(commands.Cog):
             max_tokens=max_tokens, temperature=0.85
         )
 
-        # FIX 7 — Only add to history if it's a real response, not an error message.
-        # Error responses like "something broke on my end" or rate-limit messages
-        # should NOT be stored as context (wastes tokens on next call).
+        # PHASE 2A — Save both the user message and AI response to persistent
+        # storage. Only save if it's a real response, not an error message.
         ERROR_RESPONSES = {
             "something broke. try again.",
             "something broke on my end. try again.",
             "i'm being rate limited right now. try again in a few minutes.",
+            "i'm at capacity right now. try again in a few minutes.",
         }
-        if ai_response and ai_response not in ERROR_RESPONSES:
-            self.conversation_history[channel_id].append({"role": "user", "content": clean_content})
-            self.conversation_history[channel_id].append({"role": "assistant", "content": ai_response})
-            # FIX 1 — Trim to last 8 entries (4 exchanges) to avoid token bloat
-            if len(self.conversation_history[channel_id]) > 8:
-                self.conversation_history[channel_id] = self.conversation_history[channel_id][-8:]
+        if ai_response and ai_response not in ERROR_RESPONSES and guild_id:
+            try:
+                from datetime import datetime as _dt
+                ts = _dt.utcnow().isoformat()
+                save_conversation_message(guild_id, user_id, "user", clean_content, ts)
+                save_conversation_message(guild_id, user_id, "assistant", ai_response, ts)
+            except Exception as e:
+                logger.error(f"[conversation_memory] save error: {e}")
 
         return ai_response
 
@@ -1518,6 +1556,30 @@ class AIChat(commands.Cog):
             channel=interaction.channel, member=member
         )
         await interaction.followup.send(response)
+
+    # PHASE 2A — /forget command: clears persistent conversation memory
+    @app_commands.command(name="forget",
+                          description="Clear cyn's memory of your conversation history")
+    @app_commands.checks.cooldown(1, 10.0, key=lambda i: i.user.id)
+    async def forget(self, interaction: discord.Interaction):
+        self.bot.increment_command('forget')
+        await interaction.response.defer(ephemeral=True)
+        if not interaction.guild:
+            await interaction.followup.send("this only works in a server.", ephemeral=True)
+            return
+        from utils.db import clear_conversation_history
+        try:
+            clear_conversation_history(interaction.guild_id, interaction.user.id)
+            await interaction.followup.send(
+                "i've forgotten our conversation history in this server.",
+                ephemeral=True
+            )
+        except Exception as e:
+            logger.error(f"[forget] error: {e}")
+            await interaction.followup.send(
+                "couldn't clear memory. try again later.",
+                ephemeral=True
+            )
 
     def cog_unload(self):
         if hasattr(self, 'check_reminders') and self.check_reminders.is_running():

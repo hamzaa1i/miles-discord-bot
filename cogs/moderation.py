@@ -296,6 +296,34 @@ class Moderation(commands.Cog):
         except Exception as e:
             await interaction.followup.send(f"failed: {e}")
 
+    # PHASE 2C — /mod antispam: toggle antispam per guild
+    @mod.command(name="antispam",
+                 description="Toggle antispam automod on or off")
+    @app_commands.describe(enabled="on or off")
+    @app_commands.choices(enabled=[
+        app_commands.Choice(name="On", value="on"),
+        app_commands.Choice(name="Off", value="off"),
+    ])
+    @app_commands.checks.has_permissions(moderate_members=True)
+    async def mod_antispam(self, interaction: discord.Interaction,
+                            enabled: app_commands.Choice[str]):
+        self.bot.increment_command('mod_antispam')
+        await interaction.response.defer(ephemeral=True)
+
+        # Store in mod_settings via utils/db
+        from utils.db import get_guild_setting, set_guild_setting
+        try:
+            settings = get_guild_setting(interaction.guild_id, "mod_settings")
+            settings["antispam_enabled"] = (enabled.value == "on")
+            set_guild_setting(interaction.guild_id, "mod_settings", settings)
+            status = "enabled" if enabled.value == "on" else "disabled"
+            await interaction.followup.send(
+                f"✅ antispam is now **{status}** for this server.",
+                ephemeral=True
+            )
+        except Exception as e:
+            await interaction.followup.send(f"failed: `{e}`", ephemeral=True)
+
 
 
 

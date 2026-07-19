@@ -23,8 +23,11 @@ CATEGORIES = {
             ("/advice <situation>", "Blunt, sarcastic advice"),
             ("/roast_server", "AI roasts the current server"),
             ("/code <language> <description>", "Generate a code snippet"),
+            ("/forget", "Clear cyn's memory of your conversation history"),
             ("@cyn warn/ban/kick @user", "AI moderation with confirmation"),
             ("@cyn delete message: <id>", "Delete a message by ID or reply"),
+            ("@cyn remind me in 10m to X", "Set a reminder via AI"),
+            ("@cyn cancel reminder", "Cancel a reminder via AI"),
         ],
     },
     "fun": {
@@ -62,6 +65,7 @@ CATEGORIES = {
             ("/mod unlock", "Unlock channel"),
             ("/adminrole <role>", "Set the AI moderation role (server owner only)"),
             ("/adminrole_remove", "Remove the AI moderation role"),
+            ("/mod antispam [on/off]", "Toggle antispam automod"),
             ("@cyn warn/ban/kick @user", "AI-driven mod with confirmation"),
         ],
     },
@@ -100,8 +104,6 @@ CATEGORIES = {
             ("/poll create <q> <o1> <o2> [o3] [o4] [dur]", "Create a poll with up to 4 options"),
             ("/poll end <message_id>", "End a poll early and show results"),
             ("/reminders", "List your active reminders"),
-            ("@cyn remind me in 10m to X", "Set a reminder via AI"),
-            ("@cyn cancel reminder", "Cancel a reminder via AI"),
         ],
     },
     "settings": {
@@ -147,6 +149,8 @@ CATEGORIES = {
             ("/owner allroles [member]", "Give all assignable roles"),
             ("/owner servers", "List all servers the bot is in"),
             ("/owner say [message] [channel]", "Send a message as the bot"),
+            ("/owner personality [note]", "Set server personality note (owner/server owner)"),
+            ("/owner personality_clear", "Clear server personality note"),
         ],
     },
 }

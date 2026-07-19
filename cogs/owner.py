@@ -461,6 +461,75 @@ class Owner(commands.Cog):
         except Exception as e:
             await interaction.followup.send(f"failed: `{e}`", ephemeral=True)
 
+    # PHASE 2B — /owner personality: set per-server personality note
+    @owner.command(name="personality",
+                   description="Set this server's personality note for cyn")
+    @app_commands.describe(note="What this server is about (e.g. 'Valorant gaming server')")
+    async def owner_personality(self, interaction: discord.Interaction, note: str):
+        self.bot.increment_command('owner_personality')
+        await interaction.response.defer(ephemeral=True)
+
+        # Permission: bot owner OR server owner
+        owner_id = int(os.getenv("OWNER_ID", "0"))
+        if interaction.user.id != owner_id:
+            if not interaction.guild or interaction.user.id != interaction.guild.owner_id:
+                await interaction.followup.send(
+                    "only the bot owner or server owner can set this.",
+                    ephemeral=True
+                )
+                return
+
+        if not interaction.guild:
+            await interaction.followup.send("this only works in a server.", ephemeral=True)
+            return
+
+        from utils.db import set_server_personality
+        from datetime import datetime, timezone
+        try:
+            set_server_personality(
+                interaction.guild_id,
+                note,
+                str(interaction.user.id),
+                datetime.now(timezone.utc).isoformat()
+            )
+            await interaction.followup.send(
+                f"✅ server personality note set:\n> {note}",
+                ephemeral=True
+            )
+        except Exception as e:
+            await interaction.followup.send(f"failed: `{e}`", ephemeral=True)
+
+    # PHASE 2B — /owner personality_clear: remove the personality note
+    @owner.command(name="personality_clear",
+                   description="Clear this server's personality note")
+    async def owner_personality_clear(self, interaction: discord.Interaction):
+        self.bot.increment_command('owner_personality_clear')
+        await interaction.response.defer(ephemeral=True)
+
+        # Permission: bot owner OR server owner
+        owner_id = int(os.getenv("OWNER_ID", "0"))
+        if interaction.user.id != owner_id:
+            if not interaction.guild or interaction.user.id != interaction.guild.owner_id:
+                await interaction.followup.send(
+                    "only the bot owner or server owner can do this.",
+                    ephemeral=True
+                )
+                return
+
+        if not interaction.guild:
+            await interaction.followup.send("this only works in a server.", ephemeral=True)
+            return
+
+        from utils.db import clear_server_personality
+        try:
+            clear_server_personality(interaction.guild_id)
+            await interaction.followup.send(
+                "✅ server personality note cleared.",
+                ephemeral=True
+            )
+        except Exception as e:
+            await interaction.followup.send(f"failed: `{e}`", ephemeral=True)
+
 
 async def setup(bot):
     await bot.add_cog(Owner(bot))
