@@ -99,9 +99,8 @@ intents.presences = True
 
 
 # ==================== Data Directory and Files ====================
-# PART 8 — Trimmed to only the files needed by active cogs.
-# Removed all economy/marriage/polls/counting/reputation/starboard/
-# reaction_roles/autorespond/buttonroles files (their cogs are disabled).
+# Trimmed to only the files needed by active cogs.
+# CHANGE 7 — added bot_status.json and autorole.json for re-enabled cogs.
 DEFAULT_DATA_FILES = [
     "welcome.json", "logs.json", "afk.json",
     "reminders.json", "notes.json", "todos.json", "warnings.json",
@@ -109,6 +108,9 @@ DEFAULT_DATA_FILES = [
     "moderation.json",
     # per-guild AI moderation role settings
     "settings.json",
+    # CHANGE 7 — re-enabled cogs
+    "bot_status.json",  # BotStatus cog (custom status persistence)
+    "autorole.json",    # AutoRole cog (per-guild autorole config)
 ]
 
 
@@ -239,33 +241,9 @@ class CynBot(commands.Bot):
             print(f"❌ Groq API failed: {type(e).__name__}: {e}")
             logger.error(f"❌ Groq API failed: {type(e).__name__}: {e}")
 
-        # Start cycling status every 5 minutes
-        if not self.change_status.is_running():
-            self.change_status.start()
-
-    # POLISH 6 — Status Cycling with real live data
-    @tasks.loop(minutes=5)
-    async def change_status(self):
-        """Cycle bot status every 5 minutes using real live guild/user counts."""
-        try:
-            statuses = [
-                discord.Activity(type=discord.ActivityType.watching,
-                                 name=f"{len(self.guilds)} servers"),
-                discord.Activity(type=discord.ActivityType.listening,
-                                 name="@cyn"),
-                discord.Activity(type=discord.ActivityType.playing,
-                                 name=f"with {sum(g.member_count for g in self.guilds)} users"),
-                discord.Activity(type=discord.ActivityType.competing,
-                                 name="being the best bot"),
-            ]
-            idx = self.change_status.current_loop % len(statuses)
-            await self.change_presence(activity=statuses[idx])
-        except Exception as e:
-            logger.error(f"Status cycle error: {e}")
-
-    @change_status.before_loop
-    async def before_change_status(self):
-        await self.wait_until_ready()
+        # NOTE: Status rotation is now owned by cogs/bot_status.py (BotStatus cog).
+        # The old change_status task that lived here was removed to avoid duplicate
+        # rotation and to let the cog manage custom vs auto status.
 
     # FIX 6 (part 1) — regular prefix-command error handler
     async def on_command_error(self, ctx, error):
