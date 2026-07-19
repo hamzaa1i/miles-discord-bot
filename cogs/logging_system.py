@@ -32,6 +32,7 @@ from discord.ext import commands
 from discord import app_commands
 from datetime import datetime, timezone
 from utils.database import Database
+from utils.db import get_guild_setting, set_guild_setting
 
 
 DEFAULT_EVENTS = {
@@ -51,24 +52,42 @@ DEFAULT_EVENTS = {
 class LoggingSystem(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+        # PHASE 1A — keep legacy db for backward compat, but new reads/writes
+        # go through utils.db (Supabase-aware).
         self.db = Database('data/logs.json')
 
     def get_config(self, guild_id: int) -> dict:
-        try:
-            return self.db.get(str(guild_id), {
-                'channel_id': None,
-                'enabled': True,
-                'events': dict(DEFAULT_EVENTS),
-            })
-        except Exception:
+        # PHASE 1A — use utils.db (Supabase-aware)
+        config = get_guild_setting(guild_id, "log_settings")
+        if not config:
             return {
                 'channel_id': None,
                 'enabled': True,
                 'events': dict(DEFAULT_EVENTS),
             }
+        # Ensure events dict has all keys
+        events = config.get('events', {})
+        if not isinstance(events, dict):
+            events = {}
+        for k in DEFAULT_EVENTS:
+            if k not in events:
+                events[k] = config.get(k, DEFAULT_EVENTS[k])
+        config['events'] = events
+        config.setdefault('enabled', True)
+        config.setdefault('channel_id', None)
+        return config
 
     def save_config(self, guild_id: int, config: dict):
-        self.db.set(str(guild_id), config)
+        # PHASE 1A — use utils.db (Supabase-aware)
+        # Flatten events dict into top-level columns for Supabase compatibility
+        flat = {
+            'channel_id': config.get('channel_id'),
+            'enabled': config.get('enabled', True),
+        }
+        events = config.get('events', {})
+        for k in DEFAULT_EVENTS:
+            flat[k] = events.get(k, DEFAULT_EVENTS[k])
+        set_guild_setting(guild_id, "log_settings", flat)
 
     async def _get_log_channel(self, guild: discord.Guild, event_key: str = None):
         config = self.get_config(guild.id)

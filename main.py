@@ -54,17 +54,55 @@ def home():
 
 @app.route('/health')
 def health():
-    if bot is None:
-        return {"status": "starting", "guilds": 0, "users": 0, "latency_ms": 0,
-                "uptime_seconds": (datetime.utcnow() - start_time).total_seconds()}, 200
+    from flask import jsonify
+    uptime_seconds = (datetime.utcnow() - start_time).total_seconds()
+
+    # PHASE 1D — Track AI metrics from keep_alive module
+    ai_calls = 0
+    avg_response = 0.0
+    using_supabase = False
+    try:
+        import keep_alive as _kl
+        ai_calls = _kl.total_ai_calls
+        if _kl.recent_response_times:
+            avg_response = sum(_kl.recent_response_times) / len(_kl.recent_response_times)
+    except Exception:
+        pass
+    try:
+        from utils.db import using_supabase as _us
+        using_supabase = _us()
+    except Exception:
+        pass
+
+    def _fmt_uptime(s):
+        d = int(s // 86400); h = int((s % 86400) // 3600); m = int((s % 3600) // 60)
+        return f"{d}d {h}h {m}m"
+
+    if bot is None or not bot.is_ready():
+        return jsonify({
+            "status": "starting",
+            "uptime_seconds": int(uptime_seconds),
+            "uptime_human": _fmt_uptime(uptime_seconds),
+            "guilds": 0, "users": 0, "latency_ms": 0,
+            "ai_calls_total": ai_calls,
+            "avg_response_ms": round(avg_response, 1),
+            "active_cogs": 0,
+            "using_supabase": using_supabase
+        }), 200
+
     user_count = sum(g.member_count for g in bot.guilds) if bot.is_ready() else 0
-    return {
-        "status": "ok" if bot.is_ready() else "starting",
-        "latency_ms": round(bot.latency * 1000, 2) if bot.is_ready() else 0,
-        "guilds": len(bot.guilds) if bot.is_ready() else 0,
+    return jsonify({
+        "status": "ok",
+        "uptime_seconds": int(uptime_seconds),
+        "uptime_human": _fmt_uptime(uptime_seconds),
+        "latency_ms": round(bot.latency * 1000, 2),
+        "guilds": len(bot.guilds),
         "users": user_count,
-        "uptime_seconds": (datetime.utcnow() - start_time).total_seconds()
-    }, 200
+        "ai_calls_total": ai_calls,
+        "avg_response_ms": round(avg_response, 1),
+        "active_cogs": len(bot.cogs),
+        "using_supabase": using_supabase
+    }), 200
 
 
 @app.route('/stats')
@@ -178,6 +216,28 @@ class CynBot(commands.Bot):
         logger.info(f"🤖 {self.user} is online!")
         logger.info(f"📊 {len(self.guilds)} servers | {len(self.users)} users")
         logger.info("=" * 50)
+
+        # PHASE 1A — Initialize the database (Supabase or JSON fallback)
+        try:
+            from utils.db import init_db, using_supabase
+            init_db()
+            if using_supabase():
+                logger.info("✅ Database: Supabase connected")
+                print("✅ Database: Supabase connected")
+            else:
+                logger.info("✅ Database: JSON files (Supabase not configured)")
+                print("✅ Database: JSON files (Supabase not configured)")
+        except Exception as e:
+            logger.error(f"❌ Database init failed: {e}")
+            print(f"❌ Database init failed: {e}")
+
+        # PHASE 1D — Inject bot ref into keep_alive for /health endpoint
+        try:
+            import keep_alive as _kl
+            _kl.bot_ref = self
+            _kl.start_time = datetime.utcnow()
+        except Exception:
+            pass
 
         # FIX 5 — make absolutely sure data files exist on every ready
         ensure_data_files()

@@ -91,6 +91,19 @@ CATEGORIES = {
             ("/avatar [user]", "Show user avatar"),
         ],
     },
+    "community": {
+        "emoji": "🌍",
+        "name": "Community",
+        "desc": "Polls and reminders",
+        "color": COLOR_FUN,
+        "commands": [
+            ("/poll create <q> <o1> <o2> [o3] [o4] [dur]", "Create a poll with up to 4 options"),
+            ("/poll end <message_id>", "End a poll early and show results"),
+            ("/reminders", "List your active reminders"),
+            ("@cyn remind me in 10m to X", "Set a reminder via AI"),
+            ("@cyn cancel reminder", "Cancel a reminder via AI"),
+        ],
+    },
     "settings": {
         "emoji": "⚙️",
         "name": "Settings",

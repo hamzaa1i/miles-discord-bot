@@ -34,6 +34,9 @@ INTENT_SYSTEM_PROMPT = (
     "- role_add: {user_id, role}\n"
     "- role_remove: {user_id, role}\n"
     "- remind: {duration_seconds, reminder_text}\n"
+    "- remind_cancel: {} — user wants to cancel a reminder. If they say "
+    "'cancel all reminders', set params to {\"all\": true}. Otherwise leave "
+    "params empty and the bot will list their reminders for them to choose.\n"
     "- serverinfo: {} — ONLY for explicit requests for server statistics "
     "or data like member count, channel count, creation date. "
     "Examples that ARE serverinfo: 'server info', 'server stats', "
@@ -68,7 +71,7 @@ KNOWN_INTENTS = {
     'warn', 'warn_clear', 'delete_message',
     'slowmode', 'lock', 'unlock',
     'hide', 'show', 'nuke', 'nick', 'role_add', 'role_remove',
-    'remind', 'serverinfo', 'ping', 'botinfo', 'uptime', 'whois', 'avatar',
+    'remind', 'remind_cancel', 'serverinfo', 'ping', 'botinfo', 'uptime', 'whois', 'avatar',
     'joke', 'meme', 'flip', 'roll', 'fact', 'truth', 'dare', 'weather',
     'chat',
 }

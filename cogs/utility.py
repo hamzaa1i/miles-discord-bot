@@ -164,9 +164,42 @@ class Utility(commands.Cog):
         except discord.InteractionResponded:
             await interaction.followup.send(embed=embed)
 
+    # PHASE 1F — /reminders command to list your active reminders
+    @app_commands.command(name="reminders",
+                          description="List your active reminders")
+    async def reminders_list(self, interaction: discord.Interaction):
+        self.bot.increment_command('reminders')
+        await interaction.response.defer(ephemeral=True)
+        from utils.db import get_user_reminders
+        import time
 
+        user_reminders = get_user_reminders(interaction.user.id)
 
+        if not user_reminders:
+            await interaction.followup.send("no active reminders.")
+            return
 
+        lines = []
+        for i, r in enumerate(user_reminders, 1):
+            end_time = r.get("end_time", 0)
+            try:
+                remaining = max(0, int(end_time) - int(time.time()))
+            except (TypeError, ValueError):
+                remaining = 0
+            m, s = divmod(remaining, 60)
+            h, m = divmod(m, 60)
+            if h > 0:
+                time_str = f"{h}h {m}m"
+            elif m > 0:
+                time_str = f"{m}m {s}s"
+            else:
+                time_str = f"{s}s"
+            text = r.get('text', 'no text')[:50]
+            lines.append(f"`{i}.` {text} - in {time_str}")
+
+        await interaction.followup.send(
+            "**your reminders:**\n" + "\n".join(lines)
+        )
 
 
 async def setup(bot):

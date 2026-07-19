@@ -259,24 +259,15 @@ class Moderation(commands.Cog):
             await interaction.followup.send("no permission.")
             return
 
-        try:
-            with open("data/warnings.json", "r") as f:
-                warn_data = json.load(f)
-        except (FileNotFoundError, json.JSONDecodeError):
-            warn_data = {}
-
-        guild_key = str(interaction.guild_id)
-        user_key = str(user.id)
-
-        if guild_key not in warn_data or user_key not in warn_data[guild_key]:
+        # PHASE 1A — Use utils/db instead of direct JSON
+        from utils.db import get_warnings, clear_warnings
+        existing = get_warnings(interaction.guild_id, user.id)
+        if not existing:
             await interaction.followup.send(f"no warnings found for {user.display_name}.")
             return
 
-        count = len(warn_data[guild_key][user_key])
-        warn_data[guild_key][user_key] = []
-
-        with open("data/warnings.json", "w") as f:
-            json.dump(warn_data, f, indent=2)
+        count = len(existing)
+        clear_warnings(interaction.guild_id, user.id)
 
         await interaction.followup.send(
             f"cleared {count} warning(s) for {user.display_name}."

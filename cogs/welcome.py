@@ -13,6 +13,7 @@ from discord.ext import commands
 from discord import app_commands
 from datetime import datetime
 from utils.database import Database
+from utils.db import get_guild_setting, set_guild_setting
 
 
 class Welcome(commands.Cog):
@@ -26,17 +27,31 @@ class Welcome(commands.Cog):
         self.safe_mode_notified = set()
 
     def get_config(self, guild_id: int) -> dict:
-        return self.db.get(str(guild_id), {
-            'enabled': False,
-            'channel_id': None,
-            'message': 'Welcome {user} to {server}! You are member #{membercount}.',
-            'goodbye_enabled': False,
-            'goodbye_channel_id': None,
-            'goodbye_message': "Goodbye {user}, we'll miss you.",
-            'autorole_id': None,
-            'welcome_reward': 500,
-            'welcomer_reward': 1000
-        })
+        # PHASE 1A — use utils.db (Supabase-aware)
+        config = get_guild_setting(guild_id, "welcome_settings")
+        if not config:
+            return {
+                'enabled': False,
+                'channel_id': None,
+                'message': 'Welcome {user} to {server}! You are member #{membercount}.',
+                'goodbye_enabled': False,
+                'goodbye_channel_id': None,
+                'goodbye_message': "Goodbye {user}, we'll miss you.",
+                'autorole_id': None,
+                'welcome_reward': 500,
+                'welcomer_reward': 1000
+            }
+        # Ensure all keys present
+        config.setdefault('enabled', False)
+        config.setdefault('channel_id', None)
+        config.setdefault('message', 'Welcome {user} to {server}! You are member #{membercount}.')
+        config.setdefault('goodbye_enabled', False)
+        config.setdefault('goodbye_channel_id', None)
+        config.setdefault('goodbye_message', "Goodbye {user}, we'll miss you.")
+        config.setdefault('autorole_id', None)
+        config.setdefault('welcome_reward', 500)
+        config.setdefault('welcomer_reward', 1000)
+        return config
 
     def wants_dms(self, user_id: int) -> bool:
         prefs = self.dm_prefs_db.get(str(user_id), {'dms_enabled': True})
@@ -277,7 +292,7 @@ class Welcome(commands.Cog):
         config = self.get_config(interaction.guild.id)
         config['channel_id'] = str(channel.id)
         config['enabled'] = True
-        self.db.set(str(interaction.guild.id), config)
+        set_guild_setting(interaction.guild.id, "welcome_settings", config)
         await interaction.response.send_message(f"✅ welcome channel set to {channel.mention}")
 
     @welcome.command(name="message", description="Set welcome message")
@@ -285,7 +300,7 @@ class Welcome(commands.Cog):
     async def welcome_message(self, interaction: discord.Interaction, message: str):
         config = self.get_config(interaction.guild.id)
         config['message'] = message
-        self.db.set(str(interaction.guild.id), config)
+        set_guild_setting(interaction.guild.id, "welcome_settings", config)
         await interaction.response.send_message("✅ welcome message set.\nvariables: `{user}` `{server}` `{membercount}`")
 
     @welcome.command(name="toggle", description="Enable/disable welcome messages")
@@ -293,7 +308,7 @@ class Welcome(commands.Cog):
     async def welcome_toggle(self, interaction: discord.Interaction, enabled: bool):
         config = self.get_config(interaction.guild.id)
         config['enabled'] = enabled
-        self.db.set(str(interaction.guild.id), config)
+        set_guild_setting(interaction.guild.id, "welcome_settings", config)
         status = "enabled" if enabled else "disabled"
         await interaction.response.send_message(f"✅ welcome messages **{status}**")
 
@@ -304,7 +319,7 @@ class Welcome(commands.Cog):
         config = self.get_config(interaction.guild.id)
         config['goodbye_channel_id'] = str(channel.id)
         config['goodbye_enabled'] = True
-        self.db.set(str(interaction.guild.id), config)
+        set_guild_setting(interaction.guild.id, "welcome_settings", config)
         await interaction.response.send_message(f"✅ goodbye channel set to {channel.mention}")
 
     @goodbye.command(name="message", description="Set goodbye message")
@@ -312,7 +327,7 @@ class Welcome(commands.Cog):
     async def goodbye_message(self, interaction: discord.Interaction, message: str):
         config = self.get_config(interaction.guild.id)
         config['goodbye_message'] = message
-        self.db.set(str(interaction.guild.id), config)
+        set_guild_setting(interaction.guild.id, "welcome_settings", config)
         await interaction.response.send_message("✅ goodbye message set.")
 
     @goodbye.command(name="toggle", description="Enable/disable goodbye messages")
@@ -320,7 +335,7 @@ class Welcome(commands.Cog):
     async def goodbye_toggle(self, interaction: discord.Interaction, enabled: bool):
         config = self.get_config(interaction.guild.id)
         config['goodbye_enabled'] = enabled
-        self.db.set(str(interaction.guild.id), config)
+        set_guild_setting(interaction.guild.id, "welcome_settings", config)
         status = "enabled" if enabled else "disabled"
         await interaction.response.send_message(f"✅ goodbye messages **{status}**")
 

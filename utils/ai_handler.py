@@ -109,15 +109,26 @@ async def call_ai(
         elapsed = time.time() - start
         logger.info(f"[GROQ] model={model} tokens={max_tokens} "
                     f"time={elapsed:.2f}s messages={len(clean_messages)}")
+
+        # PHASE 1D — Track metrics for /health endpoint
+        try:
+            import keep_alive as _kl
+            _kl.total_ai_calls += 1
+            _kl.recent_response_times.append(elapsed * 1000)
+            if len(_kl.recent_response_times) > 100:
+                _kl.recent_response_times.pop(0)
+        except Exception:
+            pass
+
         return result
 
     except Exception as e:
         elapsed = time.time() - start
         error_str = str(e)
 
-        # FIX 4 — Rate limit on 70b → try 8b as fallback (separate quota)
+        # PHASE 1C — Rate limit on 70b → try 8b as fallback (separate quota)
         if "429" in error_str and model == "llama-3.3-70b-versatile":
-            logger.warning(f"[GROQ] 70b rate limited, falling back to 8b")
+            logger.warning("[GROQ] 70b rate limited, trying 8b fallback")
             try:
                 client = get_client()
                 response = await client.chat.completions.create(
@@ -127,11 +138,30 @@ async def call_ai(
                     temperature=temperature
                 )
                 result = response.choices[0].message.content.strip()
-                logger.info(f"[GROQ FALLBACK] 8b responded successfully")
+                logger.info("[GROQ FALLBACK] 8b responded successfully")
                 return result
             except Exception as e2:
-                logger.error(f"[GROQ] 8b fallback also failed: {type(e2).__name__}: {e2}")
-                return "i'm being rate limited right now. try again in a few minutes."
+                if "429" in str(e2):
+                    # Both models rate limited — extract wait time
+                    import re
+                    wait_match = re.search(
+                        r'try again in (\d+m\d+s|\d+\.\d+s|\d+s)',
+                        str(e2)
+                    )
+                    wait_str = wait_match.group(1) if wait_match else "a few minutes"
+                    logger.error(f"[GROQ] Both models rate limited. Wait: {wait_str}")
+                    return f"i'm at capacity right now. try again in {wait_str}."
+                logger.error(f"[GROQ] 8b fallback failed: {e2}")
+
+        # PHASE 1C — Extract wait time for any 429
+        if "429" in error_str:
+            import re
+            wait_match = re.search(
+                r'try again in (\d+m[\d.]+s|\d+\.\d+s|\d+s)',
+                error_str
+            )
+            wait_str = wait_match.group(1) if wait_match else "a few minutes"
+            return f"i'm at capacity right now. try again in {wait_str}."
 
         logger.error(f"[GROQ ERROR] {type(e).__name__}: {e} time={elapsed:.2f}s")
         logger.error(f"[GROQ ERROR] model={model} max_tokens={max_tokens} temp={temperature}")
@@ -146,9 +176,6 @@ async def call_ai(
         except Exception as log_err:
             logger.error(f"[GROQ ERROR] failed to log messages: {log_err}")
 
-        # FIX 4 — friendlier message so users know it's temporary
-        if "429" in error_str:
-            return "i'm being rate limited right now. try again in a few minutes."
         return "something broke on my end. try again."
 
 

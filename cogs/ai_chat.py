@@ -90,13 +90,45 @@ class AIChat(commands.Cog):
         self.conversation_history = {}
         self.rate_limits = {}
         self.cooldown_seconds = 4
-        # FIX 5 — per-user message counter to prevent quota abuse.
+        # PHASE 1B — per-user message counter (tiered limits).
         # Key: user_id, Value: list of timestamps (epoch seconds).
-        # Limits to 30 AI responses per user per hour (owner exempt).
         self._user_message_counts: dict[int, list[float]] = {}
+        # PHASE 1B — per-server message counter (global server limit).
+        # Key: guild_id, Value: list of timestamps (epoch seconds).
+        self._server_message_counts: dict[int, list[float]] = {}
         self.system_prompt = self._build_system_prompt()
         if not self.check_reminders.is_running():
             self.check_reminders.start()
+
+    def get_user_rate_limit(self, member) -> int:
+        """Return the message limit per hour for this user (tiered)."""
+        owner_id = int(os.getenv("OWNER_ID", "0"))
+
+        # Bot owner: unlimited
+        if member.id == owner_id:
+            return 999999
+
+        # Check admin role from settings
+        if member.guild:
+            try:
+                from utils.db import get_guild_setting
+                settings = get_guild_setting(member.guild.id, "mod_settings")
+                admin_role_id = settings.get("admin_role_id")
+                if admin_role_id:
+                    try:
+                        if any(r.id == int(admin_role_id) for r in member.roles):
+                            return 60  # Admin role: 60 per hour
+                    except (TypeError, ValueError):
+                        pass
+            except Exception:
+                pass
+
+        # Check Discord permissions
+        if member.guild and member.guild_permissions.manage_messages:
+            return 50  # Moderators: 50 per hour
+
+        # Regular users
+        return 25  # Regular: 25 per hour
 
     # FIX 3 — Shortened server summary (~100 tokens, was ~300).
     # Only includes essential info: name, member count, channels, members, bot stats.
@@ -637,42 +669,16 @@ class AIChat(commands.Cog):
                         await self._safe_reply(message, "couldn't find that user.")
                         return
 
-                    # Write to data/warnings.json directly with PRIMITIVES ONLY
-                    try:
-                        with open("data/warnings.json", "r") as f:
-                            warn_data = _json.load(f)
-                    except (FileNotFoundError, _json.JSONDecodeError):
-                        warn_data = {}
-
-                    gk = str(guild_id)
-                    uk = str(target_id)
-                    if gk not in warn_data:
-                        warn_data[gk] = {}
-                    if uk not in warn_data[gk]:
-                        warn_data[gk][uk] = []
-
-                    # Get next case ID
-                    all_cases = []
-                    for u_cases in warn_data[gk].values():
-                        if isinstance(u_cases, list):
-                            all_cases.extend(u_cases)
-                    next_id = max((c.get("case_id", 0) for c in all_cases
-                                   if isinstance(c, dict)), default=0) + 1
-
-                    warn_data[gk][uk].append({
-                        "case_id": next_id,
+                    # PHASE 1A — Use utils/db.add_warning() instead of direct JSON.
+                    # Works with Supabase if configured, falls back to JSON otherwise.
+                    from utils.db import add_warning
+                    case_id = add_warning(guild_id, target_id, {
                         "type": "warn",
                         "reason": warn_reason,
                         "mod_id": str(mod_id),
                         "mod_name": mod_name,
                         "timestamp": datetime.utcnow().isoformat()
                     })
-
-                    try:
-                        with open("data/warnings.json", "w") as f:
-                            _json.dump(warn_data, f, indent=2)
-                    except Exception as e:
-                        logger.error(f"[warn] failed to save warnings.json: {e}")
 
                     # DM the warned user
                     try:
@@ -682,11 +688,11 @@ class AIChat(commands.Cog):
                     except Exception:
                         pass
 
-                    logger.info(f"[WARN] ✅ Successfully warned {target_name} (case #{next_id})")
+                    logger.info(f"[WARN] ✅ Successfully warned {target_name} (case #{case_id})")
 
                     await self._safe_reply(
                         message,
-                        f"warned **{target_name}**. case #{next_id}. reason: {warn_reason}"
+                        f"warned **{target_name}**. case #{case_id}. reason: {warn_reason}"
                     )
 
                 view = ModConfirmView(
@@ -709,25 +715,14 @@ class AIChat(commands.Cog):
                 wc_target_id = target.id
                 wc_target_name = target.display_name
                 wc_guild_id = guild.id if guild else 0
-                try:
-                    with open("data/warnings.json", "r") as f:
-                        warn_data = _json.load(f)
-                except (FileNotFoundError, _json.JSONDecodeError):
-                    warn_data = {}
-                gk = str(wc_guild_id)
-                uk = str(wc_target_id)
-                if gk not in warn_data or uk not in warn_data[gk] or not warn_data[gk][uk]:
+                # PHASE 1A — Use utils/db instead of direct JSON
+                from utils.db import get_warnings, clear_warnings
+                existing = get_warnings(wc_guild_id, wc_target_id)
+                if not existing:
                     await self._safe_reply(message, f"no warnings found for {wc_target_name}.")
                     return True
-                count = len(warn_data[gk][uk])
-                warn_data[gk][uk] = []
-                try:
-                    with open("data/warnings.json", "w") as f:
-                        _json.dump(warn_data, f, indent=2)
-                except Exception as e:
-                    logger.error(f"[warn_clear] failed to save: {e}")
-                    await self._safe_reply(message, "couldn't save the clear.")
-                    return True
+                count = len(existing)
+                clear_warnings(wc_guild_id, wc_target_id)
                 logger.info(f"[WARN_CLEAR] cleared {count} warnings for {wc_target_name}")
                 await self._safe_reply(
                     message,
@@ -823,17 +818,14 @@ class AIChat(commands.Cog):
                     await self._safe_reply(message, "set a reminder like: 'remind me in 10 minutes to drink water'")
                     return True
                 import time as _time
+                # PHASE 1A — Use utils/db.add_reminder() instead of direct JSON
+                from utils.db import add_reminder
                 try:
-                    reminders_db = Database('data/reminders.json')
-                    user_reminders = reminders_db.get(str(author.id), [])
-                    if not isinstance(user_reminders, list):
-                        user_reminders = []
-                    user_reminders.append({
+                    add_reminder(author.id, {
                         'text': reminder_text,
                         'end_time': int(_time.time()) + int(seconds),
                         'channel_id': str(channel.id) if channel else None,
                     })
-                    reminders_db.set(str(author.id), user_reminders)
                     if seconds >= 86400:
                         dur = f"{seconds // 86400} day(s)"
                     elif seconds >= 3600:
@@ -843,7 +835,9 @@ class AIChat(commands.Cog):
                     else:
                         dur = f"{seconds} second(s)"
                     await self._safe_reply(message, f"got it. i'll remind you in {dur}.")
-                except Exception:
+                except Exception as e:
+                    logger.error(f"[remind] failed to save: {e}")
+                    # Fallback: in-memory timer if DB write fails
                     async def _remind():
                         await asyncio.sleep(seconds)
                         try:
@@ -852,6 +846,55 @@ class AIChat(commands.Cog):
                             pass
                     asyncio.create_task(_remind())
                     await self._safe_reply(message, f"reminder set — I'll ping you in {seconds}s")
+                return True
+
+            # ---- remind_cancel (PHASE 1F) ----
+            if intent == 'remind_cancel':
+                from utils.db import get_user_reminders, remove_reminder
+                import time as _time
+                user_reminders = get_user_reminders(author.id)
+                if not user_reminders:
+                    await self._safe_reply(message, "you have no active reminders.")
+                    return True
+
+                # If user said "cancel all", remove all
+                cancel_all = params.get('all', False)
+                if cancel_all:
+                    count = len(user_reminders)
+                    for r in user_reminders:
+                        rid = r.get('id')
+                        if rid:
+                            try:
+                                remove_reminder(author.id, str(rid))
+                            except Exception:
+                                pass
+                    await self._safe_reply(message, f"cleared {count} reminder(s).")
+                    return True
+
+                # Otherwise list them and ask which to cancel
+                lines = []
+                for i, r in enumerate(user_reminders, 1):
+                    end_time = r.get('end_time', 0)
+                    try:
+                        remaining = max(0, int(end_time) - int(_time.time()))
+                    except (TypeError, ValueError):
+                        remaining = 0
+                    m, s = divmod(remaining, 60)
+                    h, m = divmod(m, 60)
+                    if h > 0:
+                        time_str = f"{h}h {m}m"
+                    elif m > 0:
+                        time_str = f"{m}m {s}s"
+                    else:
+                        time_str = f"{s}s"
+                    text = r.get('text', 'no text')[:50]
+                    lines.append(f"`{i}.` {text} — in {time_str}")
+                await self._safe_reply(
+                    message,
+                    f"your reminders:\n" + "\n".join(lines) +
+                    f"\n\nsay 'cancel reminder N' to cancel a specific one, "
+                    f"or 'cancel all reminders' to clear everything."
+                )
                 return True
 
             if intent == 'serverinfo':
@@ -1222,29 +1265,47 @@ class AIChat(commands.Cog):
                     f"{message.content[:100]}")
 
         try:
-            # FIX 5 — per-user rate limiting: 30 AI responses per user per hour.
-            # Owner (volc) is exempt. Prevents one chatty user from burning quota.
+            # PHASE 1B — Tiered per-user rate limiting.
+            # Owner: unlimited. Admin role: 60/hr. Mod perms: 50/hr. Regular: 25/hr.
             user_id = message.author.id
-            owner_id = int(os.getenv("OWNER_ID", "0"))
-            if user_id != owner_id:
-                now = time.time()
-                if user_id not in self._user_message_counts:
-                    self._user_message_counts[user_id] = []
-                # Clean up entries older than 1 hour
-                self._user_message_counts[user_id] = [
-                    t for t in self._user_message_counts[user_id]
-                    if now - t < 3600
-                ]
-                # Check if user has exceeded 30 messages per hour
-                if len(self._user_message_counts[user_id]) >= 30:
-                    logger.warning(f"[RATE LIMIT] {message.author.display_name} hit 30 msgs/hour limit")
+            now = time.time()
+            if user_id not in self._user_message_counts:
+                self._user_message_counts[user_id] = []
+            # Clean up entries older than 1 hour
+            self._user_message_counts[user_id] = [
+                t for t in self._user_message_counts[user_id]
+                if now - t < 3600
+            ]
+            limit = self.get_user_rate_limit(message.author)
+            if limit != 999999:
+                if len(self._user_message_counts[user_id]) >= limit:
+                    logger.warning(
+                        f"[RATE LIMIT] {message.author.display_name} hit {limit}/hour limit"
+                    )
                     await self._safe_reply(
                         message,
-                        "you've been chatting a lot. give me a break for a bit."
+                        "you've been chatting too much. give me a break for a bit."
                     )
                     return
-                # Record this message
-                self._user_message_counts[user_id].append(now)
+            # Record this message (even for owner, harmless)
+            self._user_message_counts[user_id].append(now)
+
+            # PHASE 1B — Per-server global rate limit: 300 AI calls per hour.
+            # Prevents a single server from burning the entire daily quota.
+            guild_id = message.guild.id if message.guild else 0
+            if guild_id not in self._server_message_counts:
+                self._server_message_counts[guild_id] = []
+            self._server_message_counts[guild_id] = [
+                t for t in self._server_message_counts[guild_id]
+                if now - t < 3600
+            ]
+            if len(self._server_message_counts[guild_id]) >= 300:
+                logger.warning(
+                    f"[RATE LIMIT] Server {message.guild.name} hit 300/hour global limit"
+                )
+                # Silently ignore — don't respond at all
+                return
+            self._server_message_counts[guild_id].append(now)
 
             is_limited, remaining = self.check_rate_limit(message.author.id)
             if is_limited:
@@ -1465,43 +1526,44 @@ class AIChat(commands.Cog):
     @tasks.loop(seconds=30)
     async def check_reminders(self):
         import time as _time
+        # PHASE 1A — Use utils/db instead of direct JSON
         try:
-            reminders_db = Database('data/reminders.json')
-            all_data = reminders_db.get_all()
+            from utils.db import get_all_reminders, remove_reminder
+            all_reminders = get_all_reminders()
         except Exception:
             return
         now = int(_time.time())
-        for user_id_str, reminders in list(all_data.items()):
-            if not isinstance(reminders, list):
-                continue
-            still_pending = []
-            for r in reminders:
-                try:
-                    end_time = int(r.get('end_time', 0))
-                except (TypeError, ValueError):
-                    still_pending.append(r)
-                    continue
-                if end_time <= now:
-                    text = r.get('text', 'something')
-                    channel_id = r.get('channel_id')
-                    try:
-                        user = await self.bot.fetch_user(int(user_id_str))
-                        if user:
-                            try:
-                                await user.send(f"hey. you wanted me to remind you: {text}")
-                            except Exception:
-                                if channel_id:
-                                    channel = self.bot.get_channel(int(channel_id))
-                                    if channel:
-                                        await channel.send(f"{user.mention} ⏰ reminder: {text}")
-                    except Exception:
-                        pass
-                else:
-                    still_pending.append(r)
+        for r in all_reminders:
             try:
-                reminders_db.set(user_id_str, still_pending)
+                end_time = int(r.get('end_time', 0))
+            except (TypeError, ValueError):
+                continue
+            if end_time > now:
+                continue  # not yet
+            text = r.get('text', 'something')
+            channel_id = r.get('channel_id')
+            user_id_str = r.get('user_id')
+            reminder_id = r.get('id')
+            if not user_id_str:
+                continue
+            try:
+                user = await self.bot.fetch_user(int(user_id_str))
+                if user:
+                    try:
+                        await user.send(f"hey. you wanted me to remind you: {text}")
+                    except Exception:
+                        if channel_id:
+                            channel = self.bot.get_channel(int(channel_id))
+                            if channel:
+                                await channel.send(f"{user.mention} ⏰ reminder: {text}")
             except Exception:
                 pass
+            # Remove the fired reminder
+            if reminder_id:
+                try:
+                    remove_reminder(int(user_id_str), str(reminder_id))
+                except Exception:
+                    pass
 
     @check_reminders.before_loop
     async def before_check_reminders(self):
