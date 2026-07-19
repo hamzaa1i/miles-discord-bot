@@ -31,6 +31,10 @@ class AutoMod(commands.Cog):
         self.offense_counts = defaultdict(lambda: defaultdict(int))
         # Raid tracking: {guild_id: [join_timestamp, ...]}
         self.join_tracker = defaultdict(list)
+        # FIX 6 — In-memory settings cache with 60s TTL to avoid hitting
+        # Supabase on every single message in every guild.
+        # {guild_id: (settings_dict, timestamp)}
+        self._settings_cache: dict[int, tuple[dict, float]] = {}
         # Start raid check loop
         if not self.raid_check.is_running():
             self.raid_check.start()
@@ -41,11 +45,23 @@ class AutoMod(commands.Cog):
 
     # ─── Settings helpers ──────────────────────────────────────────
 
-    def get_antispam_enabled(self, guild_id: int) -> bool:
-        """Check if antispam is enabled for this guild."""
+    def _get_cached_settings(self, guild_id: int) -> dict:
+        """Get mod_settings with a 60-second in-memory cache.
+        This reduces Supabase queries from every message to once per minute per guild."""
+        now = time.time()
+        if guild_id in self._settings_cache:
+            cached, timestamp = self._settings_cache[guild_id]
+            if now - timestamp < 60:
+                return cached
         from utils.db import get_guild_setting
+        settings = get_guild_setting(guild_id, "mod_settings")
+        self._settings_cache[guild_id] = (settings, now)
+        return settings
+
+    def get_antispam_enabled(self, guild_id: int) -> bool:
+        """Check if antispam is enabled for this guild (cached)."""
         try:
-            settings = get_guild_setting(guild_id, "mod_settings")
+            settings = self._get_cached_settings(guild_id)
             return settings.get("antispam_enabled", False)
         except Exception:
             return False
@@ -57,6 +73,9 @@ class AutoMod(commands.Cog):
             settings = get_guild_setting(guild_id, "mod_settings")
             settings["antispam_enabled"] = enabled
             set_guild_setting(guild_id, "mod_settings", settings)
+            # FIX 6 — Invalidate cache so next read picks up the new value
+            if guild_id in self._settings_cache:
+                del self._settings_cache[guild_id]
         except Exception as e:
             print(f"[automod] failed to save setting: {e}")
 
