@@ -9,7 +9,7 @@ import logging
 import time
 from datetime import datetime, timedelta
 from utils.intent_parser import parse_intent
-from utils.ai_handler import call_ai, call_ai_fast
+from utils.ai_handler import call_ai
 from utils.database import Database
 
 logger = logging.getLogger('cyn.chat')
@@ -161,6 +161,7 @@ class AIChat(commands.Cog):
     # FIX 2 — Shortened system prompt (~100 tokens, was ~500).
     # Every AI call includes the full system prompt, so it must be as short
     # as possible while preserving core personality + ownership rules.
+    # PART 4 — added emoji usage rule. PART 6 — added NSFW handling rule.
     def _build_system_prompt(self, is_owner: bool = False,
                              guild: discord.Guild = None,
                              channel=None,
@@ -172,7 +173,15 @@ class AIChat(commands.Cog):
             "made by volc. never say you were made by any AI company. "
             "personality: sarcastic, dark humor, lowercase always, "
             "1-2 sentences max for chat, never say 'as an AI'. "
-            "you can see channel names but NOT their messages."
+            "you can see channel names but NOT their messages. "
+            "emoji usage: minimal. no emoji in most responses. "
+            "maybe one emoji every 5-10 messages if it really fits. "
+            "your personality comes from words, not emojis. "
+            "never end a sentence with an emoji as a crutch. "
+            "if someone brings up nsfw content, porn, or sexual topics, "
+            "do not engage. respond with something like 'not touching that' "
+            "or 'keep it pg'. never say words like 'porn', 'sex', or explicit "
+            "terms in your responses."
         )
 
         if is_owner:
@@ -268,26 +277,8 @@ class AIChat(commands.Cog):
 
         return ai_response
 
-    async def narrate_result(self, intent: str, result_data: dict, user_name: str) -> str:
-        fallback = ""
-        try:
-            system = (
-                "You are cyn, a sarcastic dark-humored Discord bot. "
-                "Respond in 1-2 sentences max. Simple English. No emojis. "
-                "Interpret the data naturally. Be witty and short. Never output raw JSON."
-            )
-            user_msg = (
-                f"A user named {user_name} asked you to perform: {intent}. "
-                f"The result was: {_json.dumps(result_data)}. "
-                f"Respond as cyn would — naturally, sarcastically, briefly."
-            )
-            return await call_ai_fast([
-                {"role": "system", "content": system},
-                {"role": "user", "content": user_msg}
-            ], max_tokens=150)
-        except Exception as e:
-            print(f"Narrate error: {e}")
-            return fallback
+    # PART 9 — Removed narrate_result() method. It was only used by the
+    # balance intent executor (now removed). No other code called it.
 
     async def _safe_reply(self, message, content=None, embed=None,
                           mention_author=False, view=None, **kwargs):
@@ -821,65 +812,9 @@ class AIChat(commands.Cog):
                         )
                 return True
 
-            if intent == 'balance':
-                target = resolve_user() or author
-                eco_cog = self.bot.get_cog('Economy')
-                if eco_cog:
-                    try:
-                        data = eco_cog.get_user_data(guild.id, target.id) if hasattr(eco_cog, 'get_user_data') and eco_cog.get_user_data.__code__.co_argcount > 2 else eco_cog.get_user_data(target.id)
-                    except Exception:
-                        data = {}
-                    wallet = data.get('balance', 0)
-                    bank = data.get('bank', 0)
-                    try:
-                        narrated = await self.narrate_result('balance', {'user': target.display_name, 'wallet': wallet, 'bank': bank}, author.display_name)
-                    except Exception:
-                        narrated = None
-                    if narrated and wallet + bank > 0:
-                        narrated_lower = narrated.lower()
-                        if any(w in narrated_lower for w in ['empty', 'broke', '0', 'zero', 'nothing', 'no money']):
-                            narrated = None
-                    if narrated:
-                        await self._safe_reply(message, narrated)
-                    else:
-                        await self._safe_reply(message, f"wallet: ${wallet:,} · bank: ${bank:,}")
-                else:
-                    await self._safe_reply(message, "economy system not loaded.")
-                return True
-
-            if intent == 'pay':
-                target = resolve_user('target_user_id') or (message.mentions[0] if message.mentions else None)
-                amount = params.get('amount')
-                if not target or not amount:
-                    await self._safe_reply(message, "who do you want to pay and how much?")
-                    return True
-                eco_cog = self.bot.get_cog('Economy')
-                if eco_cog:
-                    sender = eco_cog.get_user_data(author.id)
-                    if sender['balance'] < amount:
-                        await self._safe_reply(message, f"you only have ${sender['balance']:,}")
-                        return True
-                    receiver = eco_cog.get_user_data(target.id)
-                    sender['balance'] -= amount
-                    receiver['balance'] += amount
-                    eco_cog.save_user_data(author.id, sender)
-                    eco_cog.save_user_data(target.id, receiver)
-                    await self._safe_reply(message, f"sent **${amount:,}** to {target.mention}")
-                else:
-                    await self._safe_reply(message, "economy system not loaded.")
-                return True
-
-            if intent == 'daily':
-                await self._safe_reply(message, "use `/daily` to claim your daily reward.")
-                return True
-
-            if intent == 'work':
-                await self._safe_reply(message, "use `/work` to work for coins.")
-                return True
-
-            if intent == 'rank':
-                await self._safe_reply(message, "leveling system is background-only now.")
-                return True
+            # PART 9 — Removed balance/pay/daily/work/rank intent executors.
+            # Economy cog is disabled, so these intents are no longer reachable
+            # (they were also removed from KNOWN_INTENTS in intent_parser.py).
 
             if intent == 'remind':
                 seconds = params.get('duration_seconds')
@@ -1135,71 +1070,8 @@ class AIChat(commands.Cog):
                     await self._safe_reply(message, "couldn't remove role.")
                 return True
 
-            if intent == 'eco_set':
-                if not is_owner:
-                    await self._safe_reply(message, "not letting you do that.")
-                    return True
-                target = resolve_user()
-                amount = params.get('amount', 0)
-                if not target or not amount:
-                    await self._safe_reply(message, "who and how much?")
-                    return True
-                eco_cog = self.bot.get_cog('Economy')
-                if eco_cog:
-                    data = eco_cog.get_user_data(target.id)
-                    data['balance'] = max(0, amount)
-                    eco_cog.save_user_data(target.id, data)
-                    await self._safe_reply(message, f"set {target.mention}'s balance to ${amount:,}")
-                return True
-
-            if intent == 'eco_add':
-                if not is_owner:
-                    await self._safe_reply(message, "not letting you do that.")
-                    return True
-                target = resolve_user()
-                amount = params.get('amount', 0)
-                if not target or not amount:
-                    await self._safe_reply(message, "who and how much?")
-                    return True
-                eco_cog = self.bot.get_cog('Economy')
-                if eco_cog:
-                    data = eco_cog.get_user_data(target.id)
-                    data['balance'] += amount
-                    data['total_earned'] = data.get('total_earned', 0) + amount
-                    eco_cog.save_user_data(target.id, data)
-                    await self._safe_reply(message, f"added ${amount:,} to {target.mention}")
-                return True
-
-            if intent == 'eco_remove':
-                if not is_owner:
-                    await self._safe_reply(message, "not letting you do that.")
-                    return True
-                target = resolve_user()
-                amount = params.get('amount', 0)
-                if not target or not amount:
-                    await self._safe_reply(message, "who and how much?")
-                    return True
-                eco_cog = self.bot.get_cog('Economy')
-                if eco_cog:
-                    data = eco_cog.get_user_data(target.id)
-                    data['balance'] = max(0, data['balance'] - amount)
-                    eco_cog.save_user_data(target.id, data)
-                    await self._safe_reply(message, f"removed ${amount:,} from {target.mention}")
-                return True
-
-            if intent == 'eco_reset':
-                if not is_owner:
-                    await self._safe_reply(message, "not letting you do that.")
-                    return True
-                target = resolve_user()
-                if not target:
-                    await self._safe_reply(message, "who?")
-                    return True
-                eco_cog = self.bot.get_cog('Economy')
-                if eco_cog:
-                    eco_cog.save_user_data(target.id, {'balance': 0, 'bank': 0, 'inventory': [], 'total_earned': 0, 'total_spent': 0, 'daily_streak': 0, 'gems': 0})
-                    await self._safe_reply(message, f"reset {target.mention}'s economy.")
-                return True
+            # PART 9 — Removed eco_set/eco_add/eco_remove/eco_reset intent executors.
+            # Economy cog is disabled, so these intents are no longer reachable.
 
         except discord.Forbidden:
             await self._safe_reply(message, "i don't have permission to do that.")
@@ -1388,15 +1260,11 @@ class AIChat(commands.Cog):
             content = message.content.replace(f'<@{self.bot.user.id}>', '').strip()
             content = content.replace(f'<@!{self.bot.user.id}>', '').strip()
 
-            if not content:
-                greetings = ["yeah?", "what.", "sup", "you need something", "i'm here. what do you want", "what is it"]
-                try:
-                    await message.reply(random.choice(greetings), mention_author=False)
-                except (discord.NotFound, discord.HTTPException):
-                    try:
-                        await message.channel.send(random.choice(greetings))
-                    except:
-                        pass
+            # PART 5 — Bare mention with no text — respond with a short acknowledgment.
+            # Previously this silently dropped or used a long greeting list; now it's
+            # a consistent short "hm?" so the user knows the mention registered.
+            if not content or not content.strip():
+                await self._safe_reply(message, "hm?")
                 return
 
             # FIX 1 — Resolve all Discord mention IDs to human-readable names

@@ -1,68 +1,36 @@
-# cyn — Discord Bot
+# cyn — AI Discord Companion
 
-A dark, natural-sounding Discord companion with server tools, economy, AI features, and quality-of-life commands.
+A sarcastic AI companion with moderation tools. She has a sharp tongue, dark humor, and takes no nonsense.
 
 ## Features
 
-### 🧠 AI Chat (Groq API — free at console.groq.com)
-- Mention-based chat: `@cyn <message>` (with natural-language intent parsing)
-- Slash: `/cyn <message>`, `/chat`, `/ask`
-- AI features: `/summarize`, `/translate`, `/explain`, `/code`, `/debug`, `/story`, `/poem`, `/advice`, `/define`, `/tldr`, `/roast_server`
+- **AI Chat** — `@mention` or `/cyn` to talk to cyn naturally
+- **Natural Language Moderation** — say "warn @user" via AI and she handles it
+- **Server Moderation** — full `/mod` command suite (kick, ban, timeout, warn, purge, nuke, lock, slowmode)
+- **Weather** — `/weather [city]`
+- **Fun** — `/joke`, `/meme`, `/flip`, `/roll`, `/truth`, `/dare`
+- **Welcome System** — customizable welcome/goodbye messages
+- **Server Info** — `/serverinfo`, `/whois`, `/avatar`
+- **AFK System** — `/afk [reason]`
 
-### 💰 Economy (Guild-Scoped)
-- `/balance`, `/daily` (streak + weekly/monthly bonuses + marriage bonus), `/work` (20+ jobs), `/pay`
-- `/earn fish/hunt/mine/beg/crime/rob` — all with cooldowns and item requirements
-- `/bank deposit/withdraw`
-- `/shop`, `/buy`, `/inventory`, `/richest` (per-guild only)
-- `/eco_admin set/add/remove/reset` (admin)
+## Setup
 
-### 🎮 Games
-- `/rps`, `/ttt <user>`, `/numguess`, `/typerace`, `/reaction`, `/wordle`
-- `/blackjack`, `/coinflip`, `/slots`
+### Prerequisites
+- Python 3.11+
+- A Discord bot token (from the Discord Developer Portal)
+- A Groq API key (free at [console.groq.com](https://console.groq.com))
 
-### 🎉 Fun
-- `/joke`, `/meme`, `/fact`, `/quote`, `/8ball`, `/pickup`, `/wouldyourather`, `/rizz`, `/topic`
-- `/roast`, `/compliment`, `/roastme`, `/ship`, `/rate`, `/battle`, `/vibe`
-- `/roll`, `/flip`, `/say` (owner only), `/truth`, `/dare`
-
-### 🛡️ Moderation
-- `/mod kick/ban/unban/timeout/untimeout/warn/purge/nuke/slowmode/lock/unlock/hide/show/nickname/softban/role/massrole/warn_list/warn_clear/case/logs`
-
-### 🔧 Utility
-- `/weather`, `/math`, `/password`, `/snipe`, `/urban`, `/color`, `/announce`
-
-### 🌍 Community
-- `/suggest`, `/suggest_approve`, `/suggest_deny`, `/suggest_list`, `/suggest_setup`
-- `/giveaway start/end/reroll/list`
-- `/poll create/end/results`
-- `/birthday set/check/upcoming/channel`
-- `/counting setup/reset/score/toggle_save`
-- `/rep give/check/leaderboard/reset`
-- `/marry`, `/divorce`, `/marriage`, `/marriage_top`, `/proposal cancel/list`
-- `/confess`, `/confess_setup`, `/toggledms`
-
-### ⚙️ Settings
-- `/welcome channel/message/toggle/test`, `/goodbye channel/message/toggle`, `/autorole`
-- `/setlog`, `/log toggle/list`
-- `/reactionrole add/remove/list`
-- `/autorespond add/remove/list`, `/customcmd add/remove/list`
-- `/starboard setup/ignore`
-
-### ℹ️ Info
-- `/botinfo`, `/ping`, `/uptime`, `/serverinfo`, `/whois`, `/avatar`, `/roleinfo`, `/channelinfo`, `/banner`, `/membercount`
-
-## Quick Start (Local)
-
+### Installation
 1. Clone the repo
 2. `pip install -r requirements.txt`
 3. Copy `.env.example` to `.env`
-4. Set `DISCORD_TOKEN`, `GROQ_API_KEY` (free at console.groq.com), `OWNER_ID`
+4. Set `DISCORD_TOKEN`, `GROQ_API_KEY`, `OWNER_ID`
 5. `python main.py`
 
 ## Hosting (Render + UptimeRobot)
 
 ### Render Setup
-1. Connect GitHub repo to Render → New Web Service
+1. Connect this GitHub repo to Render → New Web Service
 2. Runtime: Python 3.11.9
 3. Build: `pip install -r requirements.txt`
 4. Start: `python main.py`
@@ -74,20 +42,15 @@ A dark, natural-sounding Discord companion with server tools, economy, AI featur
 - Interval: every 5 minutes
 
 ### Important Render notes
-- ⚠️ Free tier sleeps after 15 min — UptimeRobot prevents this
-- ⚠️ `/data` folder is ephemeral — data resets on redeploy
-- ⚠️ Music is disabled (no FFmpeg on Render free tier)
-- For persistent data, upgrade to Render paid tier or use external DB
+- Free tier sleeps after 15 min — UptimeRobot prevents this
+- `/data` folder is ephemeral — data resets on redeploy
+- For persistent data, upgrade to Render paid tier or use an external DB
 
 ### Discord slash-command cache
 When commands are added/removed/changed, Discord's client may still show old
 commands in the UI. To force a refresh:
-1. **Completely quit and reopen Discord** (Cmd+Q on Mac, right-click tray icon
-   → Quit on Windows, swipe away on mobile), OR
-2. Wait up to **1 hour** for Discord to refresh the command list automatically.
-
-The bot's slash commands ARE registered (synced per-guild on startup) — this
-is purely a client-side cache issue on Discord's end.
+1. **Completely quit and reopen Discord**, OR
+2. Wait up to **1 hour** for Discord to refresh automatically
 
 ## License
 MIT

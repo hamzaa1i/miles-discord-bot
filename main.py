@@ -98,22 +98,16 @@ intents.members = True
 intents.presences = True
 
 
-# ==================== FIX 5 — Data Directory and Files ====================
+# ==================== Data Directory and Files ====================
+# PART 8 — Trimmed to only the files needed by active cogs.
+# Removed all economy/marriage/polls/counting/reputation/starboard/
+# reaction_roles/autorespond/buttonroles files (their cogs are disabled).
 DEFAULT_DATA_FILES = [
-    "economy.json", "levels.json", "welcome.json", "logs.json",
-    "autorespond.json", "reaction_roles.json", "afk.json",
+    "welcome.json", "logs.json", "afk.json",
     "reminders.json", "notes.json", "todos.json", "warnings.json",
-    "tickets.json", "suggestions.json", "giveaways.json",
-    "birthdays.json", "starboard.json", "counting.json",
-    "reputation.json", "marriages.json", "polls.json",
-    "buttonroles.json", "customcmds.json", "snipe.json",
-    # extras that cogs actually use
-    "moderation.json", "leveling.json", "level_config.json",
-    "server_logs.json", "dm_prefs.json", "giveaway.json",
-    "automod.json", "modmail.json", "custom_embeds.json",
-    "poll.json", "suggestion.json", "marriage.json",
-    "reputation_db.json", "trivia.json",
-    # FIX 4 — per-guild AI moderation role settings
+    "snipe.json",
+    "moderation.json",
+    # per-guild AI moderation role settings
     "settings.json",
 ]
 
@@ -230,14 +224,17 @@ class CynBot(commands.Bot):
             self.synced = True
             print(f"Sync complete: {success_count} success, {fail_count} failed")
 
-        # Test Groq API
+        # Test Groq API + print active cog count
         try:
             from utils.ai_handler import call_ai_fast
             result = await call_ai_fast([
                 {"role": "user", "content": "say ok"}
             ])
+            active_cogs = len(self.cogs)
             print(f"✅ Groq API working: {result[:50]}")
+            print(f"✅ Active cogs loaded: {active_cogs}")
             logger.info(f"✅ Groq API working: {result[:50]}")
+            logger.info(f"✅ Active cogs loaded: {active_cogs}")
         except Exception as e:
             print(f"❌ Groq API failed: {type(e).__name__}: {e}")
             logger.error(f"❌ Groq API failed: {type(e).__name__}: {e}")

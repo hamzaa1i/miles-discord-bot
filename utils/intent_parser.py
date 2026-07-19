@@ -16,90 +16,60 @@ INTENT_SYSTEM_PROMPT = (
     "- ban: {user_id, reason} — REQUIRES a @mention of the target in the message\n"
     "- kick: {user_id, reason} — REQUIRES a @mention of the target in the message\n"
     "- mute: {user_id, duration_seconds, reason} — REQUIRES a @mention of the target in the message\n"
+    "- timeout: same as mute (alias)\n"
+    "- unmute: {user_id} — remove timeout from a user. REQUIRES a @mention.\n"
     "- purge: {amount}\n"
     "- warn: {user_id, reason} — REQUIRES a @mention of the target in the message\n"
-    "- warn_clear: {user_id} — clear all warnings for a user.\n"
-    "  REQUIRES a @mention. Needs administrator permission.\n"
-    "- unmute: {user_id} — remove timeout from a user.\n"
-    "  REQUIRES a @mention. Needs moderate_members permission.\n"
-    "- delete_message: {message_id} — user wants to delete a specific message by ID, "
-    "OR wants to delete the message they are replying to. Look for patterns like "
-    "'delete message: 1234567890' or 'delete this message' or 'delete [id]'. "
-    "If no message ID is visible, return {\"message_id\": null} and the bot will try "
-    "the replied-to message.\n"
+    "- warn_clear: {user_id} — clear all warnings for a user. REQUIRES a @mention.\n"
+    "- delete_message: {message_id} — delete a specific message by ID, or the "
+    "message they are replying to. Look for 'delete message: 1234567890' or "
+    "'delete this message'. If no ID visible, return {\"message_id\": null}.\n"
     "- slowmode: {seconds}\n"
     "- lock: {}\n"
     "- unlock: {}\n"
     "- hide: {}\n"
     "- show: {}\n"
     "- nuke: {}\n"
+    "- nick: {user_id, nickname} — change a user's nickname. REQUIRES a @mention.\n"
     "- role_add: {user_id, role}\n"
     "- role_remove: {user_id, role}\n"
-    "- balance: {user_id} (optional)\n"
-    "- pay: {target_user_id, amount}\n"
-    "- daily: {}\n"
-    "- work: {}\n"
-    "- earn_fish: {}\n"
-    "- earn_hunt: {}\n"
-    "- earn_mine: {}\n"
-    "- earn_beg: {}\n"
-    "- earn_crime: {}\n"
-    "- earn_rob: {user_id}\n"
-    "- bank_deposit: {amount}\n"
-    "- bank_withdraw: {amount}\n"
-    "- eco_set: {user_id, amount}\n"
-    "- eco_add: {user_id, amount}\n"
-    "- eco_remove: {user_id, amount}\n"
-    "- eco_reset: {user_id}\n"
-    "- richest: {}\n"
     "- remind: {duration_seconds, reminder_text}\n"
     "- serverinfo: {} — ONLY for explicit requests for server statistics "
     "or data like member count, channel count, creation date. "
     "Examples that ARE serverinfo: 'server info', 'server stats', "
-    "'server statistics', 'show me server info', 'what are the server details', "
-    "'info about this server'. "
-    "NOT serverinfo: 'how many servers are you in', 'what servers are you in', "
-    "'how many servers do you have', 'how many guilds' (about the BOT, return 'chat'), "
-    "'what is this server about', 'what is this server', 'tell me about this server', "
-    "'what kind of server is this', 'what do u think of this server' (opinion/casual "
-    "questions — return 'chat' so the AI answers from its server context knowledge, "
-    "not by running a command).\n"
+    "'server statistics', 'show me server info', 'what are the server details'. "
+    "NOT serverinfo: 'how many servers are you in' (about the BOT, return 'chat'), "
+    "'what is this server about', 'tell me about this server' (opinion/casual, "
+    "return 'chat' so the AI answers from context).\n"
     "- ping: {}\n"
     "- botinfo: {}\n"
     "- uptime: {}\n"
     "- whois: {user_id} (optional)\n"
     "- avatar: {user_id} (optional)\n"
-    "- poll: {question}\n"
     "- joke: {}\n"
     "- meme: {}\n"
-    "- roast: {user_id} (optional)\n"
     "- flip: {}\n"
     "- roll: {sides}\n"
+    "- fact: {} — user wants a random fun fact\n"
+    "- truth: {} — user wants a truth question\n"
+    "- dare: {} — user wants a dare challenge\n"
     "- weather: {city}\n"
-    "- rep_give: {user_id, reason}\n"
-    "- marry: {user_id}\n"
-    "- divorce: {}\n"
     "- chat: {} (default fallback)\n\n"
     "IMPORTANT: Moderation intents (ban, kick, warn, mute) ONLY apply when there "
     "is a @mention pattern (like <@123456> or @username format) visible in the "
     "message. If a user says 'warn diva' with no @mention, return 'chat' intent, "
-    "NOT 'warn' — the bot cannot reliably identify who 'diva' is without a mention."
+    "NOT 'warn' — the bot cannot reliably identify who 'diva' is without a mention.\n\n"
+    "NOTE: 'poll' intent has been removed. If a user talks about polls, voting, "
+    "or poll results, return 'chat' — the AI handles it conversationally."
 )
 
 KNOWN_INTENTS = {
-    'ban', 'kick', 'mute', 'purge', 'warn', 'warn_clear', 'unmute',
-    'delete_message',
+    'ban', 'kick', 'mute', 'timeout', 'unmute', 'purge',
+    'warn', 'warn_clear', 'delete_message',
     'slowmode', 'lock', 'unlock',
-    'hide', 'show', 'nuke', 'role_add', 'role_remove',
-    'balance', 'pay', 'daily', 'work',
-    'earn_fish', 'earn_hunt', 'earn_mine', 'earn_beg', 'earn_crime', 'earn_rob',
-    'bank_deposit', 'bank_withdraw',
-    'eco_set', 'eco_add', 'eco_remove', 'eco_reset',
-    'richest',
+    'hide', 'show', 'nuke', 'nick', 'role_add', 'role_remove',
     'remind', 'serverinfo', 'ping', 'botinfo', 'uptime', 'whois', 'avatar',
-    'poll', 'joke', 'meme', 'roast',
-    'flip', 'roll', 'weather',
-    'rep_give', 'marry', 'divorce',
+    'joke', 'meme', 'flip', 'roll', 'fact', 'truth', 'dare', 'weather',
     'chat',
 }
 
