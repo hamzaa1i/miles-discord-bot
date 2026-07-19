@@ -146,6 +146,14 @@ def run_flask():
 
 
 def keep_alive():
+    # CRITICAL BUG 2 — Verify all routes are registered on THIS app before starting
+    with app.test_client() as client:
+        resp = client.get('/health')
+        print(f"[Debug] /health route test: {resp.status_code}")
+        logger.info(f"[Debug] /health route test: {resp.status_code}")
+        if resp.status_code != 200:
+            print(f"[Debug] /health route FAILED — routes on app: {[r.rule for r in app.url_map.iter_rules()]}")
+            logger.error(f"[Debug] /health route FAILED — routes on app: {[r.rule for r in app.url_map.iter_rules()]}")
     t = Thread(target=run_flask, daemon=True)
     t.start()
     logger.info("🌐 Keep-alive server started on port 8080")
@@ -274,50 +282,41 @@ class CynBot(commands.Bot):
         else:
             logger.warning("⚠️ OWNER_ID not set in env")
 
-        # FIX 2 — Always clear global commands on startup to prevent duplicate
-        # command buildup in Discord's slash command menu. Old global commands
-        # from previous sessions linger and show as duplicates alongside the
-        # guild-specific commands. Clearing globals sends an empty list to
-        # Discord, removing all old global commands.
-        try:
-            self.tree.clear_commands(guild=None)
-            await self.tree.sync()  # Sync empty global = clears all global commands
-            logger.info("✅ Cleared global commands")
-            print("✅ Cleared global commands")
-        except Exception as e:
-            logger.warning(f"⚠️ Could not clear global commands: {e}")
-            print(f"⚠️ Could not clear global commands: {e}")
+        # CRITICAL BUG 1 FIX — Do NOT clear the in-memory tree before syncing.
+        # The previous code called clear_commands(guild=None) + sync() which
+        # wiped the tree AFTER cogs loaded their commands, then copy_global_to
+        # copied nothing → 0 commands synced to every guild.
+        #
+        # Correct order: cogs load commands into tree during setup_hook (already
+        # done by this point). We just copy to each guild and sync per-guild.
+        # Do NOT call clear_commands or bare sync() — those wipe the tree.
+        if not getattr(self, 'synced', False):
+            # Debug: count commands in tree BEFORE sync to confirm non-zero
+            all_cmds = list(self.tree.get_commands())
+            total = sum(
+                len(g.commands) if hasattr(g, 'commands') else 1
+                for g in all_cmds
+            )
+            print(f"[Debug] Commands ready to sync: {len(all_cmds)} groups/commands, {total} total")
+            logger.info(f"[Debug] Commands ready to sync: {len(all_cmds)} groups/commands, {total} total")
 
-        # FIX 2 — Only sync to guilds once per session (uses self.synced flag).
-        # The global clear above always runs, but guild sync is once-per-session.
-        if not self.synced:
-            # Debug: count commands in tree before sync
-            all_cmds = self.tree.get_commands()
-            cmd_count = 0
-            for c in all_cmds:
-                if hasattr(c, 'commands'):
-                    cmd_count += len(c.commands)
-                else:
-                    cmd_count += 1
-            print(f"[Debug] Commands in tree before guild sync: {len(all_cmds)} ({cmd_count} total including subcommands)")
-
-            success_count = 0
-            fail_count = 0
+            success = 0
+            failed = 0
             for guild in self.guilds:
                 try:
                     self.tree.copy_global_to(guild=guild)
                     synced = await self.tree.sync(guild=guild)
                     print(f"✅ Synced {len(synced)} commands to {guild.name}")
                     logger.info(f"✅ Synced {len(synced)} commands to guild: {guild.name}")
-                    success_count += 1
+                    success += 1
                 except Exception as e:
                     print(f"❌ Failed to sync to {guild.name}: {e}")
-                    logger.error(f"❌ Failed to sync to guild {guild.name}: {e}")
-                    fail_count += 1
+                    logger.error(f"❌ Failed to sync to {guild.name}: {e}")
+                    failed += 1
 
             self.synced = True
-            print(f"Sync complete: {success_count} success, {fail_count} failed")
-            logger.info(f"Sync complete: {success_count} success, {fail_count} failed")
+            print(f"Sync complete: {success} success, {failed} failed")
+            logger.info(f"Sync complete: {success} success, {failed} failed")
 
         # Test Groq API + print active cog count
         try:
