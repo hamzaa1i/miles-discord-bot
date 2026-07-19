@@ -15,7 +15,7 @@ import asyncio
 from dotenv import load_dotenv
 import logging
 from datetime import datetime
-from flask import Flask
+from flask import Flask, jsonify
 from threading import Thread
 
 load_dotenv()
@@ -36,8 +36,10 @@ OWNER_ID = int(os.getenv('OWNER_ID', '0'))
 # Global start_time — set before bot starts
 start_time = datetime.utcnow()
 
-# Keep-alive Flask app — enhanced with stats + health
-app = Flask('')
+# FIX 1 — Single Flask app. keep_alive.py no longer creates its own Flask app;
+# it only stores tracking variables (bot_ref, start_time, total_ai_calls, etc.)
+# that this app's /health route reads.
+app = Flask(__name__)
 bot = None  # set after bot is created
 
 
@@ -54,70 +56,89 @@ def home():
 
 @app.route('/health')
 def health():
-    from flask import jsonify
-    uptime_seconds = (datetime.utcnow() - start_time).total_seconds()
+    """FIX 1 — Enhanced /health endpoint with full bot metrics."""
+    import keep_alive as kl
 
-    # PHASE 1D — Track AI metrics from keep_alive module
-    ai_calls = 0
-    avg_response = 0.0
+    uptime_seconds = 0
+    if kl.start_time:
+        delta = datetime.utcnow() - kl.start_time
+        uptime_seconds = int(delta.total_seconds())
+
+    def fmt_uptime(s):
+        d = s // 86400
+        h = (s % 86400) // 3600
+        m = (s % 3600) // 60
+        return f"{d}d {h}h {m}m"
+
+    b = kl.bot_ref
+
+    # Read AI call metrics from keep_alive tracking vars
+    ai_calls = getattr(kl, 'total_ai_calls', 0)
+    response_times = getattr(kl, 'recent_response_times', [])
+    avg_response = (
+        sum(response_times) / len(response_times)
+        if response_times else 0.0
+    )
+
+    # Read Supabase status
     using_supabase = False
-    try:
-        import keep_alive as _kl
-        ai_calls = _kl.total_ai_calls
-        if _kl.recent_response_times:
-            avg_response = sum(_kl.recent_response_times) / len(_kl.recent_response_times)
-    except Exception:
-        pass
     try:
         from utils.db import using_supabase as _us
         using_supabase = _us()
     except Exception:
         pass
 
-    def _fmt_uptime(s):
-        d = int(s // 86400); h = int((s % 86400) // 3600); m = int((s % 3600) // 60)
-        return f"{d}d {h}h {m}m"
-
-    if bot is None or not bot.is_ready():
+    if b is None or not getattr(b, 'is_ready', lambda: False)():
         return jsonify({
             "status": "starting",
-            "uptime_seconds": int(uptime_seconds),
-            "uptime_human": _fmt_uptime(uptime_seconds),
-            "guilds": 0, "users": 0, "latency_ms": 0,
+            "uptime_seconds": uptime_seconds,
+            "uptime_human": fmt_uptime(uptime_seconds),
+            "guilds": 0,
+            "users": 0,
+            "latency_ms": 0,
             "ai_calls_total": ai_calls,
             "avg_response_ms": round(avg_response, 1),
             "active_cogs": 0,
             "using_supabase": using_supabase
         }), 200
 
-    user_count = sum(g.member_count for g in bot.guilds) if bot.is_ready() else 0
     return jsonify({
         "status": "ok",
-        "uptime_seconds": int(uptime_seconds),
-        "uptime_human": _fmt_uptime(uptime_seconds),
-        "latency_ms": round(bot.latency * 1000, 2),
-        "guilds": len(bot.guilds),
-        "users": user_count,
+        "uptime_seconds": uptime_seconds,
+        "uptime_human": fmt_uptime(uptime_seconds),
+        "guilds": len(b.guilds),
+        "users": sum(g.member_count for g in b.guilds),
+        "latency_ms": round(b.latency * 1000, 1),
         "ai_calls_total": ai_calls,
         "avg_response_ms": round(avg_response, 1),
-        "active_cogs": len(bot.cogs),
+        "active_cogs": len(b.cogs),
         "using_supabase": using_supabase
     }), 200
 
 
 @app.route('/stats')
 def stats():
-    if bot is None:
-        return {"status": "starting", "command_counts": {}}, 200
-    counts = getattr(bot, 'command_counts', {})
-    return {
-        "status": "ok" if bot.is_ready() else "starting",
-        "guilds": len(bot.guilds) if bot.is_ready() else 0,
-        "users": sum(g.member_count for g in bot.guilds) if bot.is_ready() else 0,
-        "latency_ms": round(bot.latency * 1000, 2) if bot.is_ready() else 0,
-        "uptime_seconds": (datetime.utcnow() - start_time).total_seconds(),
-        "command_counts": counts
-    }, 200
+    import keep_alive as kl
+    b = kl.bot_ref
+    if b is None:
+        return jsonify({"status": "starting", "command_counts": {}}), 200
+    counts = getattr(b, 'command_counts', {})
+    ready = getattr(b, 'is_ready', lambda: False)()
+    response_times = getattr(kl, 'recent_response_times', [])
+    avg_response = (
+        sum(response_times) / len(response_times)
+        if response_times else 0.0
+    )
+    return jsonify({
+        "status": "ok" if ready else "starting",
+        "guilds": len(b.guilds) if ready else 0,
+        "users": sum(g.member_count for g in b.guilds) if ready else 0,
+        "latency_ms": round(b.latency * 1000, 2) if ready else 0,
+        "uptime_seconds": int((datetime.utcnow() - start_time).total_seconds()),
+        "command_counts": counts,
+        "ai_calls_total": getattr(kl, 'total_ai_calls', 0),
+        "avg_response_ms": round(avg_response, 1)
+    }), 200
 
 
 def run_flask():
@@ -253,8 +274,22 @@ class CynBot(commands.Bot):
         else:
             logger.warning("⚠️ OWNER_ID not set in env")
 
-        # Guild-only sync — no global sync (avoids Discord's 100-command global limit).
-        # Commands are copied to each guild and synced per-guild (instant, no 1hr wait).
+        # FIX 2 — Always clear global commands on startup to prevent duplicate
+        # command buildup in Discord's slash command menu. Old global commands
+        # from previous sessions linger and show as duplicates alongside the
+        # guild-specific commands. Clearing globals sends an empty list to
+        # Discord, removing all old global commands.
+        try:
+            self.tree.clear_commands(guild=None)
+            await self.tree.sync()  # Sync empty global = clears all global commands
+            logger.info("✅ Cleared global commands")
+            print("✅ Cleared global commands")
+        except Exception as e:
+            logger.warning(f"⚠️ Could not clear global commands: {e}")
+            print(f"⚠️ Could not clear global commands: {e}")
+
+        # FIX 2 — Only sync to guilds once per session (uses self.synced flag).
+        # The global clear above always runs, but guild sync is once-per-session.
         if not self.synced:
             # Debug: count commands in tree before sync
             all_cmds = self.tree.get_commands()
@@ -264,10 +299,7 @@ class CynBot(commands.Bot):
                     cmd_count += len(c.commands)
                 else:
                     cmd_count += 1
-            print(f"[Debug] Commands in tree before sync: {len(all_cmds)} ({cmd_count} total including subcommands)")
-
-            # Do NOT call tree.clear_commands() — it wipes the global commands
-            # that copy_global_to needs to copy FROM.
+            print(f"[Debug] Commands in tree before guild sync: {len(all_cmds)} ({cmd_count} total including subcommands)")
 
             success_count = 0
             fail_count = 0
@@ -285,6 +317,7 @@ class CynBot(commands.Bot):
 
             self.synced = True
             print(f"Sync complete: {success_count} success, {fail_count} failed")
+            logger.info(f"Sync complete: {success_count} success, {fail_count} failed")
 
         # Test Groq API + print active cog count
         try:

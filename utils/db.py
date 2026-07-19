@@ -83,6 +83,11 @@ logger = logging.getLogger('cyn.db')
 _supabase = None
 _use_supabase = False
 
+# FIX 3 — Track which Supabase errors have been logged so we don't spam
+# the logs every 30 seconds (e.g. reminder background task polling).
+# Each error is logged ONCE, then we silently fall back to JSON.
+_supabase_error_logged = set()
+
 
 def init_db():
     """Initialize the database connection. Call this in main.py on_ready."""
@@ -141,8 +146,18 @@ def get_guild_setting(guild_id: int, table: str) -> dict:
                 return result.data[0]
             return {}
         except Exception as e:
-            logger.error(f"[DB] get_guild_setting error: {e}")
-            return {}
+            error_key = f"get_guild_setting_{table}"
+            if error_key not in _supabase_error_logged:
+                logger.error(f"[DB] get_guild_setting ({table}) error: {e}")
+                logger.warning(
+                    f"[DB] Supabase permission issue for table '{table}'. "
+                    "Run GRANT SQL in your Supabase SQL editor. "
+                    "Falling back to JSON."
+                )
+                _supabase_error_logged.add(error_key)
+            # Fall back to JSON silently
+            data = _read_json(f"data/{table}.json")
+            return data.get(str(guild_id), {})
     else:
         data = _read_json(f"data/{table}.json")
         return data.get(str(guild_id), {})
@@ -164,7 +179,19 @@ def set_guild_setting(guild_id: int, table: str, settings: dict):
                     "guild_id": str(guild_id), **settings
                 }).execute()
         except Exception as e:
-            logger.error(f"[DB] set_guild_setting error: {e}")
+            error_key = f"set_guild_setting_{table}"
+            if error_key not in _supabase_error_logged:
+                logger.error(f"[DB] set_guild_setting ({table}) error: {e}")
+                logger.warning(
+                    f"[DB] Supabase permission issue for table '{table}'. "
+                    "Run GRANT SQL in your Supabase SQL editor. "
+                    "Falling back to JSON."
+                )
+                _supabase_error_logged.add(error_key)
+            # Fall back to JSON silently
+            data = _read_json(f"data/{table}.json")
+            data[str(guild_id)] = settings
+            _write_json(f"data/{table}.json", data)
     else:
         data = _read_json(f"data/{table}.json")
         data[str(guild_id)] = settings
@@ -182,8 +209,18 @@ def get_warnings(guild_id: int, user_id: int) -> list:
             ).eq("user_id", str(user_id)).execute()
             return result.data or []
         except Exception as e:
-            logger.error(f"[DB] get_warnings error: {e}")
-            return []
+            error_key = "get_warnings"
+            if error_key not in _supabase_error_logged:
+                logger.error(f"[DB] get_warnings error: {e}")
+                logger.warning(
+                    "[DB] Supabase permission issue for table 'warnings'. "
+                    "Run GRANT SQL in your Supabase SQL editor. "
+                    "Falling back to JSON."
+                )
+                _supabase_error_logged.add(error_key)
+            # Fall back to JSON silently
+            data = _read_json("data/warnings.json")
+            return data.get(str(guild_id), {}).get(str(user_id), [])
     else:
         data = _read_json("data/warnings.json")
         return data.get(str(guild_id), {}).get(str(user_id), [])
@@ -198,8 +235,34 @@ def add_warning(guild_id: int, user_id: int, warning: dict) -> int:
             result = _supabase.table("warnings").insert(warning).execute()
             return result.data[0].get("case_id", 0) if result.data else 0
         except Exception as e:
-            logger.error(f"[DB] add_warning error: {e}")
-            return 0
+            error_key = "add_warning"
+            if error_key not in _supabase_error_logged:
+                logger.error(f"[DB] add_warning error: {e}")
+                logger.warning(
+                    "[DB] Supabase permission issue for table 'warnings'. "
+                    "Run GRANT SQL in your Supabase SQL editor. "
+                    "Falling back to JSON."
+                )
+                _supabase_error_logged.add(error_key)
+            # Fall back to JSON silently
+            data = _read_json("data/warnings.json")
+            g = str(guild_id)
+            u = str(user_id)
+            if g not in data:
+                data[g] = {}
+            if u not in data[g]:
+                data[g][u] = []
+            all_cases = [
+                w.get("case_id", 0)
+                for cases in data[g].values()
+                for w in cases
+                if isinstance(w, dict)
+            ]
+            case_id = max(all_cases, default=0) + 1
+            warning["case_id"] = case_id
+            data[g][u].append(warning)
+            _write_json("data/warnings.json", data)
+            return case_id
     else:
         data = _read_json("data/warnings.json")
         g = str(guild_id)
@@ -229,7 +292,22 @@ def clear_warnings(guild_id: int, user_id: int):
                 "guild_id", str(guild_id)
             ).eq("user_id", str(user_id)).execute()
         except Exception as e:
-            logger.error(f"[DB] clear_warnings error: {e}")
+            error_key = "clear_warnings"
+            if error_key not in _supabase_error_logged:
+                logger.error(f"[DB] clear_warnings error: {e}")
+                logger.warning(
+                    "[DB] Supabase permission issue for table 'warnings'. "
+                    "Run GRANT SQL in your Supabase SQL editor. "
+                    "Falling back to JSON."
+                )
+                _supabase_error_logged.add(error_key)
+            # Fall back to JSON silently
+            data = _read_json("data/warnings.json")
+            g = str(guild_id)
+            u = str(user_id)
+            if g in data and u in data[g]:
+                data[g][u] = []
+            _write_json("data/warnings.json", data)
     else:
         data = _read_json("data/warnings.json")
         g = str(guild_id)
@@ -250,8 +328,27 @@ def get_all_reminders() -> list:
             ).execute()
             return result.data or []
         except Exception as e:
-            logger.error(f"[DB] get_all_reminders error: {e}")
-            return []
+            error_key = "get_all_reminders"
+            if error_key not in _supabase_error_logged:
+                logger.error(f"[DB] get_all_reminders error: {e}")
+                logger.warning(
+                    "[DB] Supabase permission issue for table 'reminders'. "
+                    "Run GRANT SQL in your Supabase SQL editor. "
+                    "Falling back to JSON for reminders."
+                )
+                _supabase_error_logged.add(error_key)
+            # Fall back to JSON silently
+            data = _read_json("data/reminders.json")
+            all_reminders = []
+            for user_id, reminders in data.items():
+                if not isinstance(reminders, list):
+                    continue
+                for r in reminders:
+                    if isinstance(r, dict):
+                        r["user_id"] = user_id
+                        r["id"] = r.get("id", f"{user_id}_{r.get('end_time', 0)}")
+                        all_reminders.append(r)
+            return all_reminders
     else:
         data = _read_json("data/reminders.json")
         all_reminders = []
@@ -274,7 +371,26 @@ def add_reminder(user_id: int, reminder: dict):
             reminder["fired"] = False
             _supabase.table("reminders").insert(reminder).execute()
         except Exception as e:
-            logger.error(f"[DB] add_reminder error: {e}")
+            error_key = "add_reminder"
+            if error_key not in _supabase_error_logged:
+                logger.error(f"[DB] add_reminder error: {e}")
+                logger.warning(
+                    "[DB] Supabase permission issue for table 'reminders'. "
+                    "Run GRANT SQL in your Supabase SQL editor. "
+                    "Falling back to JSON for reminders."
+                )
+                _supabase_error_logged.add(error_key)
+            # Fall back to JSON silently
+            data = _read_json("data/reminders.json")
+            u = str(user_id)
+            if u not in data:
+                data[u] = []
+            if not isinstance(data[u], list):
+                data[u] = []
+            if "id" not in reminder:
+                reminder["id"] = f"{u}_{reminder.get('end_time', 0)}_{len(data[u])}"
+            data[u].append(reminder)
+            _write_json("data/reminders.json", data)
     else:
         data = _read_json("data/reminders.json")
         u = str(user_id)
@@ -282,7 +398,6 @@ def add_reminder(user_id: int, reminder: dict):
             data[u] = []
         if not isinstance(data[u], list):
             data[u] = []
-        # Generate a stable ID for JSON fallback
         if "id" not in reminder:
             reminder["id"] = f"{u}_{reminder.get('end_time', 0)}_{len(data[u])}"
         data[u].append(reminder)
@@ -297,7 +412,24 @@ def remove_reminder(user_id: int, reminder_id: str):
                 "id", reminder_id
             ).execute()
         except Exception as e:
-            logger.error(f"[DB] remove_reminder error: {e}")
+            error_key = "remove_reminder"
+            if error_key not in _supabase_error_logged:
+                logger.error(f"[DB] remove_reminder error: {e}")
+                logger.warning(
+                    "[DB] Supabase permission issue for table 'reminders'. "
+                    "Run GRANT SQL in your Supabase SQL editor. "
+                    "Falling back to JSON for reminders."
+                )
+                _supabase_error_logged.add(error_key)
+            # Fall back to JSON silently
+            data = _read_json("data/reminders.json")
+            u = str(user_id)
+            if u in data and isinstance(data[u], list):
+                data[u] = [
+                    r for r in data[u]
+                    if r.get("id") != reminder_id
+                ]
+                _write_json("data/reminders.json", data)
     else:
         data = _read_json("data/reminders.json")
         u = str(user_id)
@@ -318,15 +450,33 @@ def get_user_reminders(user_id: int) -> list:
             ).eq("fired", False).execute()
             return result.data or []
         except Exception as e:
-            logger.error(f"[DB] get_user_reminders error: {e}")
-            return []
+            error_key = "get_user_reminders"
+            if error_key not in _supabase_error_logged:
+                logger.error(f"[DB] get_user_reminders error: {e}")
+                logger.warning(
+                    "[DB] Supabase permission issue for table 'reminders'. "
+                    "Run GRANT SQL in your Supabase SQL editor. "
+                    "Falling back to JSON for reminders."
+                )
+                _supabase_error_logged.add(error_key)
+            # Fall back to JSON silently
+            data = _read_json("data/reminders.json")
+            u = str(user_id)
+            reminders = data.get(u, [])
+            if not isinstance(reminders, list):
+                return []
+            for r in reminders:
+                if isinstance(r, dict):
+                    r["user_id"] = u
+                    if "id" not in r:
+                        r["id"] = f"{u}_{r.get('end_time', 0)}"
+            return reminders
     else:
         data = _read_json("data/reminders.json")
         u = str(user_id)
         reminders = data.get(u, [])
         if not isinstance(reminders, list):
             return []
-        # Attach user_id + id for consistency
         for r in reminders:
             if isinstance(r, dict):
                 r["user_id"] = u
