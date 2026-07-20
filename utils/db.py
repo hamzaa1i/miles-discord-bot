@@ -89,6 +89,48 @@ CREATE TABLE server_personality (
   set_by TEXT,
   updated_at TEXT
 );
+
+-- PHASE 3 — NEW TABLES, run in Supabase SQL editor:
+--
+-- CREATE TABLE IF NOT EXISTS user_profiles (
+--   user_id TEXT PRIMARY KEY,
+--   bio TEXT,
+--   pronouns TEXT,
+--   timezone TEXT,
+--   updated_at TEXT
+-- );
+-- GRANT ALL ON public.user_profiles TO anon;
+--
+-- CREATE TABLE IF NOT EXISTS birthdays (
+--   guild_id TEXT NOT NULL,
+--   user_id TEXT NOT NULL,
+--   month INT NOT NULL,
+--   day INT NOT NULL,
+--   PRIMARY KEY (guild_id, user_id)
+-- );
+-- GRANT ALL ON public.birthdays TO anon;
+--
+-- CREATE TABLE IF NOT EXISTS server_rules (
+--   guild_id TEXT PRIMARY KEY,
+--   rules TEXT,
+--   agree_role_id TEXT,
+--   announcement_channel_id TEXT
+-- );
+-- GRANT ALL ON public.server_rules TO anon;
+--
+-- CREATE TABLE IF NOT EXISTS tempbans (
+--   id BIGSERIAL PRIMARY KEY,
+--   guild_id TEXT NOT NULL,
+--   user_id TEXT NOT NULL,
+--   unban_time FLOAT NOT NULL,
+--   reason TEXT
+-- );
+-- GRANT ALL ON public.tempbans TO anon;
+-- GRANT ALL ON SEQUENCE tempbans_id_seq TO anon;
+--
+-- ALTER TABLE mod_settings ADD COLUMN IF NOT EXISTS warn_threshold_count INT DEFAULT 5;
+-- ALTER TABLE mod_settings ADD COLUMN IF NOT EXISTS warn_threshold_action TEXT DEFAULT 'timeout_1h';
+-- ALTER TABLE mod_settings ADD COLUMN IF NOT EXISTS antilink_channels TEXT[] DEFAULT '{}';
 """
 import os
 import json
@@ -756,3 +798,315 @@ def clear_server_personality(guild_id: int):
         if str(guild_id) in data:
             del data[str(guild_id)]
         _write_json("data/server_personality.json", data)
+
+
+# ─── User profiles (global per user_id) ────────────────────────
+
+def get_user_profile(user_id: int) -> dict:
+    """Get a user's profile data (bio, pronouns, timezone, etc.).
+    Stored globally per user_id (not per-guild)."""
+    if _use_supabase:
+        try:
+            result = _supabase.table("user_profiles").select("*").eq(
+                "user_id", str(user_id)
+            ).execute()
+            if result.data:
+                row = result.data[0]
+                # Some Supabase drivers return JSON columns as strings
+                import json as _json
+                profile = row.get("profile")
+                if isinstance(profile, str):
+                    try:
+                        profile = _json.loads(profile)
+                    except (ValueError, TypeError):
+                        profile = {}
+                elif not isinstance(profile, dict):
+                    profile = {}
+                return profile
+            return {}
+        except Exception as e:
+            error_key = "get_user_profile"
+            if error_key not in _supabase_error_logged:
+                logger.error(f"[DB] get_user_profile error: {e}")
+                logger.warning(
+                    "[DB] Supabase permission issue for table 'user_profiles'. "
+                    "Falling back to JSON."
+                )
+                _supabase_error_logged.add(error_key)
+            data = _read_json("data/user_profiles.json")
+            return data.get(str(user_id), {})
+    else:
+        data = _read_json("data/user_profiles.json")
+        return data.get(str(user_id), {})
+
+
+def set_user_profile(user_id: int, data: dict):
+    """Save a user's profile data (global per user_id)."""
+    if _use_supabase:
+        try:
+            import json as _json
+            payload = {"user_id": str(user_id), "profile": _json.dumps(data)}
+            existing = _supabase.table("user_profiles").select("user_id").eq(
+                "user_id", str(user_id)
+            ).execute()
+            if existing.data:
+                _supabase.table("user_profiles").update(
+                    {"profile": _json.dumps(data)}
+                ).eq("user_id", str(user_id)).execute()
+            else:
+                _supabase.table("user_profiles").insert(payload).execute()
+        except Exception as e:
+            error_key = "set_user_profile"
+            if error_key not in _supabase_error_logged:
+                logger.error(f"[DB] set_user_profile error: {e}")
+                logger.warning(
+                    "[DB] Supabase permission issue for table 'user_profiles'. "
+                    "Falling back to JSON."
+                )
+                _supabase_error_logged.add(error_key)
+            data_store = _read_json("data/user_profiles.json")
+            data_store[str(user_id)] = data
+            _write_json("data/user_profiles.json", data_store)
+    else:
+        data_store = _read_json("data/user_profiles.json")
+        data_store[str(user_id)] = data
+        _write_json("data/user_profiles.json", data_store)
+
+
+# ─── Birthdays (per-guild user birthdays) ──────────────────────
+
+def set_birthday(guild_id: int, user_id: int, month: int, day: int):
+    """Save or update a user's birthday (month + day only) for a guild."""
+    if _use_supabase:
+        try:
+            existing = _supabase.table("birthdays").select("id").eq(
+                "guild_id", str(guild_id)
+            ).eq("user_id", str(user_id)).execute()
+            payload = {
+                "guild_id": str(guild_id),
+                "user_id": str(user_id),
+                "month": month,
+                "day": day,
+            }
+            if existing.data:
+                _supabase.table("birthdays").update(
+                    {"month": month, "day": day}
+                ).eq("guild_id", str(guild_id)).eq(
+                    "user_id", str(user_id)
+                ).execute()
+            else:
+                _supabase.table("birthdays").insert(payload).execute()
+        except Exception as e:
+            error_key = "set_birthday"
+            if error_key not in _supabase_error_logged:
+                logger.error(f"[DB] set_birthday error: {e}")
+                logger.warning(
+                    "[DB] Supabase permission issue for table 'birthdays'. "
+                    "Falling back to JSON."
+                )
+                _supabase_error_logged.add(error_key)
+            data = _read_json("data/birthdays.json")
+            g = str(guild_id)
+            if g not in data or not isinstance(data[g], dict):
+                data[g] = {"users": {}}
+            data[g].setdefault("users", {})[str(user_id)] = {
+                "month": month, "day": day
+            }
+            _write_json("data/birthdays.json", data)
+    else:
+        data = _read_json("data/birthdays.json")
+        g = str(guild_id)
+        if g not in data or not isinstance(data[g], dict):
+            data[g] = {"users": {}}
+        data[g].setdefault("users", {})[str(user_id)] = {
+            "month": month, "day": day
+        }
+        _write_json("data/birthdays.json", data)
+
+
+def get_upcoming_birthdays(guild_id: int, limit: int = 5) -> list:
+    """Get the next `limit` upcoming birthdays for a guild.
+    Returns a list of dicts: {"user_id": str, "month": int, "day": int,
+    "days_until": int} sorted ascending by days_until."""
+    from datetime import datetime as _dt
+    now = _dt.utcnow()
+    users = {}
+    if _use_supabase:
+        try:
+            result = _supabase.table("birthdays").select("*").eq(
+                "guild_id", str(guild_id)
+            ).execute()
+            for row in (result.data or []):
+                users[row.get("user_id")] = {
+                    "month": row.get("month"),
+                    "day": row.get("day"),
+                }
+        except Exception as e:
+            error_key = "get_upcoming_birthdays"
+            if error_key not in _supabase_error_logged:
+                logger.error(f"[DB] get_upcoming_birthdays error: {e}")
+                logger.warning(
+                    "[DB] Supabase permission issue for table 'birthdays'. "
+                    "Falling back to JSON."
+                )
+                _supabase_error_logged.add(error_key)
+            gdata = _read_json("data/birthdays.json").get(str(guild_id), {})
+            users = gdata.get("users", {}) if isinstance(gdata, dict) else {}
+    else:
+        gdata = _read_json("data/birthdays.json").get(str(guild_id), {})
+        users = gdata.get("users", {}) if isinstance(gdata, dict) else {}
+
+    upcoming = []
+    for user_id_str, bday in users.items():
+        if not isinstance(bday, dict):
+            continue
+        try:
+            m, d = int(bday["month"]), int(bday["day"])
+        except (KeyError, ValueError, TypeError):
+            continue
+        try:
+            next_bday = _dt(now.year, m, d)
+        except ValueError:
+            continue
+        if next_bday < now:
+            try:
+                next_bday = _dt(now.year + 1, m, d)
+            except ValueError:
+                continue
+        days_until = (next_bday - now).days
+        upcoming.append({
+            "user_id": str(user_id_str),
+            "month": m,
+            "day": d,
+            "days_until": days_until,
+        })
+    upcoming.sort(key=lambda x: x["days_until"])
+    return upcoming[:limit]
+
+
+def get_birthdays_today(month: int, day: int) -> list:
+    """Get every (guild_id, user_id) whose birthday matches today's
+    month/day across ALL guilds. Returns a list of dicts:
+    {"guild_id": str, "user_id": str}."""
+    results = []
+    if _use_supabase:
+        try:
+            result = _supabase.table("birthdays").select(
+                "guild_id,user_id"
+            ).eq("month", month).eq("day", day).execute()
+            for row in (result.data or []):
+                results.append({
+                    "guild_id": row.get("guild_id"),
+                    "user_id": row.get("user_id"),
+                })
+            return results
+        except Exception as e:
+            error_key = "get_birthdays_today"
+            if error_key not in _supabase_error_logged:
+                logger.error(f"[DB] get_birthdays_today error: {e}")
+                logger.warning(
+                    "[DB] Supabase permission issue for table 'birthdays'. "
+                    "Falling back to JSON."
+                )
+                _supabase_error_logged.add(error_key)
+    # JSON fallback (and Supabase-fail path)
+    data = _read_json("data/birthdays.json")
+    for guild_id_str, gdata in data.items():
+        if not isinstance(gdata, dict):
+            continue
+        users = gdata.get("users", {})
+        if not isinstance(users, dict):
+            continue
+        for user_id_str, bday in users.items():
+            if not isinstance(bday, dict):
+                continue
+            try:
+                if int(bday.get("month", 0)) == month and int(
+                    bday.get("day", 0)
+                ) == day:
+                    results.append({
+                        "guild_id": str(guild_id_str),
+                        "user_id": str(user_id_str),
+                    })
+            except (ValueError, TypeError):
+                continue
+    return results
+
+
+# ─── PHASE 3D5: Tempbans ────────────────────────────────────────
+
+def add_tempban(guild_id: int, user_id: int, unban_time: float, reason: str = ""):
+    """Record a tempban that should be lifted at unban_time (epoch seconds)."""
+    if _use_supabase:
+        try:
+            _supabase.table("tempbans").insert({
+                "guild_id": str(guild_id),
+                "user_id": str(user_id),
+                "unban_time": unban_time,
+                "reason": reason,
+            }).execute()
+            return
+        except Exception as e:
+            error_key = "add_tempban"
+            if error_key not in _supabase_error_logged:
+                logger.error(f"[DB] add_tempban error: {e}")
+                _supabase_error_logged.add(error_key)
+    # JSON fallback
+    data = _read_json("data/tempbans.json")
+    if "pending" not in data:
+        data["pending"] = []
+    data["pending"].append({
+        "guild_id": str(guild_id),
+        "user_id": str(user_id),
+        "unban_time": unban_time,
+        "reason": reason,
+    })
+    _write_json("data/tempbans.json", data)
+
+
+def get_tempbans_due(before_time: float) -> list:
+    """Get all tempbans where unban_time <= before_time."""
+    results = []
+    if _use_supabase:
+        try:
+            result = _supabase.table("tempbans").select("*").lt(
+                "unban_time", before_time
+            ).execute()
+            return result.data or []
+        except Exception as e:
+            error_key = "get_tempbans_due"
+            if error_key not in _supabase_error_logged:
+                logger.error(f"[DB] get_tempbans_due error: {e}")
+                _supabase_error_logged.add(error_key)
+    # JSON fallback
+    data = _read_json("data/tempbans.json")
+    for tb in data.get("pending", []):
+        try:
+            if float(tb.get("unban_time", 0)) <= before_time:
+                results.append(tb)
+        except (ValueError, TypeError):
+            continue
+    return results
+
+
+def remove_tempban(guild_id: int, user_id: int):
+    """Remove a tempban after it has been lifted."""
+    if _use_supabase:
+        try:
+            _supabase.table("tempbans").delete().eq(
+                "guild_id", str(guild_id)
+            ).eq("user_id", str(user_id)).execute()
+            return
+        except Exception as e:
+            error_key = "remove_tempban"
+            if error_key not in _supabase_error_logged:
+                logger.error(f"[DB] remove_tempban error: {e}")
+                _supabase_error_logged.add(error_key)
+    # JSON fallback
+    data = _read_json("data/tempbans.json")
+    data["pending"] = [
+        tb for tb in data.get("pending", [])
+        if not (tb.get("guild_id") == str(guild_id)
+                and tb.get("user_id") == str(user_id))
+    ]
+    _write_json("data/tempbans.json", data)

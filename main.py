@@ -182,6 +182,12 @@ DEFAULT_DATA_FILES = [
     "conversation_memory.json",
     # PHASE 2B — per-server personality notes (JSON fallback for Supabase)
     "server_personality.json",
+    # PHASE 3 — new cog data files (JSON fallback for Supabase)
+    "confess_settings.json",
+    "server_rules.json",
+    "user_profiles.json",
+    "birthdays.json",
+    "tempbans.json",
 ]
 
 

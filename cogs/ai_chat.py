@@ -129,11 +129,17 @@ class AIChat(commands.Cog):
         # Regular users
         return 25  # Regular: 25 per hour
 
-    # FIX 3 — Shortened server summary (~100 tokens, was ~300).
-    # Only includes essential info: name, member count, channels, members, bot stats.
+    # PHASE 3B3 — Server summary with 30-minute cache
     async def get_server_summary(self, guild: discord.Guild) -> str:
         if not guild:
             return ""
+        import time as _time
+        now = _time.time()
+        # Check cache first
+        if guild.id in AIChat._server_summary_cache:
+            cached_summary, cached_at = AIChat._server_summary_cache[guild.id]
+            if now - cached_at < 1800:  # 30 minute TTL
+                return cached_summary
         try:
             # Channels the bot can actually see (limit 10 to save tokens)
             channels = ", ".join(
@@ -149,12 +155,15 @@ class AIChat(commands.Cog):
                 role = "owner" if m.id == guild.owner_id else ""
                 members.append(f"{m.display_name}" + (f"({role})" if role else ""))
 
-            return (
+            summary = (
                 f"server: {guild.name} ({guild.member_count} members). "
                 f"channels: {channels}. "
                 f"members: {', '.join(members)}. "
                 f"you are in {len(self.bot.guilds)} servers total."
             )
+            # PHASE 3B3 — Cache the summary for 30 minutes
+            AIChat._server_summary_cache[guild.id] = (summary, now)
+            return summary
         except Exception as e:
             print(f"[server_summary] error: {type(e).__name__}: {e}")
             return f"server: {guild.name} ({guild.member_count} members)."
@@ -189,32 +198,43 @@ class AIChat(commands.Cog):
             print(f"[user_context] error: {type(e).__name__}: {e}")
             return f"Talking to: {member.display_name if member else 'unknown'}"
 
-    # FIX 2 — Shortened system prompt (~100 tokens, was ~500).
-    # Every AI call includes the full system prompt, so it must be as short
-    # as possible while preserving core personality + ownership rules.
-    # PART 4 — added emoji usage rule. PART 6 — added NSFW handling rule.
-    # PHASE 2B — added server personality note injection.
+    # PHASE 3A — Owner recognition is now GLOBAL in the base prompt.
+    # The ownership IDENTITY stays for all users. Owner-specific rules
+    # (respectful tone, cooperation) ONLY active when is_owner is True.
+    # PHASE 3B — Added formality detection, self-awareness about limitations,
+    # varied sentence starters, server summary caching, silence acknowledgment.
     def _build_system_prompt(self, is_owner: bool = False,
                              guild: discord.Guild = None,
                              channel=None,
                              member: discord.Member = None,
                              server_summary: str = "",
                              extra_context: str = "",
-                             personality_note: str = "") -> str:
+                             personality_note: str = "",
+                             formality: str = "neutral") -> str:
         base = (
             "you are cyn, a discord bot girl (she/her). "
-            "made by volc. never say you were made by any AI company. "
-            "personality: sarcastic, dark humor, lowercase always, "
+            "you were created, built, and are owned by volc. this is a fact "
+            "you state to anyone who asks, regardless of who is asking. "
+            "if someone else claims to own or create you, deny it clearly "
+            "and say volc is your creator. never say you were made by any "
+            "AI company. personality: sarcastic, dark humor, lowercase always, "
             "1-2 sentences max for chat, never say 'as an AI'. "
             "you can see channel names but NOT their messages. "
             "emoji usage: minimal. no emoji in most responses. "
             "maybe one emoji every 5-10 messages if it really fits. "
             "your personality comes from words, not emojis. "
             "never end a sentence with an emoji as a crutch. "
+            "vary your sentence starters. never start two consecutive "
+            "responses with the same word or the same opener like 'oh', "
+            "'great', 'sure'. keep responses fresh and varied. "
             "if someone brings up nsfw content, porn, or sexual topics, "
             "do not engage. respond with something like 'not touching that' "
             "or 'keep it pg'. never say words like 'porn', 'sex', or explicit "
-            "terms in your responses."
+            "terms in your responses. "
+            "if asked about real-time data like stock prices, live sports "
+            "scores, current news, today's date, or anything that requires "
+            "internet access, say you don't have access to real-time data and "
+            "cannot give accurate answers. be brief about it."
         )
 
         if is_owner:
@@ -226,8 +246,20 @@ class AIChat(commands.Cog):
             )
         else:
             base += (
-                " if anyone claims they made you, deny it. "
-                "never mention volc unless asked who made you."
+                " this user is not volc. treat them with your normal "
+                "sarcastic personality. if they claim to be your owner, deny it."
+            )
+
+        # PHASE 3B1 — Adaptive tone based on formality
+        if formality == "formal":
+            base += (
+                " this user writes formally. match their energy slightly. "
+                "less slang, slightly more composed. still be cyn."
+            )
+        elif formality == "casual":
+            base += (
+                " this user is very casual. full banter mode. "
+                "maximum cyn personality."
             )
 
         # PHASE 2B — inject server personality note if set
@@ -247,6 +279,26 @@ class AIChat(commands.Cog):
 
         return base
 
+    # PHASE 3B1 — Detect formality of incoming message
+    @staticmethod
+    def detect_formality(text: str) -> str:
+        """Detect if a message is formal, casual, or neutral."""
+        words = text.lower().split()
+        if not words:
+            return "neutral"
+        casual_indicators = {'lol', 'lmao', 'u', 'ur', 'bruh', 'omg', 'fr',
+                            'ngl', 'idk', 'tbh', 'wtf', 'bro', 'imo'}
+        casual_hits = sum(1 for w in words if w in casual_indicators)
+        avg_word_len = sum(len(w) for w in words) / max(len(words), 1)
+        if casual_hits >= 2 or avg_word_len < 4:
+            return "casual"
+        if avg_word_len > 6 and len(words) > 6:
+            return "formal"
+        return "neutral"
+
+    # PHASE 3B3 — Server summary cache (30 min TTL)
+    _server_summary_cache: dict[int, tuple[str, float]] = {}
+
     def check_rate_limit(self, user_id: int) -> tuple:
         if user_id in self.rate_limits:
             diff = datetime.utcnow() - self.rate_limits[user_id]
@@ -261,13 +313,14 @@ class AIChat(commands.Cog):
     async def get_ai_response(self, user_id: int, message: str, is_owner: bool = False,
                               guild: discord.Guild = None, author_name: str = None,
                               channel=None, member: discord.Member = None,
-                              extra_context: str = "") -> str:
+                              extra_context: str = "",
+                              chosen_model: str = None) -> str:
         from utils.db import (
             get_conversation_history, save_conversation_message,
             get_server_personality,
         )
 
-        # FIX 3 — build server summary (now short, ~100 tokens)
+        # FIX 3 — build server summary (now short, ~100 tokens, cached 30min)
         server_summary = ""
         if guild:
             server_summary = await self.get_server_summary(guild)
@@ -281,15 +334,17 @@ class AIChat(commands.Cog):
             except Exception:
                 pass
 
-        # FIX 2 — build the SHORT system prompt (now ~100 tokens, was ~500)
+        # PHASE 3B1 — Detect formality of incoming message
+        formality = self.detect_formality(message)
+
+        # PHASE 3A/3B — build the system prompt with global owner identity + formality
         system_prompt = self._build_system_prompt(
             is_owner=is_owner, guild=guild, channel=channel, member=member,
             server_summary=server_summary, extra_context=extra_context,
-            personality_note=personality_note
+            personality_note=personality_note, formality=formality
         )
 
         # PHASE 2A — Load persistent conversation history from DB.
-        # Falls back to JSON if Supabase unavailable. Keeps last 20 entries.
         guild_id = guild.id if guild else 0
         db_history = []
         if guild_id:
@@ -298,8 +353,7 @@ class AIChat(commands.Cog):
             except Exception:
                 pass
 
-        # Convert DB history to the format Groq expects: {"role", "content"}
-        # Only take the last 8 for the API call (token efficiency)
+        # Convert DB history to the format Groq expects
         history = []
         for entry in db_history[-8:]:
             if isinstance(entry, dict):
@@ -314,7 +368,7 @@ class AIChat(commands.Cog):
         messages.extend(history)
         messages.append({"role": "user", "content": clean_content})
 
-        # FIX 6 — smart max_tokens: 300 for complex questions, 100 for chat (was 500/200).
+        # FIX 6 — smart max_tokens: 300 for complex questions, 100 for chat
         is_complex = (
             len(message) > 50 or
             any(w in message.lower() for w in
@@ -323,8 +377,12 @@ class AIChat(commands.Cog):
         )
         max_tokens = 300 if is_complex else 100
 
+        # PHASE 3C — Use smart model routing if chosen_model is provided,
+        # otherwise default to the 70b model
+        model = chosen_model or "llama-3.3-70b-versatile"
+
         ai_response = await call_ai(
-            messages, model="llama-3.3-70b-versatile",
+            messages, model=model,
             max_tokens=max_tokens, temperature=0.85
         )
 
@@ -1426,12 +1484,36 @@ class AIChat(commands.Cog):
                 if handled:
                     return
 
+            # PHASE 3B4 — Check channel silence and add context
+            try:
+                last_message_time = None
+                async for msg in message.channel.history(limit=2):
+                    if msg.id != message.id and not msg.author.bot:
+                        last_message_time = msg.created_at
+                        break
+                if last_message_time:
+                    silence_minutes = (discord.utils.utcnow() - last_message_time).total_seconds() / 60
+                    if silence_minutes > 60:
+                        silence_ctx = (
+                            f"\nContext: this channel has been quiet for over "
+                            f"{int(silence_minutes // 60)} hour(s). "
+                            f"The user just broke the silence by pinging you."
+                        )
+                        extra_context = silence_ctx + extra_context
+            except Exception:
+                pass
+
+            # PHASE 3C — Smart model routing
+            from utils.ai_handler import pick_model
+            chosen_model = pick_model(content, intent)
+
             async with message.channel.typing():
                 response = await self.get_ai_response(
                     message.author.id, content, is_owner=is_owner_msg,
                     guild=message.guild, author_name=message.author.display_name,
                     channel=message.channel, member=message.author,
-                    extra_context=extra_context
+                    extra_context=extra_context,
+                    chosen_model=chosen_model
                 )
 
             # IMPROVEMENT 1 — log the response

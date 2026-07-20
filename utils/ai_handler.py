@@ -189,3 +189,38 @@ async def call_ai_fast(
         max_tokens=max_tokens,
         temperature=0.85
     )
+
+
+# PHASE 3C — Smart model routing based on message content + intent
+def pick_model(message_content: str, intent: str = "chat") -> str:
+    """Pick the right Groq model based on complexity.
+    
+    Returns 'llama-3.3-70b-versatile' for complex questions,
+    'llama-3.1-8b-instant' for simple/mod commands.
+    """
+    # Intent-based routing: mod/utility commands use fast model
+    if intent in ("warn", "ban", "kick", "mute", "timeout", "unmute",
+                  "purge", "lock", "unlock", "slowmode", "remind",
+                  "weather", "flip", "roll", "joke", "fact", "remind_cancel",
+                  "warn_clear", "delete_message", "nick", "serverinfo",
+                  "ping", "botinfo", "uptime", "whois", "avatar"):
+        return "llama-3.1-8b-instant"
+
+    # Content-based routing for chat
+    content_lower = message_content.lower()
+
+    # Technical/code questions → big model
+    technical_keywords = ["code", "debug", "error", "function", "class",
+                          "algorithm", "python", "javascript", "sql",
+                          "explain", "how does", "what is", "why does",
+                          "difference between", "compare", "analyze"]
+    if any(kw in content_lower for kw in technical_keywords):
+        return "llama-3.3-70b-versatile"
+
+    # Very short messages → fast model
+    words = message_content.split()
+    if len(words) <= 5:
+        return "llama-3.1-8b-instant"
+
+    # Default to fast model for casual chat (saves tokens)
+    return "llama-3.1-8b-instant"
