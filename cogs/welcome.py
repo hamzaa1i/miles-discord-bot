@@ -141,6 +141,17 @@ class Welcome(commands.Cog):
                     except:
                         pass
 
+        # PHASE 4E1 — Send custom DM message if configured
+        dm_msg = config.get('dm_message', '')
+        if dm_msg and dm_msg.lower() != 'off':
+            try:
+                dm_text = dm_msg.replace("{user}", member.display_name).replace("{server}", member.guild.name)
+                await member.send(dm_text)
+            except discord.Forbidden:
+                pass  # DMs disabled, silently ignore
+            except Exception:
+                pass
+
         # Pending welcome (for welcomer rewards)
         self.pending_welcomes[member.id] = {
             'guild_id': member.guild.id,
@@ -243,10 +254,25 @@ class Welcome(commands.Cog):
         if member.id in self.pending_welcomes:
             del self.pending_welcomes[member.id]
 
-        msg_text = self._format_welcome(
-            config.get('goodbye_message', "Goodbye {user}, we'll miss you."),
-            member
-        )
+        # PHASE 4E2 — Calculate how long the member was in the server
+        joined = member.joined_at
+        if joined:
+            delta = discord.utils.utcnow() - joined
+            days = delta.days
+            if days == 0:
+                hours = delta.seconds // 3600
+                duration_str = f"{hours} hour{'s' if hours != 1 else ''}" if hours > 0 else "just now"
+            elif days == 1:
+                duration_str = "1 day"
+            else:
+                duration_str = f"{days} days"
+        else:
+            duration_str = "some time"
+
+        # Format goodbye message with {duration} variable
+        goodbye_template = config.get('goodbye_message', "Goodbye {user}, we'll miss you.")
+        msg_text = self._format_welcome(goodbye_template, member)
+        msg_text = msg_text.replace("{duration}", duration_str)
         embed = discord.Embed(
             title=f"Goodbye {member.display_name}",
             description=msg_text,
@@ -311,6 +337,24 @@ class Welcome(commands.Cog):
         set_guild_setting(interaction.guild.id, "welcome_settings", config)
         status = "enabled" if enabled else "disabled"
         await interaction.response.send_message(f"✅ welcome messages **{status}**")
+
+    # PHASE 4E1 — /welcome dm [message]
+    @welcome.command(name="dm", description="Set a DM welcome message for new members")
+    @app_commands.checks.has_permissions(manage_guild=True)
+    @app_commands.describe(message="DM message (use {user} and {server}). Send 'off' to disable.")
+    async def welcome_dm(self, interaction: discord.Interaction, message: str):
+        config = self.get_config(interaction.guild.id)
+        if message.lower() == 'off':
+            config['dm_message'] = ''
+            set_guild_setting(interaction.guild.id, "welcome_settings", config)
+            await interaction.response.send_message("✅ welcome DM disabled.")
+        else:
+            config['dm_message'] = message[:1000]
+            set_guild_setting(interaction.guild.id, "welcome_settings", config)
+            await interaction.response.send_message(
+                f"✅ welcome DM set. variables: `{{user}}` `{{server}}`\n"
+                f"preview: {message.replace('{user}', interaction.user.display_name).replace('{server}', interaction.guild.name)}"
+            )
 
 
     @goodbye.command(name="channel", description="Set goodbye channel")

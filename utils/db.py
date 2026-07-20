@@ -131,6 +131,13 @@ CREATE TABLE server_personality (
 -- ALTER TABLE mod_settings ADD COLUMN IF NOT EXISTS warn_threshold_count INT DEFAULT 5;
 -- ALTER TABLE mod_settings ADD COLUMN IF NOT EXISTS warn_threshold_action TEXT DEFAULT 'timeout_1h';
 -- ALTER TABLE mod_settings ADD COLUMN IF NOT EXISTS antilink_channels TEXT[] DEFAULT '{}';
+--
+-- CREATE TABLE IF NOT EXISTS confess_settings (
+--   guild_id TEXT PRIMARY KEY,
+--   channel_id TEXT
+-- );
+-- GRANT ALL ON public.confess_settings TO anon;
+-- ALTER TABLE public.confess_settings DISABLE ROW LEVEL SECURITY;
 """
 import os
 import json
