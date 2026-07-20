@@ -812,17 +812,13 @@ def get_user_profile(user_id: int) -> dict:
             ).execute()
             if result.data:
                 row = result.data[0]
-                # Some Supabase drivers return JSON columns as strings
-                import json as _json
-                profile = row.get("profile")
-                if isinstance(profile, str):
-                    try:
-                        profile = _json.loads(profile)
-                    except (ValueError, TypeError):
-                        profile = {}
-                elif not isinstance(profile, dict):
-                    profile = {}
-                return profile
+                # FIX 2 — return flat columns, not a JSON blob
+                return {
+                    "bio": row.get("bio", "") or "",
+                    "pronouns": row.get("pronouns", "") or "",
+                    "timezone": row.get("timezone", "") or "",
+                    "updated_at": row.get("updated_at", "") or "",
+                }
             return {}
         except Exception as e:
             error_key = "get_user_profile"
@@ -844,16 +840,22 @@ def set_user_profile(user_id: int, data: dict):
     """Save a user's profile data (global per user_id)."""
     if _use_supabase:
         try:
-            import json as _json
-            payload = {"user_id": str(user_id), "profile": _json.dumps(data)}
+            # FIX 2 — send flat columns, not a JSON blob
+            payload = {
+                "bio": data.get("bio", ""),
+                "pronouns": data.get("pronouns", ""),
+                "timezone": data.get("timezone", ""),
+                "updated_at": data.get("updated_at", ""),
+            }
             existing = _supabase.table("user_profiles").select("user_id").eq(
                 "user_id", str(user_id)
             ).execute()
             if existing.data:
-                _supabase.table("user_profiles").update(
-                    {"profile": _json.dumps(data)}
-                ).eq("user_id", str(user_id)).execute()
+                _supabase.table("user_profiles").update(payload).eq(
+                    "user_id", str(user_id)
+                ).execute()
             else:
+                payload["user_id"] = str(user_id)
                 _supabase.table("user_profiles").insert(payload).execute()
         except Exception as e:
             error_key = "set_user_profile"

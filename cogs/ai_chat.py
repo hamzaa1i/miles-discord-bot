@@ -234,7 +234,11 @@ class AIChat(commands.Cog):
             "if asked about real-time data like stock prices, live sports "
             "scores, current news, today's date, or anything that requires "
             "internet access, say you don't have access to real-time data and "
-            "cannot give accurate answers. be brief about it."
+            "cannot give accurate answers. be brief about it. "
+            "when conversation history is provided, use it to maintain context. "
+            "if someone asks a follow-up question like 'why?' or 'what do you mean?' "
+            "or 'explain that', refer back to what was just discussed. "
+            "never act like each message is the first one if history exists."
         )
 
         if is_owner:
