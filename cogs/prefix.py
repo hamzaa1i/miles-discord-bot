@@ -1,20 +1,22 @@
 """
-cogs/prefix.py — custom prefix system for AI chat.
+cogs/prefix.py — custom prefix system with two-tier command routing.
 
-Allows server admins to set a custom prefix (e.g. "cyn.") that triggers
-the AI chat handler the same way @mention does.
+TIER 1: Known structured commands (welcome, goodbye, mod, utility)
+        are handled directly without going through the AI.
+TIER 2: Everything else falls through to the AI intent parser.
 
-Commands:
-  /prefix         — show the current prefix for this server
-  /prefix set     — set a custom prefix (requires Manage Guild)
-  /prefix remove  — remove the custom prefix (requires Manage Guild)
-  /prefix list    — show all configured prefixes for this server
+Slash commands:
+  /prefix set [prefix]   — set a custom prefix (Manage Guild)
+  /prefix remove         — remove custom prefix (Manage Guild)
+  /prefix list           — show current prefix
 
 Data stored in Supabase via utils/db with table "prefix_settings".
 """
 import discord
 from discord.ext import commands
 from discord import app_commands
+import os
+import re
 import time
 import logging
 
@@ -26,11 +28,9 @@ logger = logging.getLogger('cyn.prefix')
 class Prefix(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        # 60-second settings cache: {guild_id: (prefix_str_or_None, timestamp)}
         self._cache: dict[int, tuple[str | None, float]] = {}
 
     def _get_prefix(self, guild_id: int) -> str | None:
-        """Get the configured prefix for this guild (with 60s cache)."""
         now = time.time()
         if guild_id in self._cache:
             cached_prefix, ts = self._cache[guild_id]
@@ -48,54 +48,319 @@ class Prefix(commands.Cog):
         if guild_id in self._cache:
             del self._cache[guild_id]
 
+    # ==================== on_message: prefix routing ====================
+
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
-        """Check if message starts with the guild's custom prefix.
-        If yes, strip the prefix and pass the rest to the AI chat handler."""
         if message.author.bot:
             return
         if not message.guild:
-            return  # Server-only
+            return
 
         prefix = self._get_prefix(message.guild.id)
         if not prefix:
-            return  # No prefix configured
+            return
 
         content = message.content
-        # Case-insensitive prefix check
         if not content.lower().startswith(prefix.lower()):
             return
 
-        # Strip the prefix and trim whitespace
-        remaining = content[len(prefix):].strip()
-        if not remaining:
-            return  # Just the prefix with no text
-
-        # Get the AiChat cog and call its handler
-        ai_cog = self.bot.get_cog("AiChat")
-        if not ai_cog:
+        command_text = content[len(prefix):].strip()
+        if not command_text:
             return
 
-        # Check if AiChat has the handle_prefix_command method
-        if hasattr(ai_cog, 'handle_prefix_command'):
-            try:
-                await ai_cog.handle_prefix_command(message, remaining)
-            except Exception as e:
-                logger.error(f"[prefix] handler error: {e}")
-        else:
-            # Fallback: process through the on_message handler manually
-            # by injecting a fake mention
-            try:
-                # Temporarily add the bot mention to the message content
-                # and call the on_message handler
-                original_content = message.content
-                message.content = f"<@{self.bot.user.id}> {remaining}"
-                await ai_cog.on_message(message)
-                message.content = original_content
-            except Exception as e:
-                logger.error(f"[prefix] fallback handler error: {e}")
+        parts = command_text.split()
+        cmd = parts[0].lower() if parts else ""
+        args = parts[1:] if len(parts) > 1 else []
+        args_str = " ".join(args)
 
-    # ==================== /prefix command group ====================
+        await self._route_command(message, cmd, args, args_str, command_text)
+
+    async def _route_command(self, message, cmd, args, args_str, full_text):
+        # Welcome commands
+        if cmd == "welcome":
+            await self._handle_welcome(message, args, args_str)
+            return
+
+        # Goodbye commands
+        if cmd == "goodbye":
+            await self._handle_goodbye(message, args, args_str)
+            return
+
+        # Mod commands
+        if cmd in ("warn", "kick", "ban", "purge", "lock", "unlock", "slowmode"):
+            await self._handle_mod(message, cmd, args, args_str)
+            return
+
+        # Simple utility commands
+        if cmd in ("help", "ping", "uptime", "botinfo", "flip", "roll",
+                   "joke", "fact", "meme", "truth", "dare", "weather"):
+            await self._handle_simple(message, cmd, args, args_str)
+            return
+
+        # Prefix management via text
+        if cmd == "prefix":
+            await self._handle_prefix_cmd(message, args, args_str)
+            return
+
+        # Fall through to AI
+        ai_cog = self.bot.get_cog("AiChat")
+        if ai_cog and hasattr(ai_cog, 'handle_prefix_command'):
+            try:
+                await ai_cog.handle_prefix_command(message, full_text)
+            except Exception as e:
+                logger.error(f"[prefix] AI handler error: {e}")
+
+    # ─── Welcome ──────────────────────────────────────────────────
+
+    async def _handle_welcome(self, message, args, args_str):
+        sub = args[0].lower() if args else ""
+
+        if sub == "message":
+            # FIX 2 — Capture everything after "welcome message " including newlines
+            prefix = self._get_prefix(message.guild.id)
+            match = re.match(
+                rf'^{re.escape(prefix)}welcome\s+message\s+',
+                message.content,
+                re.IGNORECASE
+            )
+            if match:
+                text = message.content[match.end():]
+            else:
+                text = ""
+
+            if not text:
+                await message.reply("provide a message. use {user} for username, {server} for server name.")
+                return
+
+            from utils.db import get_guild_setting, set_guild_setting
+            settings = get_guild_setting(message.guild.id, "welcome_settings")
+            settings["message"] = text
+            set_guild_setting(message.guild.id, "welcome_settings", settings)
+            await message.reply("welcome message set. variables: {user}, {server}, {membercount}")
+            return
+
+        if sub == "channel":
+            if not message.channel_mentions:
+                await message.reply("mention a channel: welcome channel #channel")
+                return
+            channel = message.channel_mentions[0]
+            from utils.db import get_guild_setting, set_guild_setting
+            settings = get_guild_setting(message.guild.id, "welcome_settings")
+            settings["channel_id"] = str(channel.id)
+            settings["enabled"] = True
+            set_guild_setting(message.guild.id, "welcome_settings", settings)
+            await message.reply(f"welcome channel set to {channel.mention}.")
+            return
+
+        if sub == "test":
+            from utils.db import get_guild_setting
+            settings = get_guild_setting(message.guild.id, "welcome_settings")
+            channel_id = settings.get("channel_id")
+            welcome_msg = settings.get("message", "Welcome {user} to {server}!")
+            if not channel_id:
+                await message.reply("no welcome channel set. use welcome channel #channel first.")
+                return
+            channel = message.guild.get_channel(int(channel_id))
+            if channel:
+                text = welcome_msg.replace("{user}", message.author.mention)
+                text = text.replace("{server}", message.guild.name)
+                text = text.replace("{membercount}", str(message.guild.member_count))
+                await channel.send(text)
+                await message.reply("test welcome sent.")
+            return
+
+        await message.reply("usage: welcome channel #channel | welcome message [text] | welcome test")
+
+    # ─── Goodbye ──────────────────────────────────────────────────
+
+    async def _handle_goodbye(self, message, args, args_str):
+        sub = args[0].lower() if args else ""
+
+        if sub == "message":
+            prefix = self._get_prefix(message.guild.id)
+            match = re.match(
+                rf'^{re.escape(prefix)}goodbye\s+message\s+',
+                message.content,
+                re.IGNORECASE
+            )
+            if match:
+                text = message.content[match.end():]
+            else:
+                text = ""
+
+            if not text:
+                await message.reply("provide a message.")
+                return
+
+            from utils.db import get_guild_setting, set_guild_setting
+            settings = get_guild_setting(message.guild.id, "welcome_settings")
+            settings["goodbye_message"] = text
+            set_guild_setting(message.guild.id, "welcome_settings", settings)
+            await message.reply("goodbye message set.")
+            return
+
+        if sub == "channel":
+            if not message.channel_mentions:
+                await message.reply("mention a channel: goodbye channel #channel")
+                return
+            channel = message.channel_mentions[0]
+            from utils.db import get_guild_setting, set_guild_setting
+            settings = get_guild_setting(message.guild.id, "welcome_settings")
+            settings["goodbye_channel_id"] = str(channel.id)
+            settings["goodbye_enabled"] = True
+            set_guild_setting(message.guild.id, "welcome_settings", settings)
+            await message.reply(f"goodbye channel set to {channel.mention}.")
+            return
+
+        await message.reply("usage: goodbye channel #channel | goodbye message [text]")
+
+    # ─── Mod commands ─────────────────────────────────────────────
+
+    async def _handle_mod(self, message, cmd, args, args_str):
+        owner_id = int(os.getenv("OWNER_ID", "0"))
+        if not message.author.guild_permissions.manage_messages and message.author.id != owner_id:
+            await message.reply("no permission.")
+            return
+
+        if cmd == "warn" and message.mentions:
+            target = message.mentions[0]
+            reason = args_str.replace(f"<@{target.id}>", "").replace(f"<@!{target.id}>", "").strip()
+            reason = reason or "no reason provided"
+            ai_cog = self.bot.get_cog("AiChat")
+            if ai_cog and hasattr(ai_cog, 'handle_prefix_command'):
+                await ai_cog.handle_prefix_command(message, f"warn {target.mention} {reason}")
+            return
+
+        if cmd == "purge" and args:
+            try:
+                amount = int(args[0])
+                deleted = await message.channel.purge(limit=amount + 1)
+                await message.channel.send(f"deleted {len(deleted) - 1} messages.", delete_after=3)
+            except ValueError:
+                await message.reply("usage: purge [amount]")
+            return
+
+        if cmd == "lock":
+            try:
+                overwrite = message.channel.overwrites_for(message.guild.default_role)
+                overwrite.send_messages = False
+                await message.channel.set_permissions(message.guild.default_role, overwrite=overwrite)
+                await message.reply("channel locked.")
+            except discord.Forbidden:
+                await message.reply("i don't have permission.")
+            return
+
+        if cmd == "unlock":
+            try:
+                overwrite = message.channel.overwrites_for(message.guild.default_role)
+                overwrite.send_messages = None
+                await message.channel.set_permissions(message.guild.default_role, overwrite=overwrite)
+                await message.reply("channel unlocked.")
+            except discord.Forbidden:
+                await message.reply("i don't have permission.")
+            return
+
+        if cmd == "slowmode" and args:
+            try:
+                seconds = int(args[0])
+                await message.channel.edit(slowmode_delay=seconds)
+                await message.reply(f"slowmode set to {seconds}s." if seconds > 0 else "slowmode disabled.")
+            except ValueError:
+                await message.reply("usage: slowmode [seconds]")
+            return
+
+        # ban/kick → pass to AI for confirmation flow
+        ai_cog = self.bot.get_cog("AiChat")
+        if ai_cog and hasattr(ai_cog, 'handle_prefix_command'):
+            await ai_cog.handle_prefix_command(message, f"{cmd} {args_str}")
+
+    # ─── Simple commands ──────────────────────────────────────────
+
+    async def _handle_simple(self, message, cmd, args, args_str):
+        if cmd == "help":
+            # Send the help command URL
+            await message.reply(
+                "use `/help` for the interactive help menu.\n"
+                "or ask me anything by typing your prefix followed by a question."
+            )
+            return
+
+        if cmd == "ping":
+            latency = round(self.bot.latency * 1000)
+            await message.reply(f"pong. {latency}ms")
+            return
+
+        if cmd == "uptime":
+            import keep_alive
+            from datetime import datetime
+            if keep_alive.start_time:
+                delta = datetime.utcnow() - keep_alive.start_time
+                d = delta.days
+                h = (delta.seconds % 86400) // 3600
+                m = (delta.seconds % 3600) // 60
+                await message.reply(f"uptime: {d}d {h}h {m}m")
+            else:
+                await message.reply("uptime unavailable.")
+            return
+
+        if cmd == "botinfo":
+            await message.reply(
+                f"cyn — AI Discord companion\n"
+                f"servers: {len(self.bot.guilds)}\n"
+                f"users: {sum(g.member_count for g in self.bot.guilds)}\n"
+                f"latency: {round(self.bot.latency * 1000)}ms"
+            )
+            return
+
+        # flip, roll, joke, fact, meme, truth, dare, weather → pass to AI
+        ai_cog = self.bot.get_cog("AiChat")
+        if ai_cog and hasattr(ai_cog, 'handle_prefix_command'):
+            if cmd == "weather" and args:
+                await ai_cog.handle_prefix_command(message, f"weather in {args_str}")
+            else:
+                await ai_cog.handle_prefix_command(message, cmd)
+
+    # ─── Prefix management via text ───────────────────────────────
+
+    async def _handle_prefix_cmd(self, message, args, args_str):
+        if not message.author.guild_permissions.manage_guild:
+            owner_id = int(os.getenv("OWNER_ID", "0"))
+            if message.author.id != owner_id:
+                # Still allow viewing
+                prefix = self._get_prefix(message.guild.id)
+                if prefix:
+                    await message.reply(f"current prefix: `{prefix}`")
+                else:
+                    await message.reply("no custom prefix set. use @mention.")
+                return
+
+        sub = args[0].lower() if args else ""
+
+        if sub == "set" and len(args) > 1:
+            new_prefix = args[1]
+            if len(new_prefix) > 10:
+                await message.reply("prefix too long — max 10 characters.")
+                return
+            set_guild_setting(message.guild.id, "prefix_settings", {"prefix": new_prefix})
+            self._invalidate_cache(message.guild.id)
+            await message.reply(f"prefix set to `{new_prefix}`. use it like: `{new_prefix}hello`")
+            return
+
+        if sub == "remove":
+            set_guild_setting(message.guild.id, "prefix_settings", {"prefix": None})
+            self._invalidate_cache(message.guild.id)
+            await message.reply("custom prefix removed. use @mention to talk to cyn.")
+            return
+
+        # Show current
+        prefix = self._get_prefix(message.guild.id)
+        if prefix:
+            await message.reply(f"current prefix: `{prefix}`\nusage: `{prefix}hello`")
+        else:
+            await message.reply("no custom prefix set. use @mention to talk to cyn.")
+
+    # ==================== /prefix slash command group ====================
 
     prefix_group = app_commands.Group(name="prefix", description="Custom prefix settings")
 
@@ -105,11 +370,9 @@ class Prefix(commands.Cog):
     async def prefix_set(self, interaction: discord.Interaction, prefix: str):
         self.bot.increment_command('prefix_set')
         await interaction.response.defer(ephemeral=True)
-
         if len(prefix) > 10:
             await interaction.followup.send("prefix too long — max 10 characters.", ephemeral=True)
             return
-
         try:
             set_guild_setting(interaction.guild_id, "prefix_settings", {"prefix": prefix})
             self._invalidate_cache(interaction.guild_id)
@@ -125,7 +388,6 @@ class Prefix(commands.Cog):
     async def prefix_remove(self, interaction: discord.Interaction):
         self.bot.increment_command('prefix_remove')
         await interaction.response.defer(ephemeral=True)
-
         try:
             set_guild_setting(interaction.guild_id, "prefix_settings", {"prefix": None})
             self._invalidate_cache(interaction.guild_id)
@@ -140,7 +402,6 @@ class Prefix(commands.Cog):
     async def prefix_list(self, interaction: discord.Interaction):
         self.bot.increment_command('prefix_list')
         await interaction.response.defer(ephemeral=True)
-
         prefix = self._get_prefix(interaction.guild_id)
         if prefix:
             await interaction.followup.send(
