@@ -1675,6 +1675,132 @@ class AIChat(commands.Cog):
                 ephemeral=True
             )
 
+    # CHANGE 2 — handle_prefix_command: called by prefix cog when a custom
+    # prefix is detected. Processes the content through the same intent
+    # parser + AI response system as @mentions.
+    async def handle_prefix_command(self, message: discord.Message, content: str):
+        """Handle a message that was sent with a custom prefix (e.g. 'cyn.hello').
+        Processes through the same intent + AI response pipeline as @mention."""
+        if message.author.bot:
+            return
+        if not message.guild:
+            return
+
+        # Log the prefix-triggered message
+        guild_name = message.guild.name if message.guild else "DM"
+        channel_name = f"#{message.channel.name}" if hasattr(message.channel, 'name') else "DM"
+        logger.info(f"[PREFIX] {guild_name} | {channel_name} | "
+                    f"{message.author.display_name} ({message.author.id}) → "
+                    f"{content[:100]}")
+
+        try:
+            # Rate limit check (same as mentions)
+            is_limited, remaining = self.check_rate_limit(message.author.id)
+            if is_limited:
+                await self._safe_reply(message, f"slow down. {remaining}s")
+                return
+
+            if not content.strip():
+                await self._safe_reply(message, "hm?")
+                return
+
+            self.update_rate_limit(message.author.id)
+            is_owner_msg = message.author.id == OWNER_ID
+
+            # Per-user rate limit (tiered)
+            user_id = message.author.id
+            now = time.time()
+            if user_id not in self._user_message_counts:
+                self._user_message_counts[user_id] = []
+            self._user_message_counts[user_id] = [
+                t for t in self._user_message_counts[user_id]
+                if now - t < 3600
+            ]
+            limit = self.get_user_rate_limit(message.author)
+            if limit != 999999:
+                if len(self._user_message_counts[user_id]) >= limit:
+                    await self._safe_reply(message, "you've been chatting too much. give me a break for a bit.")
+                    return
+            self._user_message_counts[user_id].append(now)
+
+            # Per-server limit
+            guild_id = message.guild.id
+            if guild_id not in self._server_message_counts:
+                self._server_message_counts[guild_id] = []
+            self._server_message_counts[guild_id] = [
+                t for t in self._server_message_counts[guild_id]
+                if now - t < 3600
+            ]
+            if len(self._server_message_counts[guild_id]) >= 300:
+                return
+            self._server_message_counts[guild_id].append(now)
+
+            # Resolve mentions in the content
+            if message.guild:
+                content = self.resolve_mentions(content, message.guild)
+
+            # Smart model routing
+            from utils.ai_handler import pick_model
+
+            # Fast-path check
+            if self.is_obvious_chat(content):
+                intent_data = {"intent": "chat", "params": {}}
+                logger.info(f"[FAST-PATH] {message.author.display_name} → skipped intent parser")
+            else:
+                try:
+                    intent_data = await parse_intent(content, self)
+                except Exception as e:
+                    logger.error(f"[prefix] Intent parse error: {type(e).__name__}: {e}")
+                    intent_data = {"intent": "chat", "params": {}}
+
+            intent = intent_data.get('intent', 'chat')
+            params = intent_data.get('params', {})
+            logger.info(f"[INTENT] {message.author.display_name} → intent={intent} params={params}")
+
+            if intent != 'chat':
+                handled = await self._execute_intent(message, intent_data)
+                if handled:
+                    return
+
+            # Channel silence detection
+            extra_context = ""
+            try:
+                last_message_time = None
+                async for msg in message.channel.history(limit=2):
+                    if msg.id != message.id and not msg.author.bot:
+                        last_message_time = msg.created_at
+                        break
+                if last_message_time:
+                    silence_minutes = (discord.utils.utcnow() - last_message_time).total_seconds() / 60
+                    if silence_minutes > 60:
+                        extra_context = f"\nContext: this channel has been quiet for over {int(silence_minutes // 60)} hour(s)."
+            except Exception:
+                pass
+
+            chosen_model = pick_model(content, intent)
+
+            async with message.channel.typing():
+                response = await self.get_ai_response(
+                    message.author.id, content, is_owner=is_owner_msg,
+                    guild=message.guild, author_name=message.author.display_name,
+                    channel=message.channel, member=message.author,
+                    extra_context=extra_context,
+                    chosen_model=chosen_model
+                )
+
+            logger.info(f"[RESPONSE] → {response[:100]}")
+
+            try:
+                await message.reply(response, mention_author=False)
+            except (discord.NotFound, discord.HTTPException):
+                try:
+                    await message.channel.send(response)
+                except:
+                    pass
+
+        except Exception as e:
+            logger.error(f"[prefix handler Error] {type(e).__name__}: {e}")
+
     def cog_unload(self):
         if hasattr(self, 'check_reminders') and self.check_reminders.is_running():
             self.check_reminders.cancel()

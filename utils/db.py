@@ -138,6 +138,13 @@ CREATE TABLE server_personality (
 -- );
 -- GRANT ALL ON public.confess_settings TO anon;
 -- ALTER TABLE public.confess_settings DISABLE ROW LEVEL SECURITY;
+--
+-- CREATE TABLE IF NOT EXISTS prefix_settings (
+--   guild_id TEXT PRIMARY KEY,
+--   prefix TEXT
+-- );
+-- GRANT ALL ON public.prefix_settings TO anon;
+-- ALTER TABLE public.prefix_settings DISABLE ROW LEVEL SECURITY;
 """
 import os
 import json

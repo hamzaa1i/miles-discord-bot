@@ -188,6 +188,8 @@ DEFAULT_DATA_FILES = [
     "user_profiles.json",
     "birthdays.json",
     "tempbans.json",
+    # CHANGE 2 — prefix settings (JSON fallback for Supabase)
+    "prefix_settings.json",
 ]
 
 

@@ -147,6 +147,9 @@ CATEGORIES = {
             ("/rules agree", "Agree to rules (get role)"),
             ("/rules agree_role @role", "Set the agreement role (Manage Guild)"),
             ("/bump remind", "Set a 2-hour bump reminder (admin)"),
+            ("/prefix set [prefix]", "Set a custom prefix for AI chat (Manage Guild)"),
+            ("/prefix remove", "Remove custom prefix (Manage Guild)"),
+            ("/prefix list", "Show the current prefix"),
         ],
     },
     "owner": {

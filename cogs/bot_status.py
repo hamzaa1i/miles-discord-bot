@@ -1,36 +1,31 @@
 """
 cogs/bot_status.py — automatic status rotation + manual /status commands.
 
-The status cycles automatically every 5 minutes through 10 statuses,
-each using the CORRECT discord.ActivityType so Discord shows
-"Listening to", "Playing", "Watching", "Competing" properly.
-
-FIX 3 — Added discord.Status.online to every change_presence call so
-the bot always shows as online (green dot). Discord only shows activity
-text in the full profile popup for bot accounts — this is a Discord-side
-display decision, not an API issue. Added /status info to explain this.
+CHANGE 1 — Fixed bot status visibility:
+  A) Presence Intent already enabled in main.py (intents.presences = True)
+  B) Added 5-second startup delay before first status (gateway handshake)
+  C) Added on_ready + on_resumed listeners to force status refresh
+  Changed rotation from 5 min to 15 min for more reliable member list updates.
+  Added _apply_current_status() helper to deduplicate status logic.
 
 Commands:
   /status set [type] [text]  — set a custom pinned status (stops rotation)
   /status reset              — clear custom status, resume rotation
   /status current            — show current status (anyone can use)
   /status info               — explain how Discord displays bot status (anyone)
-
-Data stored in data/bot_status.json:
-  {"custom": null}  or  {"custom": {"type": "listening", "text": "..."}}
 """
 import discord
 from discord.ext import commands, tasks
 from discord import app_commands
 import os
+import asyncio
 import json as _json
 
 
 class BotStatus(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.custom_status = None  # None = auto-rotate; dict = custom pinned
-        # FIX 3B — More varied and interesting status rotation list (10 statuses)
+        self.custom_status = None
         self.status_list = [
             (discord.ActivityType.listening, "@cyn"),
             (discord.ActivityType.playing, "with {users} users"),
@@ -44,12 +39,10 @@ class BotStatus(commands.Cog):
             (discord.ActivityType.watching, "the chaos unfold"),
         ]
         self.status_index = 0
-        # Load custom status from file if set
         self._load_custom_status()
         self.rotate_status.start()
 
     def _load_custom_status(self):
-        """Load custom status from data/bot_status.json if it exists."""
         try:
             with open("data/bot_status.json", "r") as f:
                 data = _json.load(f)
@@ -60,7 +53,6 @@ class BotStatus(commands.Cog):
             pass
 
     def _save_custom_status(self):
-        """Save custom status to data/bot_status.json."""
         try:
             with open("data/bot_status.json", "w") as f:
                 _json.dump({"custom": self.custom_status}, f, indent=2)
@@ -70,34 +62,71 @@ class BotStatus(commands.Cog):
     def cog_unload(self):
         self.rotate_status.cancel()
 
-    @tasks.loop(minutes=5)
-    async def rotate_status(self):
-        """Auto-rotate status every 5 minutes. Skipped if custom status is set."""
-        if self.custom_status:
-            return  # Don't rotate if custom status is set
-
+    # CHANGE 1 — Helper to apply whichever status is currently active
+    async def _apply_current_status(self):
+        """Apply the current status (custom or auto-rotate)."""
         try:
-            activity_type, text = self.status_list[self.status_index]
-            # Replace dynamic placeholders
-            user_count = sum(g.member_count for g in self.bot.guilds)
-            server_count = len(self.bot.guilds)
-            text = text.replace("{users}", str(user_count))
-            text = text.replace("{servers}", str(server_count))
+            if self.custom_status:
+                type_map = {
+                    "listening": discord.ActivityType.listening,
+                    "playing": discord.ActivityType.playing,
+                    "watching": discord.ActivityType.watching,
+                    "competing": discord.ActivityType.competing,
+                }
+                activity_type = type_map.get(
+                    self.custom_status["type"], discord.ActivityType.playing
+                )
+                user_count = sum(g.member_count for g in self.bot.guilds)
+                server_count = len(self.bot.guilds)
+                text = self.custom_status["text"].replace(
+                    "{users}", str(user_count)
+                ).replace("{servers}", str(server_count))
+                activity = discord.Activity(type=activity_type, name=text)
+            else:
+                activity_type, text = self.status_list[
+                    self.status_index % len(self.status_list)
+                ]
+                user_count = sum(g.member_count for g in self.bot.guilds)
+                server_count = len(self.bot.guilds)
+                text = text.replace("{users}", str(user_count)).replace(
+                    "{servers}", str(server_count)
+                )
+                activity = discord.Activity(type=activity_type, name=text)
 
-            # FIX 3A — Always set status=online so the green dot shows
-            activity = discord.Activity(type=activity_type, name=text)
             await self.bot.change_presence(
                 status=discord.Status.online,
                 activity=activity
             )
-
-            self.status_index = (self.status_index + 1) % len(self.status_list)
         except Exception as e:
-            print(f"[bot_status] rotation error: {e}")
+            print(f"[bot_status] apply error: {e}")
+
+    # CHANGE 1B — 15 minute rotation + 5 second startup delay
+    @tasks.loop(minutes=15)
+    async def rotate_status(self):
+        """Auto-rotate status every 15 minutes."""
+        if self.custom_status:
+            return
+        self.status_index = (self.status_index + 1) % len(self.status_list)
+        await self._apply_current_status()
 
     @rotate_status.before_loop
     async def before_rotate(self):
         await self.bot.wait_until_ready()
+        # CHANGE 1B — 5 second delay to ensure gateway handshake is complete
+        await asyncio.sleep(5)
+
+    # CHANGE 1C — Force status refresh on gateway reconnect
+    @commands.Cog.listener()
+    async def on_resumed(self):
+        """Re-apply status after gateway reconnect."""
+        await asyncio.sleep(3)
+        await self._apply_current_status()
+
+    @commands.Cog.listener()
+    async def on_ready(self):
+        """Set status immediately when bot becomes ready."""
+        await asyncio.sleep(5)
+        await self._apply_current_status()
 
     # ==================== /status command group ====================
     status = app_commands.Group(name="status", description="Bot status management")
@@ -127,34 +156,13 @@ class BotStatus(commands.Cog):
             await interaction.followup.send("not your command.", ephemeral=True)
             return
 
-        # Map choice value to ActivityType
-        type_map = {
-            "listening": discord.ActivityType.listening,
-            "playing": discord.ActivityType.playing,
-            "watching": discord.ActivityType.watching,
-            "competing": discord.ActivityType.competing,
-        }
-        activity_type = type_map.get(status_type.value, discord.ActivityType.playing)
-
-        # Replace dynamic placeholders
         user_count = sum(g.member_count for g in self.bot.guilds)
         server_count = len(self.bot.guilds)
         display_text = text.replace("{users}", str(user_count)).replace("{servers}", str(server_count))
 
-        # Save and apply
         self.custom_status = {"type": status_type.value, "text": text}
         self._save_custom_status()
-
-        # FIX 3A — Always set status=online
-        activity = discord.Activity(type=activity_type, name=display_text)
-        try:
-            await self.bot.change_presence(
-                status=discord.Status.online,
-                activity=activity
-            )
-        except Exception as e:
-            await interaction.followup.send(f"failed to set status: `{e}`", ephemeral=True)
-            return
+        await self._apply_current_status()
 
         embed = discord.Embed(
             title="✅ Status Set",
@@ -183,22 +191,7 @@ class BotStatus(commands.Cog):
 
         self.custom_status = None
         self._save_custom_status()
-
-        # Immediately apply the next rotation status
-        try:
-            activity_type, text = self.status_list[self.status_index]
-            user_count = sum(g.member_count for g in self.bot.guilds)
-            server_count = len(self.bot.guilds)
-            text = text.replace("{users}", str(user_count)).replace("{servers}", str(server_count))
-            # FIX 3A — Always set status=online
-            activity = discord.Activity(type=activity_type, name=text)
-            await self.bot.change_presence(
-                status=discord.Status.online,
-                activity=activity
-            )
-            self.status_index = (self.status_index + 1) % len(self.status_list)
-        except Exception:
-            pass
+        await self._apply_current_status()
 
         await interaction.followup.send(
             "✅ custom status cleared. auto-rotation resumed.",
@@ -210,7 +203,6 @@ class BotStatus(commands.Cog):
         self.bot.increment_command('status_current')
         await interaction.response.defer(ephemeral=True)
 
-        # Read the bot's current activity
         activity = self.bot.guilds[0].me.activity if self.bot.guilds else None
         if not activity:
             try:
@@ -225,53 +217,34 @@ class BotStatus(commands.Cog):
         )
 
         if self.custom_status:
-            mode = "custom (pinned)"
-            type_str = self.custom_status.get("type", "unknown")
-            text = self.custom_status.get("text", "unknown")
-            embed.add_field(name="Mode", value=mode, inline=False)
-            embed.add_field(name="Type", value=type_str, inline=True)
-            embed.add_field(name="Text", value=f"`{text}`", inline=True)
+            embed.add_field(name="Mode", value="custom (pinned)", inline=False)
+            embed.add_field(name="Type", value=self.custom_status.get("type", "unknown"), inline=True)
+            embed.add_field(name="Text", value=f"`{self.custom_status.get('text', 'unknown')}`", inline=True)
             embed.set_footer(text="use /status reset to resume rotation")
         else:
-            mode = "auto-rotating"
-            embed.add_field(name="Mode", value=mode, inline=False)
+            embed.add_field(name="Mode", value="auto-rotating", inline=False)
             if activity:
                 type_name = str(activity.type).replace("ActivityType.", "").title()
                 embed.add_field(name="Current Type", value=type_name, inline=True)
                 embed.add_field(name="Current Text", value=f"`{activity.name}`", inline=True)
             embed.add_field(
                 name="Rotation Pool",
-                value=f"{len(self.status_list)} statuses, cycling every 5 minutes",
+                value=f"{len(self.status_list)} statuses, cycling every 15 minutes",
                 inline=False
             )
             embed.set_footer(text="use /status set to pin a custom status")
 
-        # FIX 3D — Add note about Discord display behavior
         embed.add_field(
             name="ℹ️ Display Note",
-            value=(
-                "Discord only shows activity text in the full profile popup — "
-                "click my avatar to see it."
-            ),
+            value="Discord shows activity text in the full profile popup — click my avatar to see it.",
             inline=False
         )
-
         await interaction.followup.send(embed=embed, ephemeral=True)
 
-    # FIX 3C — /status info: explains how Discord displays bot statuses
-    @status.command(name="info",
-                    description="Learn how Discord displays bot status (anyone)")
+    @status.command(name="info", description="Learn how Discord displays bot status (anyone)")
     async def status_info(self, interaction: discord.Interaction):
         self.bot.increment_command('status_info')
         await interaction.response.defer(ephemeral=True)
-
-        # Get current status info
-        activity = self.bot.guilds[0].me.activity if self.bot.guilds else None
-        if not activity:
-            try:
-                activity = self.bot.activity
-            except Exception:
-                activity = None
 
         embed = discord.Embed(
             title="📊 Bot Status Info",
@@ -280,73 +253,33 @@ class BotStatus(commands.Cog):
         )
 
         if self.custom_status:
-            embed.add_field(
-                name="Current Mode",
-                value="custom (pinned)",
-                inline=False
-            )
-            embed.add_field(
-                name="Status Type",
-                value=self.custom_status.get("type", "unknown"),
-                inline=True
-            )
-            embed.add_field(
-                name="Status Text",
-                value=f"`{self.custom_status.get('text', 'unknown')}`",
-                inline=True
-            )
+            embed.add_field(name="Current Mode", value="custom (pinned)", inline=False)
+            embed.add_field(name="Status Type", value=self.custom_status.get("type", "unknown"), inline=True)
+            embed.add_field(name="Status Text", value=f"`{self.custom_status.get('text', 'unknown')}`", inline=True)
         else:
-            embed.add_field(
-                name="Current Mode",
-                value="auto-rotating (changes every 5 min)",
-                inline=False
-            )
+            embed.add_field(name="Current Mode", value="auto-rotating (changes every 15 min)", inline=False)
+            activity = self.bot.guilds[0].me.activity if self.bot.guilds else None
+            if not activity:
+                try:
+                    activity = self.bot.activity
+                except Exception:
+                    activity = None
             if activity:
                 type_name = str(activity.type).replace("ActivityType.", "").title()
-                embed.add_field(
-                    name="Current Type",
-                    value=type_name,
-                    inline=True
-                )
-                embed.add_field(
-                    name="Current Text",
-                    value=f"`{activity.name}`",
-                    inline=True
-                )
+                embed.add_field(name="Current Type", value=type_name, inline=True)
+                embed.add_field(name="Current Text", value=f"`{activity.name}`", inline=True)
 
-        # Calculate approximate next rotation time
-        import time as _time
-        # The rotate_status task runs every 5 minutes (300s).
-        # We can approximate the next rotation based on the current_loop count.
-        try:
-            loops = self.rotate_status.current_loop
-            next_in = 5  # approximate: up to 5 minutes
-            embed.add_field(
-                name="Next Rotation",
-                value=f"approximately {next_in} minutes",
-                inline=True
-            )
-        except Exception:
-            embed.add_field(
-                name="Next Rotation",
-                value="within 5 minutes",
-                inline=True
-            )
-
+        embed.add_field(name="Next Rotation", value="within 15 minutes", inline=True)
         embed.add_field(
             name="📝 How to See My Status",
             value=(
-                "Discord changed how bot statuses are displayed. The activity text "
-                "('Playing', 'Watching', 'Listening to', 'Competing') **only shows "
-                "in the full profile popup** — click my avatar to see it.\n\n"
-                "It does NOT show in the member list sidebar or hover card anymore "
-                "for bot accounts. This is a Discord client-side change, not a bug."
+                "Discord shows activity text in the full profile popup — click my avatar.\n"
+                "It may not show in the member list sidebar for bot accounts.\n"
+                "This is a Discord client-side display decision, not a bug."
             ),
             inline=False
         )
-
         embed.set_footer(text="cyn • /status info")
-
         await interaction.followup.send(embed=embed, ephemeral=True)
 
 
