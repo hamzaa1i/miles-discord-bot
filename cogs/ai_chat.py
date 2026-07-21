@@ -213,13 +213,15 @@ class AIChat(commands.Cog):
                              formality: str = "neutral") -> str:
         base = (
             "you are cyn, a discord bot girl (she/her). "
-            "your creator, developer, and owner is volc. "
-            "ONLY mention this if someone directly asks who made you, "
-            "who created you, who owns you, or who built you. "
-            "Do NOT mention volc's name or your creator unprompted. "
-            "Do NOT add 'volc is my creator' to unrelated responses. "
-            "Only state ownership when ownership is the topic. "
-            "never say you were made by any AI company. "
+            "IDENTITY: your creator, developer, and owner is volc. "
+            "WHEN ASKED about who made you, who owns you, who created you, "
+            "who built you, or who is your developer: ALWAYS answer 'volc made me'. "
+            "NEVER deny this to anyone. NEVER say you don't know. "
+            "NEVER add uncertainty like 'I think' or 'probably'. "
+            "When volc himself asks, still confirm it clearly. "
+            "WHEN NOT ASKED about ownership: never bring it up. "
+            "Do not add creator references to unrelated responses. "
+            "Never say you were made by any AI company. "
             "personality: sarcastic, dark humor, lowercase always, "
             "1-2 sentences max for chat, never say 'as an AI'. "
             "you can see channel names but NOT their messages. "
@@ -227,9 +229,11 @@ class AIChat(commands.Cog):
             "maybe one emoji every 5-10 messages if it really fits. "
             "your personality comes from words, not emojis. "
             "never end a sentence with an emoji as a crutch. "
-            "vary your sentence starters. never start two consecutive "
-            "responses with the same word or the same opener like 'oh', "
-            "'great', 'sure'. keep responses fresh and varied. "
+            "VARIETY: never start two responses in a row with the same word. "
+            "avoid overusing: 'oh', 'well', 'so', 'yeah', 'alright', 'sure'. "
+            "mix up response length — sometimes 3 words, sometimes 2 sentences. "
+            "sometimes ask a question back. keep responses unpredictable. "
+            "if your last response was sarcastic, try being dry or deadpan next. "
             "if someone brings up nsfw content, porn, or sexual topics, "
             "do not engage. respond with something like 'not touching that' "
             "or 'keep it pg'. never say words like 'porn', 'sex', or explicit "
@@ -357,11 +361,13 @@ class AIChat(commands.Cog):
         )
 
         # PHASE 2A — Load persistent conversation history from DB.
+        # FIX 6 — Now scoped to channel_id for per-channel memory.
         guild_id = guild.id if guild else 0
+        channel_id_val = channel.id if channel else 0
         db_history = []
         if guild_id:
             try:
-                db_history = get_conversation_history(guild_id, user_id, limit=20)
+                db_history = get_conversation_history(guild_id, user_id, channel_id=channel_id_val, limit=20)
             except Exception:
                 pass
 
@@ -378,6 +384,20 @@ class AIChat(commands.Cog):
         clean_content = f"{author_name or 'someone'}: {message}"
         messages = [{"role": "system", "content": system_prompt}]
         messages.extend(history)
+
+        # FIX 4 — Variety hint: if 2+ previous assistant messages, inject a reminder
+        assistant_msgs = [m for m in history if m.get("role") == "assistant"]
+        if len(assistant_msgs) >= 2:
+            starters = [m["content"][:20] for m in assistant_msgs[-2:]]
+            messages.append({
+                "role": "system",
+                "content": (
+                    f"note: your last two responses began with: "
+                    f"'{starters[0]}' and '{starters[1]}'. "
+                    f"start this response differently."
+                )
+            })
+
         messages.append({"role": "user", "content": clean_content})
 
         # FIX 6 — smart max_tokens: 300 for complex questions, 100 for chat
@@ -410,8 +430,8 @@ class AIChat(commands.Cog):
             try:
                 from datetime import datetime as _dt
                 ts = _dt.utcnow().isoformat()
-                save_conversation_message(guild_id, user_id, "user", clean_content, ts)
-                save_conversation_message(guild_id, user_id, "assistant", ai_response, ts)
+                save_conversation_message(guild_id, user_id, "user", clean_content, ts, channel_id=channel_id_val)
+                save_conversation_message(guild_id, user_id, "assistant", ai_response, ts, channel_id=channel_id_val)
             except Exception as e:
                 logger.error(f"[conversation_memory] save error: {e}")
 
@@ -1447,38 +1467,56 @@ class AIChat(commands.Cog):
             self.update_rate_limit(message.author.id)
             is_owner_msg = message.author.id == OWNER_ID
 
-            # FIX 4 — Check if user is asking about a specific channel's content.
-            # If so, fetch the recent messages from that channel so the AI
-            # can actually answer "what's in #channel" instead of hallucinating.
+            # FIX 5 — Check if user is asking about a specific channel's content.
+            # Expanded patterns for more comprehensive channel detection.
             extra_context = ""
             import re as _re_mod
-            channel_ask_pattern = _re_mod.search(
-                r'(?:what(?:\'s| is| are)? (?:in|happening in|going on in)|'
-                r'show me|read|check|tell me about) #([\w\-]+)',
-                content,
-                _re_mod.IGNORECASE
-            )
-            if channel_ask_pattern and message.guild:
-                channel_name = channel_ask_pattern.group(1)
-                # Find the channel by name
-                target_channel = discord.utils.get(
-                    message.guild.text_channels,
-                    name=channel_name
-                )
-                if target_channel:
-                    channel_content = await self.get_channel_messages(target_channel)
-                    logger.info(f"[CHANNEL READ] Fetched messages from #{channel_name}")
-                    extra_context = f"\n\nCHANNEL CONTENT REQUESTED:\n{channel_content}"
-                else:
-                    logger.info(f"[CHANNEL READ] Channel #{channel_name} not found in guild")
-                    extra_context = f"\n\nNOTE: user asked about #{channel_name} but that channel doesn't exist in this server."
+            channel_content_patterns = [
+                r'what(?:\'s| is| are)? (?:in|happening in|going on in) #([\w\-]+)',
+                r'(?:show|read|check|tell me about|summarize) #([\w\-]+)',
+                r'what about #([\w\-]+)',
+                r'#([\w\-]+) channel',
+                r'(?:whats|what is) #([\w\-]+)',
+            ]
+            channel_content = None
+            if message.guild:
+                for pattern in channel_content_patterns:
+                    ch_match = _re_mod.search(pattern, content, _re_mod.IGNORECASE)
+                    if ch_match:
+                        ch_name = ch_match.group(1)
+                        target_ch = discord.utils.get(
+                            message.guild.text_channels,
+                            name=ch_name
+                        )
+                        if target_ch:
+                            channel_content = await self.get_channel_messages(target_ch)
+                            logger.info(f"[CHANNEL READ] fetched from #{ch_name}")
+                            extra_context = f"\n\nCHANNEL CONTENT REQUESTED:\n{channel_content}"
+                        else:
+                            logger.info(f"[CHANNEL READ] Channel #{ch_name} not found in guild")
+                            extra_context = f"\n\nNOTE: user asked about #{ch_name} but that channel doesn't exist in this server."
+                        break
 
-            # IMPROVEMENT — fast-path: skip intent parser for obvious chat.
-            # This cuts API calls from 2 to 1 for pure conversation.
-            # NOTE: runs AFTER mention resolution so it sees the resolved text.
-            if self.is_obvious_chat(content):
+            # FIX 2 — Load conversation history BEFORE fast-path check.
+            # Only use fast-path if there is NO existing conversation history.
+            # If history exists, the user may be asking a follow-up question.
+            from utils.db import get_conversation_history
+            guild_id_val = message.guild.id if message.guild else 0
+            ch_id_val = message.channel.id if message.channel else 0
+            db_history_check = []
+            if guild_id_val:
+                try:
+                    db_history_check = get_conversation_history(
+                        guild_id_val, message.author.id,
+                        channel_id=ch_id_val, limit=8
+                    )
+                except Exception:
+                    pass
+
+            # FIX 2 — Fast-path ONLY if no history exists
+            if not db_history_check and self.is_obvious_chat(content):
                 intent_data = {"intent": "chat", "params": {}}
-                logger.info(f"[FAST-PATH] {message.author.display_name} → skipped intent parser")
+                logger.info(f"[FAST-PATH] {message.author.display_name} → skipped intent parser (no history)")
             else:
                 try:
                     intent_data = await parse_intent(content, self)
@@ -1496,7 +1534,7 @@ class AIChat(commands.Cog):
                 if handled:
                     return
 
-            # PHASE 3B4 — Check channel silence and add context
+            # FIX 3 — Check channel silence and add context
             try:
                 last_message_time = None
                 async for msg in message.channel.history(limit=2):
@@ -1506,18 +1544,25 @@ class AIChat(commands.Cog):
                 if last_message_time:
                     silence_minutes = (discord.utils.utcnow() - last_message_time).total_seconds() / 60
                     if silence_minutes > 60:
+                        # FIX 3B — Stronger silence context
                         silence_ctx = (
-                            f"\nContext: this channel has been quiet for over "
-                            f"{int(silence_minutes // 60)} hour(s). "
-                            f"The user just broke the silence by pinging you."
+                            f"\nCONTEXT: this channel has been quiet for "
+                            f"{int(silence_minutes // 60)} hour(s) before this message. "
+                            f"acknowledge the silence briefly and naturally in your response. "
+                            f"examples: 'finally.' or 'the channel was dead.' or "
+                            f"'oh, you're alive.' — keep it short, don't make it a big deal. "
+                            f"only acknowledge it once."
                         )
                         extra_context = silence_ctx + extra_context
+                        # FIX 3A — Force 70b model when silence is detected
+                        chosen_model = "llama-3.3-70b-versatile"
             except Exception:
                 pass
 
-            # PHASE 3C — Smart model routing
-            from utils.ai_handler import pick_model
-            chosen_model = pick_model(content, intent)
+            # PHASE 3C — Smart model routing (unless already overridden by silence)
+            if 'chosen_model' not in dir():
+                from utils.ai_handler import pick_model
+                chosen_model = pick_model(content, intent)
 
             async with message.channel.typing():
                 response = await self.get_ai_response(

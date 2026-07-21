@@ -145,6 +145,8 @@ CREATE TABLE server_personality (
 -- );
 -- GRANT ALL ON public.prefix_settings TO anon;
 -- ALTER TABLE public.prefix_settings DISABLE ROW LEVEL SECURITY;
+--
+-- ALTER TABLE conversation_memory ADD COLUMN IF NOT EXISTS channel_id TEXT DEFAULT '0';
 """
 import os
 import json
@@ -561,50 +563,45 @@ def get_user_reminders(user_id: int) -> list:
 
 # ─── PHASE 2A: Persistent Conversation Memory ──────────────────
 
-def get_conversation_history(guild_id: int, user_id: int, limit: int = 20) -> list:
-    """Get recent conversation history for a user in a guild.
-    Returns list of {"role": "user"|"assistant", "content": str, "timestamp": str}.
-    Keeps only the most recent 20 entries per user per guild."""
+def get_conversation_history(guild_id: int, user_id: int, channel_id: int = 0,
+                              limit: int = 20) -> list:
+    """Get recent conversation history for a user in a guild+channel.
+    FIX 6 — Now scoped to channel_id for per-channel memory."""
     if _use_supabase:
         try:
-            result = _supabase.table("conversation_memory").select("*").eq(
+            query = _supabase.table("conversation_memory").select("*").eq(
                 "guild_id", str(guild_id)
-            ).eq("user_id", str(user_id)).order(
-                "id", desc=True
-            ).limit(limit).execute()
-            # Reverse to chronological order
+            ).eq("user_id", str(user_id))
+            # FIX 6 — Filter by channel_id if provided
+            if channel_id:
+                query = query.eq("channel_id", str(channel_id))
+            result = query.order("id", desc=True).limit(limit).execute()
             return list(reversed(result.data or []))
         except Exception as e:
             error_key = "get_conversation_history"
             if error_key not in _supabase_error_logged:
                 logger.error(f"[DB] get_conversation_history error: {e}")
-                logger.warning(
-                    "[DB] Supabase permission issue for table 'conversation_memory'. "
-                    "Falling back to JSON."
-                )
                 _supabase_error_logged.add(error_key)
-            # Fall back to JSON silently
             data = _read_json("data/conversation_memory.json")
-            g = str(guild_id)
-            u = str(user_id)
-            entries = data.get(g, {}).get(u, [])
+            key = f"{guild_id}_{user_id}_{channel_id}"
+            entries = data.get(key, [])
             if not isinstance(entries, list):
                 return []
             return entries[-limit:]
     else:
         data = _read_json("data/conversation_memory.json")
-        g = str(guild_id)
-        u = str(user_id)
-        entries = data.get(g, {}).get(u, [])
+        key = f"{guild_id}_{user_id}_{channel_id}"
+        entries = data.get(key, [])
         if not isinstance(entries, list):
             return []
         return entries[-limit:]
 
 
 def save_conversation_message(guild_id: int, user_id: int, role: str,
-                               content: str, timestamp: str = None):
+                               content: str, timestamp: str = None,
+                               channel_id: int = 0):
     """Save a message into conversation history.
-    Keeps only the most recent 20 entries per user per guild."""
+    FIX 6 — Now scoped to channel_id for per-channel memory."""
     if timestamp is None:
         from datetime import datetime as _dt
         timestamp = _dt.utcnow().isoformat()
@@ -614,15 +611,17 @@ def save_conversation_message(guild_id: int, user_id: int, role: str,
             _supabase.table("conversation_memory").insert({
                 "guild_id": str(guild_id),
                 "user_id": str(user_id),
+                "channel_id": str(channel_id),
                 "role": role,
                 "content": content,
                 "timestamp": timestamp,
             }).execute()
-            # Trim old entries: keep only the most recent 20
-            # Supabase doesn't have an easy "delete oldest" so we do it in two steps
+            # Trim old entries: keep only the most recent 20 per user+guild+channel
             all_entries = _supabase.table("conversation_memory").select("id").eq(
                 "guild_id", str(guild_id)
-            ).eq("user_id", str(user_id)).order("id", desc=True).execute()
+            ).eq("user_id", str(user_id)).eq(
+                "channel_id", str(channel_id)
+            ).order("id", desc=True).execute()
             if all_entries.data and len(all_entries.data) > 20:
                 ids_to_delete = [e["id"] for e in all_entries.data[20:]]
                 for eid in ids_to_delete:
@@ -632,76 +631,73 @@ def save_conversation_message(guild_id: int, user_id: int, role: str,
             error_key = "save_conversation_message"
             if error_key not in _supabase_error_logged:
                 logger.error(f"[DB] save_conversation_message error: {e}")
-                logger.warning(
-                    "[DB] Supabase permission issue for table 'conversation_memory'. "
-                    "Falling back to JSON."
-                )
                 _supabase_error_logged.add(error_key)
-            # Fall back to JSON silently
             data = _read_json("data/conversation_memory.json")
-            g = str(guild_id)
-            u = str(user_id)
-            if g not in data:
-                data[g] = {}
-            if u not in data[g] or not isinstance(data[g][u], list):
-                data[g][u] = []
-            data[g][u].append({
+            key = f"{guild_id}_{user_id}_{channel_id}"
+            if key not in data or not isinstance(data[key], list):
+                data[key] = []
+            data[key].append({
                 "role": role,
                 "content": content,
                 "timestamp": timestamp,
             })
-            # Keep only last 20
-            if len(data[g][u]) > 20:
-                data[g][u] = data[g][u][-20:]
+            if len(data[key]) > 20:
+                data[key] = data[key][-20:]
             _write_json("data/conversation_memory.json", data)
     else:
         data = _read_json("data/conversation_memory.json")
-        g = str(guild_id)
-        u = str(user_id)
-        if g not in data:
-            data[g] = {}
-        if u not in data[g] or not isinstance(data[g][u], list):
-            data[g][u] = []
-        data[g][u].append({
+        key = f"{guild_id}_{user_id}_{channel_id}"
+        if key not in data or not isinstance(data[key], list):
+            data[key] = []
+        data[key].append({
             "role": role,
             "content": content,
             "timestamp": timestamp,
         })
-        # Keep only last 20
-        if len(data[g][u]) > 20:
-            data[g][u] = data[g][u][-20:]
+        if len(data[key]) > 20:
+            data[key] = data[key][-20:]
         _write_json("data/conversation_memory.json", data)
 
 
-def clear_conversation_history(guild_id: int, user_id: int):
-    """Clear all conversation history for a user in a guild."""
+def clear_conversation_history(guild_id: int, user_id: int, channel_id: int = 0):
+    """Clear conversation history for a user in a guild.
+    FIX 6 — If channel_id=0, clears all channels. If >0, clears only that channel."""
     if _use_supabase:
         try:
-            _supabase.table("conversation_memory").delete().eq(
+            query = _supabase.table("conversation_memory").delete().eq(
                 "guild_id", str(guild_id)
-            ).eq("user_id", str(user_id)).execute()
+            ).eq("user_id", str(user_id))
+            if channel_id:
+                query = query.eq("channel_id", str(channel_id))
+            query.execute()
         except Exception as e:
             error_key = "clear_conversation_history"
             if error_key not in _supabase_error_logged:
                 logger.error(f"[DB] clear_conversation_history error: {e}")
-                logger.warning(
-                    "[DB] Supabase permission issue for table 'conversation_memory'. "
-                    "Falling back to JSON."
-                )
                 _supabase_error_logged.add(error_key)
-            # Fall back to JSON silently
             data = _read_json("data/conversation_memory.json")
-            g = str(guild_id)
-            u = str(user_id)
-            if g in data and u in data[g]:
-                data[g][u] = []
+            if channel_id:
+                key = f"{guild_id}_{user_id}_{channel_id}"
+                if key in data:
+                    data[key] = []
+            else:
+                # Clear all channels for this user+guild
+                prefix = f"{guild_id}_{user_id}_"
+                for key in list(data.keys()):
+                    if key.startswith(prefix):
+                        data[key] = []
             _write_json("data/conversation_memory.json", data)
     else:
         data = _read_json("data/conversation_memory.json")
-        g = str(guild_id)
-        u = str(user_id)
-        if g in data and u in data[g]:
-            data[g][u] = []
+        if channel_id:
+            key = f"{guild_id}_{user_id}_{channel_id}"
+            if key in data:
+                data[key] = []
+        else:
+            prefix = f"{guild_id}_{user_id}_"
+            for key in list(data.keys()):
+                if key.startswith(prefix):
+                    data[key] = []
         _write_json("data/conversation_memory.json", data)
 
 
