@@ -147,6 +147,9 @@ CREATE TABLE server_personality (
 -- ALTER TABLE public.prefix_settings DISABLE ROW LEVEL SECURITY;
 --
 -- ALTER TABLE conversation_memory ADD COLUMN IF NOT EXISTS channel_id TEXT DEFAULT '0';
+--
+-- ALTER TABLE welcome_settings ADD COLUMN IF NOT EXISTS dm_message TEXT;
+-- ALTER TABLE welcome_settings ADD COLUMN IF NOT EXISTS embed_mode TEXT DEFAULT 'embed';
 """
 import os
 import json

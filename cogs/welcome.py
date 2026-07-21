@@ -1,17 +1,16 @@
-"""
-cogs/welcome.py — welcome & goodbye system with command groups + autorole.
+"""cogs/welcome.py — welcome & goodbye system.
 
-Backward-compatibility notes:
-- The existing /welcome_setup, /welcome_test, /goodbye_toggle, /toggledms
-  commands are kept (they were in the old version).
-- New /welcome and /goodbye slash command groups are added per Step 8.
-- /autorole is added to set the role assigned to new members on join.
-- Welcome & goodbye messages are now embeds with the user's avatar as thumbnail.
+Commands:
+- /welcome config [setting] [value?] [channel?] — view/change any setting
+- /welcome test [type]   — preview welcome/goodbye/DM
+- /welcome show          — show current config
+- /toggledms             — toggle DMs from cyn
 """
 import discord
 from discord.ext import commands
 from discord import app_commands
 from datetime import datetime
+from typing import Optional
 from utils.database import Database
 from utils.db import get_guild_setting, set_guild_setting
 
@@ -286,105 +285,165 @@ class Welcome(commands.Cog):
         except:
             pass
 
-    # ==================== LEGACY COMMANDS (kept for backward compat) ====================
-
+    # ==================== STANDALONE COMMAND ====================
     @app_commands.command(name="toggledms", description="Toggle DMs from cyn")
     async def toggledms(self, interaction: discord.Interaction):
         prefs = self.dm_prefs_db.get(str(interaction.user.id), {'dms_enabled': True})
-        current = prefs.get('dms_enabled', True)
-        if current:
-            self.disable_dms(interaction.user.id)
-            status = "disabled"
-            detail = "you'll only get important DMs"
+        if prefs.get('dms_enabled', True):
+            self.disable_dms(interaction.user.id); status, detail = "disabled", "you'll only get important DMs"
         else:
-            self.enable_dms(interaction.user.id)
-            status = "enabled"
-            detail = "you'll get welcome rewards and notifications"
-        embed = discord.Embed(
-            description=f"DMs from cyn are now **{status}**. {detail}.",
-            color=0x1a1a2e
-        )
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+            self.enable_dms(interaction.user.id); status, detail = "enabled", "you'll get welcome rewards and notifications"
+        await interaction.response.send_message(
+            embed=discord.Embed(description=f"DMs from cyn are now **{status}**. {detail}.", color=0x1a1a2e), ephemeral=True)
 
+    # ==================== WELCOME GROUP (consolidated) ====================
+    welcome = app_commands.Group(name="welcome", description="Configure welcome & goodbye messages")
 
-    # ==================== WELCOME & GOODBYE GROUPS ====================
+    async def _err(self, itx: discord.Interaction, msg: str):
+        await itx.response.send_message(msg, ephemeral=True)
 
-    welcome = app_commands.Group(name="welcome", description="Configure welcome messages")
-    goodbye = app_commands.Group(name="goodbye", description="Configure goodbye messages")
-
-    @welcome.command(name="channel", description="Set welcome channel")
+    # ---- /welcome config ----
+    @welcome.command(name="config", description="View or change a welcome/goodbye setting")
     @app_commands.checks.has_permissions(manage_guild=True)
-    async def welcome_channel(self, interaction: discord.Interaction, channel: discord.TextChannel):
+    @app_commands.describe(
+        setting="Which setting to view or change",
+        value="Toggles: on/off/true/false/yes/no • embed_mode: embed/text",
+        channel="Required only for welcome_channel / goodbye_channel",
+    )
+    @app_commands.choices(setting=[
+        app_commands.Choice(name="Welcome Channel", value="welcome_channel"), app_commands.Choice(name="Welcome Message", value="welcome_message"),
+        app_commands.Choice(name="Welcome DM", value="welcome_dm"), app_commands.Choice(name="Welcome Toggle", value="welcome_toggle"),
+        app_commands.Choice(name="Goodbye Channel", value="goodbye_channel"), app_commands.Choice(name="Goodbye Message", value="goodbye_message"),
+        app_commands.Choice(name="Goodbye Toggle", value="goodbye_toggle"), app_commands.Choice(name="Embed Mode", value="embed_mode"),
+    ])
+    async def welcome_config(self, interaction: discord.Interaction, setting: app_commands.Choice[str], value: Optional[str] = None, channel: Optional[discord.TextChannel] = None):
         config = self.get_config(interaction.guild.id)
-        config['channel_id'] = str(channel.id)
-        config['enabled'] = True
-        set_guild_setting(interaction.guild.id, "welcome_settings", config)
-        await interaction.response.send_message(f"✅ welcome channel set to {channel.mention}")
+        gid = interaction.guild.id
+        key, name = setting.value, setting.name
+        bool_words = {"on": True, "true": True, "yes": True, "off": False, "false": False, "no": False}
 
-    @welcome.command(name="message", description="Set welcome message")
-    @app_commands.checks.has_permissions(manage_guild=True)
-    async def welcome_message(self, interaction: discord.Interaction, message: str):
+        # Channel-based settings
+        if key in ("welcome_channel", "goodbye_channel"):
+            if channel is None:
+                return await self._err(interaction, f"❌ Provide a `channel` for **{name}**.")
+            if key == "welcome_channel":
+                config['channel_id'] = str(channel.id); config['enabled'] = True
+            else:
+                config['goodbye_channel_id'] = str(channel.id); config['goodbye_enabled'] = True
+            set_guild_setting(gid, "welcome_settings", config)
+            return await interaction.response.send_message(f"✅ {name} set to {channel.mention}")
+
+        # Toggle-based settings
+        if key in ("welcome_toggle", "goodbye_toggle"):
+            if value is None:
+                return await self._err(interaction, f"❌ Provide `value` (on/off) for **{name}**.")
+            parsed = value.strip().lower()
+            if parsed not in bool_words:
+                return await self._err(interaction, f"❌ Invalid `{value}`. Use on/off, true/false, yes/no.")
+            enabled = bool_words[parsed]
+            config['enabled' if key == "welcome_toggle" else 'goodbye_enabled'] = enabled
+            set_guild_setting(gid, "welcome_settings", config)
+            return await interaction.response.send_message(f"✅ {name} **{'enabled' if enabled else 'disabled'}**")
+
+        # Embed mode
+        if key == "embed_mode":
+            if value is None:
+                return await self._err(interaction, "❌ Provide `value` (`embed` or `text`).")
+            parsed = value.strip().lower()
+            if parsed not in ("embed", "text"):
+                return await self._err(interaction, f"❌ Invalid `{value}`. Use `embed` or `text`.")
+            config['embed_mode'] = parsed
+            set_guild_setting(gid, "welcome_settings", config)
+            return await interaction.response.send_message(f"✅ Embed mode set to **{parsed}**")
+
+        # Text-based settings (welcome_message / goodbye_message / welcome_dm)
+        text_cfg = {"welcome_message": ("message", "`{user}` `{server}` `{membercount}`"), "goodbye_message": ("goodbye_message", "`{user}` `{server}` `{membercount}` `{duration}`"), "welcome_dm": ("dm_message", "`{user}` `{server}`")}
+        if key in text_cfg:
+            if value is None: return await self._err(interaction, f"ℹ️ Provide `value` for **{name}**.")
+            cfg_key, vars_str = text_cfg[key]
+            is_dm = key == "welcome_dm"
+            if is_dm and value.lower() == "off":
+                config[cfg_key] = ""; set_guild_setting(gid, "welcome_settings", config)
+                return await interaction.response.send_message("✅ Welcome DM disabled.")
+            config[cfg_key] = value[:1000] if is_dm else value
+            set_guild_setting(gid, "welcome_settings", config)
+            if is_dm:
+                preview = value.replace("{user}", interaction.user.display_name).replace("{server}", interaction.guild.name)
+                return await interaction.response.send_message(f"✅ Welcome DM set. Variables: {vars_str}\nPreview: {preview}")
+            return await interaction.response.send_message(f"✅ {name} set.\nVariables: {vars_str}")
+
+    # ---- /welcome test ----
+    @welcome.command(name="test", description="Preview welcome, goodbye, or DM message")
+    @app_commands.describe(type="Which message type to test")
+    @app_commands.choices(type=[
+        app_commands.Choice(name="Welcome", value="welcome"), app_commands.Choice(name="Goodbye", value="goodbye"), app_commands.Choice(name="DM", value="dm"),
+    ])
+    async def welcome_test(self, interaction: discord.Interaction, type: app_commands.Choice[str]):
         config = self.get_config(interaction.guild.id)
-        config['message'] = message
-        set_guild_setting(interaction.guild.id, "welcome_settings", config)
-        await interaction.response.send_message("✅ welcome message set.\nvariables: `{user}` `{server}` `{membercount}`")
+        member = interaction.user
+        avatar_url = member.avatar.url if member.avatar else member.default_avatar.url
 
-    @welcome.command(name="toggle", description="Enable/disable welcome messages")
-    @app_commands.checks.has_permissions(manage_guild=True)
-    async def welcome_toggle(self, interaction: discord.Interaction, enabled: bool):
+        if type.value in ("welcome", "goodbye"):
+            if type.value == "welcome":
+                cid = config.get('channel_id')
+                msg_text = self._format_welcome(config.get('message', 'Welcome {user} to {server}!'), member)
+                title, color = f"Welcome to {interaction.guild.name}!", 0x1a1a2e
+            else:
+                cid = config.get('goodbye_channel_id') or config.get('channel_id')
+                msg_text = self._format_welcome(config.get('goodbye_message', "Goodbye {user}, we'll miss you."), member).replace("{duration}", "just now")
+                title, color = f"Goodbye {member.display_name}", 0xff5555
+            channel = interaction.guild.get_channel(int(cid)) if cid else None
+            if not channel: return await self._err(interaction, f"❌ {type.name} channel not set. Use `/welcome config` first.")
+            embed = discord.Embed(title=title, description=msg_text, color=color, timestamp=datetime.utcnow())
+            embed.set_thumbnail(url=avatar_url); embed.set_footer(text=f"User ID: {member.id} • (test)")
+            try:
+                await channel.send(embed=embed)
+                await interaction.response.send_message(f"✅ Test {type.value} sent to {channel.mention}")
+            except Exception as e:
+                await self._err(interaction, f"❌ Failed: {e}")
+            return
+
+        if type.value == "dm":
+            dm_msg = config.get('dm_message', '')
+            if not dm_msg or dm_msg.lower() == 'off':
+                return await self._err(interaction, "❌ Welcome DM not configured. Use `/welcome config setting: Welcome DM` first.")
+            try:
+                await member.send(dm_msg.replace("{user}", member.display_name).replace("{server}", interaction.guild.name))
+                await interaction.response.send_message("✅ Test DM sent to your inbox.", ephemeral=True)
+            except discord.Forbidden:
+                await self._err(interaction, "❌ Couldn't DM you — your DMs are closed.")
+            except Exception as e:
+                await self._err(interaction, f"❌ Failed: {e}")
+
+    # ---- /welcome show ----
+    @welcome.command(name="show", description="Show the current welcome & goodbye configuration")
+    async def welcome_show(self, interaction: discord.Interaction):
         config = self.get_config(interaction.guild.id)
-        config['enabled'] = enabled
-        set_guild_setting(interaction.guild.id, "welcome_settings", config)
-        status = "enabled" if enabled else "disabled"
-        await interaction.response.send_message(f"✅ welcome messages **{status}**")
+        g = interaction.guild
 
-    # PHASE 4E1 — /welcome dm [message]
-    @welcome.command(name="dm", description="Set a DM welcome message for new members")
-    @app_commands.checks.has_permissions(manage_guild=True)
-    @app_commands.describe(message="DM message (use {user} and {server}). Send 'off' to disable.")
-    async def welcome_dm(self, interaction: discord.Interaction, message: str):
-        config = self.get_config(interaction.guild.id)
-        if message.lower() == 'off':
-            config['dm_message'] = ''
-            set_guild_setting(interaction.guild.id, "welcome_settings", config)
-            await interaction.response.send_message("✅ welcome DM disabled.")
-        else:
-            config['dm_message'] = message[:1000]
-            set_guild_setting(interaction.guild.id, "welcome_settings", config)
-            await interaction.response.send_message(
-                f"✅ welcome DM set. variables: `{{user}}` `{{server}}`\n"
-                f"preview: {message.replace('{user}', interaction.user.display_name).replace('{server}', interaction.guild.name)}"
-            )
+        def fmt(kind, eid):
+            if not eid: return "*not set*"
+            try: eid_int = int(eid)
+            except (ValueError, TypeError): return f"`{eid}` (invalid)"
+            obj = g.get_channel(eid_int) if kind == "channel" else g.get_role(eid_int)
+            return obj.mention if obj else f"`{eid}` (not found)"
 
+        def fmt_msg(msg, fallback):
+            text = msg or fallback
+            if len(text) > 200: text = text[:197] + "..."
+            return f"```\n{text}\n```"
 
-    @goodbye.command(name="channel", description="Set goodbye channel")
-    @app_commands.checks.has_permissions(manage_guild=True)
-    async def goodbye_channel(self, interaction: discord.Interaction, channel: discord.TextChannel):
-        config = self.get_config(interaction.guild.id)
-        config['goodbye_channel_id'] = str(channel.id)
-        config['goodbye_enabled'] = True
-        set_guild_setting(interaction.guild.id, "welcome_settings", config)
-        await interaction.response.send_message(f"✅ goodbye channel set to {channel.mention}")
-
-    @goodbye.command(name="message", description="Set goodbye message")
-    @app_commands.checks.has_permissions(manage_guild=True)
-    async def goodbye_message(self, interaction: discord.Interaction, message: str):
-        config = self.get_config(interaction.guild.id)
-        config['goodbye_message'] = message
-        set_guild_setting(interaction.guild.id, "welcome_settings", config)
-        await interaction.response.send_message("✅ goodbye message set.")
-
-    @goodbye.command(name="toggle", description="Enable/disable goodbye messages")
-    @app_commands.checks.has_permissions(manage_guild=True)
-    async def goodbye_toggle(self, interaction: discord.Interaction, enabled: bool):
-        config = self.get_config(interaction.guild.id)
-        config['goodbye_enabled'] = enabled
-        set_guild_setting(interaction.guild.id, "welcome_settings", config)
-        status = "enabled" if enabled else "disabled"
-        await interaction.response.send_message(f"✅ goodbye messages **{status}**")
-
-
-
+        default_goodbye = "Goodbye {user}, we'll miss you."
+        default_welcome = 'Welcome {user} to {server}! You are member #{membercount}.'
+        dm_msg = config.get('dm_message', '')
+        dm_enabled = bool(dm_msg) and dm_msg.lower() != 'off'
+        embed = discord.Embed(title="📋 Welcome & Goodbye Configuration", color=0x1a1a2e, timestamp=datetime.utcnow())
+        embed.set_footer(text=f"Guild: {g.name}")
+        embed.add_field(name="🎉 Welcome", inline=False, value=f"**Enabled:** `{config.get('enabled', False)}`\n**Channel:** {fmt('channel', config.get('channel_id'))}\n**Message:** {fmt_msg(config.get('message'), default_welcome)}")
+        embed.add_field(name="👋 Goodbye", inline=False, value=f"**Enabled:** `{config.get('goodbye_enabled', False)}`\n**Channel:** {fmt('channel', config.get('goodbye_channel_id'))}\n**Message:** {fmt_msg(config.get('goodbye_message'), default_goodbye)}")
+        embed.add_field(name="✉️ Welcome DM", inline=False, value=f"**Enabled:** `{dm_enabled}`\n**Message:** {fmt_msg(dm_msg, '(disabled)') if dm_msg else '*(disabled)*'}")
+        embed.add_field(name="⚙️ Other", inline=False, value=f"**Embed Mode:** `{config.get('embed_mode', 'embed')}`\n**Welcome Reward:** `${config.get('welcome_reward', 500):,}`\n**Welcomer Reward:** `${config.get('welcomer_reward', 1000):,}`\n**Autorole:** {fmt('role', config.get('autorole_id'))}")
+        await interaction.response.send_message(embed=embed)
 
 async def setup(bot):
     await bot.add_cog(Welcome(bot))

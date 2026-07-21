@@ -294,22 +294,70 @@ class Moderation(commands.Cog):
             except discord.InteractionResponded:
                 pass
 
-    @mod.command(name="warn", description="Warn a member")
+    # PHASE 2B — Consolidated /mod warnings command
+    @mod.command(name="warnings", description="Add, list, or clear warnings for a user")
+    @app_commands.describe(
+        action="What to do",
+        user="The target user",
+        reason="Reason for the warning (only for add action)"
+    )
+    @app_commands.choices(action=[
+        app_commands.Choice(name="Add Warning", value="add"),
+        app_commands.Choice(name="List Warnings", value="list"),
+        app_commands.Choice(name="Clear Warnings", value="clear"),
+    ])
     @app_commands.checks.has_permissions(moderate_members=True)
-    async def warn(self, interaction: discord.Interaction, member: discord.Member, reason: str):
+    async def mod_warnings(self, interaction: discord.Interaction,
+                           action: app_commands.Choice[str],
+                           user: discord.Member,
+                           reason: str = "No reason"):
+        self.bot.increment_command('mod_warnings')
         await interaction.response.defer(ephemeral=True)
-        self.log_action(interaction.guild.id, "warn", str(interaction.user), str(member), reason)
-        self.add_warning(interaction.guild.id, member.id, reason, str(interaction.user))
-        try:
-            dm = discord.Embed(description=f"you were warned in **{interaction.guild.name}**\nreason: {reason}", color=0xe67e22)
-            await member.send(embed=dm)
-        except Exception:
-            pass
-        embed = discord.Embed(description=f"warned **{member}**\nreason: {reason}", color=0xe67e22)
-        await interaction.followup.send(embed=embed)
-        await self._send_mod_log(interaction.guild, "Warn", member, interaction.user, reason, color=0xe67e22)
-        # Check warning threshold and auto-apply action if reached.
-        await self._maybe_apply_threshold(interaction, member, reason)
+
+        if action.value == "add":
+            self.log_action(interaction.guild.id, "warn", str(interaction.user), str(user), reason)
+            self.add_warning(interaction.guild.id, user.id, reason, str(interaction.user))
+            try:
+                dm = discord.Embed(description=f"you were warned in **{interaction.guild.name}**\nreason: {reason}", color=0xe67e22)
+                await user.send(embed=dm)
+            except Exception:
+                pass
+            embed = discord.Embed(description=f"warned **{user}**\nreason: {reason}", color=0xe67e22)
+            await interaction.followup.send(embed=embed)
+            await self._send_mod_log(interaction.guild, "Warn", user, interaction.user, reason, color=0xe67e22)
+            await self._maybe_apply_threshold(interaction, user, reason)
+
+        elif action.value == "list":
+            from utils.db import get_warnings
+            warnings = get_warnings(interaction.guild.id, user.id)
+            if not warnings:
+                await interaction.followup.send(f"no warnings for {user.display_name}.", ephemeral=True)
+                return
+            embed = discord.Embed(
+                title=f"⚠️ Warnings for {user.display_name}",
+                color=0xe67e22,
+                timestamp=discord.utils.utcnow()
+            )
+            for i, w in enumerate(warnings[:15], 1):
+                w_reason = w.get('reason', 'N/A') if isinstance(w, dict) else str(w)
+                w_mod = w.get('moderator', 'Unknown') if isinstance(w, dict) else 'Unknown'
+                embed.add_field(
+                    name=f"#{i}",
+                    value=f"reason: {w_reason}\nby: {w_mod}",
+                    inline=False
+                )
+            embed.set_footer(text=f"Total: {len(warnings)} warning(s)")
+            await interaction.followup.send(embed=embed, ephemeral=True)
+
+        elif action.value == "clear":
+            from utils.db import get_warnings, clear_warnings
+            existing = get_warnings(interaction.guild_id, user.id)
+            if not existing:
+                await interaction.followup.send(f"no warnings found for {user.display_name}.", ephemeral=True)
+                return
+            count = len(existing)
+            clear_warnings(interaction.guild_id, user.id)
+            await interaction.followup.send(f"cleared {count} warning(s) for {user.display_name}.", ephemeral=True)
 
     @mod.command(name="purge", description="Delete messages")
     @app_commands.checks.has_permissions(manage_messages=True)
@@ -394,24 +442,6 @@ class Moderation(commands.Cog):
             await interaction.followup.send("🔓 channel unlocked.")
         except discord.Forbidden:
             await interaction.followup.send("i don't have permission.", ephemeral=True)
-
-    @mod.command(name="warn_clear", description="Clear all warnings for a user")
-    @app_commands.describe(user="The user to clear warnings for")
-    async def mod_warn_clear(self, interaction: discord.Interaction, user: discord.Member):
-        await interaction.response.defer(ephemeral=True)
-        owner_id = int(os.getenv("OWNER_ID", "0"))
-        if (interaction.user.id != owner_id and
-                not interaction.user.guild_permissions.administrator):
-            await interaction.followup.send("no permission.")
-            return
-        from utils.db import get_warnings, clear_warnings
-        existing = get_warnings(interaction.guild_id, user.id)
-        if not existing:
-            await interaction.followup.send(f"no warnings found for {user.display_name}.")
-            return
-        count = len(existing)
-        clear_warnings(interaction.guild_id, user.id)
-        await interaction.followup.send(f"cleared {count} warning(s) for {user.display_name}.")
 
     @mod.command(name="unmute", description="Remove timeout from a user (unmute)")
     @app_commands.describe(user="The user to unmute")

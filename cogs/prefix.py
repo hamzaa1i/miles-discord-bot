@@ -77,18 +77,18 @@ class Prefix(commands.Cog):
         await self._route_command(message, cmd, args, args_str, command_text)
 
     async def _route_command(self, message, cmd, args, args_str, full_text):
-        # Welcome commands
+        # Welcome commands (consolidated)
         if cmd == "welcome":
             await self._handle_welcome(message, args, args_str)
             return
 
-        # Goodbye commands
+        # Goodbye commands (now part of welcome config, but keep backward compat)
         if cmd == "goodbye":
             await self._handle_goodbye(message, args, args_str)
             return
 
-        # Mod commands
-        if cmd in ("warn", "kick", "ban", "purge", "lock", "unlock", "slowmode"):
+        # Mod commands (consolidated warnings + direct execution)
+        if cmd in ("warn", "kick", "ban", "purge", "lock", "unlock", "slowmode", "warnings"):
             await self._handle_mod(message, cmd, args, args_str)
             return
 
@@ -223,6 +223,32 @@ class Prefix(commands.Cog):
             await message.reply("no permission.")
             return
 
+        # PHASE 2B — Handle consolidated warnings command
+        if cmd == "warnings":
+            sub = args[0].lower() if args else ""
+            if sub == "add" and message.mentions:
+                target = message.mentions[0]
+                reason = args_str.replace(f"<@{target.id}>", "").replace(f"<@!{target.id}>", "").replace("add", "").strip()
+                reason = reason or "no reason provided"
+                ai_cog = self.bot.get_cog("AiChat")
+                if ai_cog and hasattr(ai_cog, 'handle_prefix_command'):
+                    await ai_cog.handle_prefix_command(message, f"warn {target.mention} {reason}")
+                return
+            if sub == "list" and message.mentions:
+                target = message.mentions[0]
+                ai_cog = self.bot.get_cog("AiChat")
+                if ai_cog and hasattr(ai_cog, 'handle_prefix_command'):
+                    await ai_cog.handle_prefix_command(message, f"show warnings for {target.mention}")
+                return
+            if sub == "clear" and message.mentions:
+                target = message.mentions[0]
+                ai_cog = self.bot.get_cog("AiChat")
+                if ai_cog and hasattr(ai_cog, 'handle_prefix_command'):
+                    await ai_cog.handle_prefix_command(message, f"clear warnings for {target.mention}")
+                return
+            await message.reply("usage: warnings add @user [reason] | warnings list @user | warnings clear @user")
+            return
+
         if cmd == "warn" and message.mentions:
             target = message.mentions[0]
             reason = args_str.replace(f"<@{target.id}>", "").replace(f"<@!{target.id}>", "").strip()
@@ -279,11 +305,37 @@ class Prefix(commands.Cog):
 
     async def _handle_simple(self, message, cmd, args, args_str):
         if cmd == "help":
-            # Send the help command URL
-            await message.reply(
-                "use `/help` for the interactive help menu.\n"
-                "or ask me anything by typing your prefix followed by a question."
+            prefix = self._get_prefix(message.guild.id) or "@cyn"
+            help_text = (
+                f"**cyn commands** (prefix: `{prefix}`)\n"
+                f"also available as slash commands (`/help` for full menu)\n\n"
+                f"**AI Chat**\n"
+                f"`{prefix}` + any question → talk to cyn\n\n"
+                f"**Welcome**\n"
+                f"`{prefix}welcome config welcome_channel #channel`\n"
+                f"`{prefix}welcome config welcome_message [text]`\n"
+                f"`{prefix}welcome config goodbye_message [text]`\n"
+                f"`{prefix}welcome config welcome_dm [text]`\n"
+                f"`{prefix}welcome config welcome_toggle on/off`\n"
+                f"`{prefix}welcome test welcome/goodbye/dm`\n"
+                f"`{prefix}welcome show`\n\n"
+                f"**Moderation**\n"
+                f"`{prefix}warnings add @user [reason]`\n"
+                f"`{prefix}warnings list @user`\n"
+                f"`{prefix}warnings clear @user`\n"
+                f"`{prefix}purge [amount]`\n"
+                f"`{prefix}lock` / `{prefix}unlock`\n"
+                f"`{prefix}slowmode [seconds]`\n\n"
+                f"**Utility**\n"
+                f"`{prefix}ping` — latency\n"
+                f"`{prefix}uptime` — bot uptime\n"
+                f"`{prefix}weather [city]` — weather\n"
+                f"`{prefix}prefix set/remove/list` — manage prefix\n\n"
+                f"**Fun**\n"
+                f"`{prefix}joke` `{prefix}fact` `{prefix}meme`\n"
+                f"`{prefix}flip` `{prefix}roll` `{prefix}truth` `{prefix}dare`\n"
             )
+            await message.reply(help_text)
             return
 
         if cmd == "ping":

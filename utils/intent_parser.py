@@ -21,6 +21,7 @@ INTENT_SYSTEM_PROMPT = (
     "- purge: {amount}\n"
     "- warn: {user_id, reason} — REQUIRES a @mention of the target in the message\n"
     "- warn_clear: {user_id} — clear all warnings for a user. REQUIRES a @mention.\n"
+    "- warn_list: {user_id} — list warnings for a user. REQUIRES a @mention.\n"
     "- delete_message: {message_id} — delete a specific message by ID, or the "
     "message they are replying to. Look for 'delete message: 1234567890' or "
     "'delete this message'. If no ID visible, return {\"message_id\": null}.\n"
@@ -68,7 +69,7 @@ INTENT_SYSTEM_PROMPT = (
 
 KNOWN_INTENTS = {
     'ban', 'kick', 'mute', 'timeout', 'unmute', 'purge',
-    'warn', 'warn_clear', 'delete_message',
+    'warn', 'warn_clear', 'warn_list', 'delete_message',
     'slowmode', 'lock', 'unlock',
     'hide', 'show', 'nuke', 'nick', 'role_add', 'role_remove',
     'remind', 'remind_cancel', 'serverinfo', 'ping', 'botinfo', 'uptime', 'whois', 'avatar',

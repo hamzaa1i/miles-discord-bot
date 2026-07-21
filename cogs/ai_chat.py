@@ -858,6 +858,30 @@ class AIChat(commands.Cog):
                 )
                 return True
 
+            # ---- warn_list (PHASE 2B) ----
+            if intent == 'warn_list':
+                from utils.db import get_warnings
+                wl_target_id = target.id
+                wl_target_name = target.display_name
+                wl_guild_id = guild.id if guild else 0
+                warnings = get_warnings(wl_guild_id, wl_target_id)
+                if not warnings:
+                    await self._safe_reply(message, f"no warnings for {wl_target_name}.")
+                    return True
+                lines = [f"⚠️ **{wl_target_name}** has {len(warnings)} warning(s):"]
+                for i, w in enumerate(warnings[:10], 1):
+                    if isinstance(w, dict):
+                        w_reason = w.get('reason', 'N/A')
+                        w_mod = w.get('mod_name', w.get('moderator', 'Unknown'))
+                    else:
+                        w_reason = str(w)
+                        w_mod = 'Unknown'
+                    lines.append(f"`{i}.` {w_reason} — by {w_mod}")
+                if len(warnings) > 10:
+                    lines.append(f"...and {len(warnings) - 10} more.")
+                await self._safe_reply(message, "\n".join(lines))
+                return True
+
             # ---- unmute (NEW) ----
             if intent == 'unmute':
                 if not self.check_mod_permission(message, required_perm="timeout"):
