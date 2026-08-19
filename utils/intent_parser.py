@@ -143,14 +143,22 @@ async def parse_intent(message_content: str, ai_handler) -> dict:
     try:
         groq_key = os.getenv("GROQ_API_KEY")
         if not groq_key:
+            import logging as _log
+            _log.getLogger('cyn.intent').error("[INTENT_PARSER] GROQ_API_KEY not set")
             return fallback
+
+        import logging as _log
+        _log.getLogger('cyn.intent').info(f"[INTENT_PARSER] calling call_ai_fast for: {message_content[:80]}")
 
         raw = await call_ai_fast([
             {"role": "system", "content": INTENT_SYSTEM_PROMPT},
             {"role": "user", "content": message_content}
         ], max_tokens=100)
 
+        _log.getLogger('cyn.intent').info(f"[INTENT_PARSER] raw response: {raw[:100] if raw else 'NONE'}")
+
         if not raw or "something broke" in raw:
+            _log.getLogger('cyn.intent').warning(f"[INTENT_PARSER] got error response: {raw[:100] if raw else 'NONE'}")
             return fallback
 
         raw = _strip_code_fences(raw)

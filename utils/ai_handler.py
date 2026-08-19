@@ -126,6 +126,11 @@ async def call_ai(
         elapsed = time.time() - start
         error_str = str(e)
 
+        # DIAGNOSTIC — Log ALL errors with full traceback
+        logger.error(f"[GROQ CRITICAL] {type(e).__name__}: {e} time={elapsed:.2f}s")
+        import traceback
+        traceback.print_exc()
+
         # PHASE 1C — Rate limit on 70b → try 8b as fallback (separate quota)
         if "429" in error_str and model == "llama-3.3-70b-versatile":
             logger.warning("[GROQ] 70b rate limited, trying 8b fallback")
@@ -141,8 +146,9 @@ async def call_ai(
                 logger.info("[GROQ FALLBACK] 8b responded successfully")
                 return result
             except Exception as e2:
+                logger.error(f"[GROQ FALLBACK CRITICAL] {type(e2).__name__}: {e2}")
+                traceback.print_exc()
                 if "429" in str(e2):
-                    # Both models rate limited — extract wait time
                     import re
                     wait_match = re.search(
                         r'try again in (\d+m\d+s|\d+\.\d+s|\d+s)',
@@ -163,7 +169,6 @@ async def call_ai(
             wait_str = wait_match.group(1) if wait_match else "a few minutes"
             return f"i'm at capacity right now. try again in {wait_str}."
 
-        logger.error(f"[GROQ ERROR] {type(e).__name__}: {e} time={elapsed:.2f}s")
         logger.error(f"[GROQ ERROR] model={model} max_tokens={max_tokens} temp={temperature}")
         try:
             logger.error(f"[GROQ ERROR] messages count={len(messages)}")

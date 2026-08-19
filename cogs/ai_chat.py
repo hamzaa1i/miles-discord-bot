@@ -1428,7 +1428,11 @@ class AIChat(commands.Cog):
                 t for t in self._user_message_counts[user_id]
                 if now - t < 3600
             ]
-            limit = self.get_user_rate_limit(message.author)
+            try:
+                limit = self.get_user_rate_limit(message.author)
+            except Exception as e:
+                logger.error(f"[ON_MESSAGE] get_user_rate_limit failed: {type(e).__name__}: {e}")
+                limit = 25  # fallback to default
             if limit != 999999:
                 if len(self._user_message_counts[user_id]) >= limit:
                     logger.warning(
@@ -1522,8 +1526,6 @@ class AIChat(commands.Cog):
                         break
 
             # FIX 2 — Load conversation history BEFORE fast-path check.
-            # Only use fast-path if there is NO existing conversation history.
-            # If history exists, the user may be asking a follow-up question.
             from utils.db import get_conversation_history
             guild_id_val = message.guild.id if message.guild else 0
             ch_id_val = message.channel.id if message.channel else 0
@@ -1534,8 +1536,9 @@ class AIChat(commands.Cog):
                         guild_id_val, message.author.id,
                         channel_id=ch_id_val, limit=8
                     )
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.error(f"[ON_MESSAGE] get_conversation_history failed: {type(e).__name__}: {e}")
+                    # Continue with empty history — don't let DB failure block the response
 
             # FIX 2 — Fast-path ONLY if no history exists
             if not db_history_check and self.is_obvious_chat(content):
@@ -1588,6 +1591,9 @@ class AIChat(commands.Cog):
                 from utils.ai_handler import pick_model
                 chosen_model = pick_model(content, intent)
 
+            # DIAGNOSTIC — Log before AI call
+            logger.info(f"[AI_CALL] about to call get_ai_response with model={chosen_model}")
+
             async with message.channel.typing():
                 response = await self.get_ai_response(
                     message.author.id, content, is_owner=is_owner_msg,
@@ -1596,6 +1602,9 @@ class AIChat(commands.Cog):
                     extra_context=extra_context,
                     chosen_model=chosen_model
                 )
+
+            # DIAGNOSTIC — Log after AI call
+            logger.info(f"[AI_CALL] response received: {response[:100] if response else 'NONE'}")
 
             # IMPROVEMENT 1 — log the response
             logger.info(f"[RESPONSE] → {response[:100]}")

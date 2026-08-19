@@ -330,20 +330,29 @@ class CynBot(commands.Bot):
             print(f"Sync complete: {success} success, {failed} failed")
             logger.info(f"Sync complete: {success} success, {failed} failed")
 
-        # Test Groq API + print active cog count
+        # Test Groq API + print active cog count + command count
         try:
             from utils.ai_handler import call_ai_fast
             result = await call_ai_fast([
                 {"role": "user", "content": "say ok"}
             ])
             active_cogs = len(self.cogs)
+            all_cmds = list(self.tree.get_commands())
+            total_cmds = sum(
+                len(g.commands) if hasattr(g, 'commands') else 1
+                for g in all_cmds
+            )
             print(f"✅ Groq API working: {result[:50]}")
             print(f"✅ Active cogs loaded: {active_cogs}")
+            print(f"✅ Commands in tree: {len(all_cmds)} groups, {total_cmds} total")
             logger.info(f"✅ Groq API working: {result[:50]}")
             logger.info(f"✅ Active cogs loaded: {active_cogs}")
+            logger.info(f"[STARTUP] Commands in tree: {len(all_cmds)} groups, {total_cmds} total")
         except Exception as e:
             print(f"❌ Groq API failed: {type(e).__name__}: {e}")
             logger.error(f"❌ Groq API failed: {type(e).__name__}: {e}")
+            import traceback
+            traceback.print_exc()
 
         # NOTE: Status rotation is now owned by cogs/bot_status.py (BotStatus cog).
         # The old change_status task that lived here was removed to avoid duplicate
