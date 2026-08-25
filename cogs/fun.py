@@ -256,20 +256,6 @@ class Fun(commands.Cog):
         result = random.choice(["heads", "tails"])
         await interaction.response.send_message(f"🪙 {result}")
 
-    @app_commands.command(name="say", description="Make the bot say something (owner only)")
-    @app_commands.checks.has_permissions(administrator=True)
-    async def say(self, interaction: discord.Interaction, text: str):
-        self.bot.increment_command('say')
-        owner_id = int(os.getenv('OWNER_ID', '0'))
-        if interaction.user.id != owner_id:
-            await interaction.response.send_message("❌ only my owner can use this.", ephemeral=True)
-            return
-        try:
-            await interaction.channel.send(text)
-            await interaction.response.send_message("done.", ephemeral=True)
-        except Exception as e:
-            await interaction.response.send_message(f"failed: {e}", ephemeral=True)
-
     @app_commands.command(name="joke", description="Get a random joke")
     async def joke(self, interaction: discord.Interaction):
         self.bot.increment_command('joke')

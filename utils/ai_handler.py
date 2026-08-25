@@ -1,8 +1,8 @@
 """
 utils/ai_handler.py — Single source of truth for all AI calls.
 
-Uses Groq API (console.groq.com) with llama-3.3-70b-versatile for
-high quality responses and llama-3.1-8b-instant for fast short responses.
+Uses Groq API (console.groq.com) with openai/gpt-oss-120b for
+high quality responses and openai/gpt-oss-20b for fast short responses.
 """
 import os
 import time
@@ -14,7 +14,7 @@ logger = logging.getLogger('cyn.ai')
 _client = None
 
 # Valid Groq model names (used for validation logging)
-VALID_MODELS = {"llama-3.3-70b-versatile", "llama-3.1-8b-instant"}
+VALID_MODELS = {"openai/gpt-oss-120b", "openai/gpt-oss-20b"}
 
 def get_client() -> AsyncGroq:
     global _client
@@ -60,7 +60,7 @@ def _validate_messages(messages: list) -> list:
 
 async def call_ai(
     messages: list,
-    model: str = "llama-3.3-70b-versatile",
+    model: str = "openai/gpt-oss-120b",
     max_tokens: int = 300,
     temperature: float = 0.9
 ) -> str:
@@ -69,8 +69,8 @@ async def call_ai(
     try:
         # Validate model name
         if model not in VALID_MODELS:
-            logger.warning(f"[AI] unknown model '{model}', falling back to llama-3.3-70b-versatile")
-            model = "llama-3.3-70b-versatile"
+            logger.warning(f"[AI] unknown model '{model}', falling back to openai/gpt-oss-120b")
+            model = "openai/gpt-oss-120b"
 
         # Validate max_tokens
         if not isinstance(max_tokens, int) or max_tokens <= 0:
@@ -132,12 +132,12 @@ async def call_ai(
         traceback.print_exc()
 
         # PHASE 1C — Rate limit on 70b → try 8b as fallback (separate quota)
-        if "429" in error_str and model == "llama-3.3-70b-versatile":
+        if "429" in error_str and model == "openai/gpt-oss-120b":
             logger.warning("[GROQ] 70b rate limited, trying 8b fallback")
             try:
                 client = get_client()
                 response = await client.chat.completions.create(
-                    model="llama-3.1-8b-instant",
+                    model="openai/gpt-oss-20b",
                     messages=clean_messages if clean_messages else _validate_messages(messages),
                     max_tokens=min(max_tokens, 200),
                     temperature=temperature
@@ -190,7 +190,7 @@ async def call_ai_fast(
 ) -> str:
     return await call_ai(
         messages,
-        model="llama-3.1-8b-instant",
+        model="openai/gpt-oss-20b",
         max_tokens=max_tokens,
         temperature=0.85
     )
@@ -200,8 +200,8 @@ async def call_ai_fast(
 def pick_model(message_content: str, intent: str = "chat") -> str:
     """Pick the right Groq model based on complexity.
     
-    Returns 'llama-3.3-70b-versatile' for complex questions,
-    'llama-3.1-8b-instant' for simple/mod commands.
+    Returns 'openai/gpt-oss-120b' for complex questions,
+    'openai/gpt-oss-20b' for simple/mod commands.
     """
     # Intent-based routing: mod/utility commands use fast model
     if intent in ("warn", "ban", "kick", "mute", "timeout", "unmute",
@@ -209,7 +209,7 @@ def pick_model(message_content: str, intent: str = "chat") -> str:
                   "weather", "flip", "roll", "joke", "fact", "remind_cancel",
                   "warn_clear", "delete_message", "nick", "serverinfo",
                   "ping", "botinfo", "uptime", "whois", "avatar"):
-        return "llama-3.1-8b-instant"
+        return "openai/gpt-oss-20b"
 
     # Content-based routing for chat
     content_lower = message_content.lower()
@@ -220,12 +220,12 @@ def pick_model(message_content: str, intent: str = "chat") -> str:
                           "explain", "how does", "what is", "why does",
                           "difference between", "compare", "analyze"]
     if any(kw in content_lower for kw in technical_keywords):
-        return "llama-3.3-70b-versatile"
+        return "openai/gpt-oss-120b"
 
     # Very short messages → fast model
     words = message_content.split()
     if len(words) <= 5:
-        return "llama-3.1-8b-instant"
+        return "openai/gpt-oss-20b"
 
     # Default to fast model for casual chat (saves tokens)
-    return "llama-3.1-8b-instant"
+    return "openai/gpt-oss-20b"

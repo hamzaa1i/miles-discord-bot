@@ -190,6 +190,11 @@ DEFAULT_DATA_FILES = [
     "tempbans.json",
     # CHANGE 2 — prefix settings (JSON fallback for Supabase)
     "prefix_settings.json",
+    # Veloura — new cog data files
+    "user_levels.json",
+    "level_rewards.json",
+    "self_role_panels.json",
+    "invite_tracking.json",
 ]
 
 

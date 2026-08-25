@@ -150,6 +150,47 @@ CREATE TABLE server_personality (
 --
 -- ALTER TABLE welcome_settings ADD COLUMN IF NOT EXISTS dm_message TEXT;
 -- ALTER TABLE welcome_settings ADD COLUMN IF NOT EXISTS embed_mode TEXT DEFAULT 'embed';
+--
+-- CREATE TABLE IF NOT EXISTS user_levels (
+--   guild_id TEXT NOT NULL,
+--   user_id TEXT NOT NULL,
+--   xp INT DEFAULT 0,
+--   level INT DEFAULT 0,
+--   last_msg_time FLOAT DEFAULT 0,
+--   PRIMARY KEY (guild_id, user_id)
+-- );
+-- GRANT ALL ON public.user_levels TO anon;
+-- ALTER TABLE public.user_levels DISABLE ROW LEVEL SECURITY;
+--
+-- CREATE TABLE IF NOT EXISTS level_rewards (
+--   guild_id TEXT NOT NULL,
+--   level INT NOT NULL,
+--   role_id TEXT NOT NULL,
+--   PRIMARY KEY (guild_id, level)
+-- );
+-- GRANT ALL ON public.level_rewards TO anon;
+-- ALTER TABLE public.level_rewards DISABLE ROW LEVEL SECURITY;
+--
+-- CREATE TABLE IF NOT EXISTS self_role_panels (
+--   message_id TEXT PRIMARY KEY,
+--   guild_id TEXT NOT NULL,
+--   channel_id TEXT NOT NULL,
+--   category TEXT NOT NULL,
+--   roles JSONB
+-- );
+-- GRANT ALL ON public.self_role_panels TO anon;
+-- ALTER TABLE public.self_role_panels DISABLE ROW LEVEL SECURITY;
+--
+-- CREATE TABLE IF NOT EXISTS invite_tracking (
+--   guild_id TEXT NOT NULL,
+--   inviter_id TEXT NOT NULL,
+--   invites INT DEFAULT 0,
+--   joins INT DEFAULT 0,
+--   leaves INT DEFAULT 0,
+--   PRIMARY KEY (guild_id, inviter_id)
+-- );
+-- GRANT ALL ON public.invite_tracking TO anon;
+-- ALTER TABLE public.invite_tracking DISABLE ROW LEVEL SECURITY;
 """
 import os
 import json

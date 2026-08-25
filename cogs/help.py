@@ -1,11 +1,13 @@
 """
 cogs/help.py — interactive help system using a Select dropdown.
+Rebranded to Aurelia for Veloura.
 """
 import discord
 from discord.ext import commands
 from discord import app_commands
 from datetime import datetime
-from utils.constants import COLOR_DEFAULT, COLOR_AI, COLOR_FUN, COLOR_GAMES, COLOR_ECONOMY, COLOR_MOD, COLOR_INFO
+from utils.constants import COLOR_DEFAULT, COLOR_AI, COLOR_FUN, COLOR_MOD, COLOR_INFO
+from utils.veloura_embeds import veloura_embed
 
 CATEGORIES = {
     "ai": {
@@ -14,20 +16,17 @@ CATEGORIES = {
         "desc": "AI chat and AI-powered features",
         "color": COLOR_AI,
         "commands": [
-            ("@cyn <message>", "Chat naturally with cyn via mention"),
+            ("@aurelia <message>", "Chat naturally with Aurelia via mention"),
             ("/cyn <message>", "Slash alternative to @mention"),
             ("/chat <message>", "Slash-command AI conversation"),
             ("/summarize <text>", "Summarize text in 3-5 bullets"),
             ("/translate <language> <text>", "Translate text to a language"),
             ("/explain <topic>", "Explain a topic like you're 12"),
             ("/advice <situation>", "Blunt, sarcastic advice"),
-            ("/roast_server", "AI roasts the current server"),
             ("/code <language> <description>", "Generate a code snippet"),
-            ("/forget", "Clear cyn's memory of your conversation history"),
-            ("@cyn warn/ban/kick @user", "AI moderation with confirmation"),
-            ("@cyn delete message: <id>", "Delete a message by ID or reply"),
-            ("@cyn remind me in 10m to X", "Set a reminder via AI"),
-            ("@cyn cancel reminder", "Cancel a reminder via AI"),
+            ("/forget", "Clear Aurelia's memory of your conversation history"),
+            ("@aurelia warn/ban/kick @user", "AI moderation with confirmation"),
+            ("@aurelia remind me in 10m to X", "Set a reminder via AI"),
         ],
     },
     "fun": {
@@ -40,9 +39,6 @@ CATEGORIES = {
             ("/flip", "Flip a coin"),
             ("/joke", "Random joke"),
             ("/meme", "Random meme"),
-            ("/truth", "Random truth question"),
-            ("/dare", "Random dare challenge"),
-            ("/say <text>", "Bot says text (owner only)"),
         ],
     },
     "moderation": {
@@ -62,13 +58,54 @@ CATEGORIES = {
             ("/mod slowmode [seconds=0]", "Set channel slowmode"),
             ("/mod lock [reason]", "Lock channel for @everyone"),
             ("/mod unlock", "Unlock channel"),
-            ("/adminrole <role>", "Set the AI moderation role (server owner only)"),
+            ("/adminrole <role>", "Set the AI moderation role"),
             ("/adminrole_remove", "Remove the AI moderation role"),
             ("/mod antispam [on/off]", "Toggle antispam automod"),
-            ("/mod antilink [on/off] [channel]", "Block non-Discord links in a channel"),
+            ("/mod antilink [on/off] [channel]", "Block non-Discord links"),
             ("/mod tempban @user [duration] [reason]", "Temp ban with auto-unban"),
             ("/mod config [setting] [value]", "Configure warn thresholds"),
-            ("@cyn warn/ban/kick @user", "AI-driven mod with confirmation"),
+        ],
+    },
+    "community": {
+        "emoji": "🌍",
+        "name": "Community",
+        "desc": "Levels, invites, polls, confessions, birthdays",
+        "color": COLOR_FUN,
+        "commands": [
+            ("/level [@user]", "View your level card"),
+            ("/leaderboard", "Top 10 users by XP"),
+            ("/rewards", "Show level role rewards"),
+            ("/leveling config [setting] [value]", "Configure leveling settings"),
+            ("/invites [@user]", "Show invite count"),
+            ("/invite_leaderboard", "Top 10 inviters"),
+            ("/poll create <q> <o1> <o2> [o3] [o4] [dur]", "Create a poll"),
+            ("/poll end <message_id>", "End a poll early"),
+            ("/confess text [text]", "Submit an anonymous confession"),
+            ("/birthday set [month] [day]", "Set your birthday"),
+            ("/birthday upcoming", "Show upcoming birthdays"),
+            ("/reminders", "List your active reminders"),
+        ],
+    },
+    "roles": {
+        "emoji": "🎭",
+        "name": "Roles",
+        "desc": "Self-roles and level rewards",
+        "color": COLOR_INFO,
+        "commands": [
+            ("/selfroles setup [category] [role1] [role2]...", "Create a self-role panel"),
+            ("/profile [@user]", "View a user's profile"),
+            ("/profile_set bio [text]", "Set your bio"),
+            ("/profile_set pronouns [text]", "Set your pronouns"),
+            ("/profile_set timezone [text]", "Set your timezone"),
+        ],
+    },
+    "voice": {
+        "emoji": "🔊",
+        "name": "Voice",
+        "desc": "VC management commands",
+        "color": COLOR_INFO,
+        "commands": [
+            ("/voice [action] [value]", "Lock/unlock/hide/unhide/limit/rename VC"),
         ],
     },
     "utility": {
@@ -84,10 +121,6 @@ CATEGORIES = {
             ("/ping", "Websocket latency"),
             ("/botinfo", "Bot information"),
             ("/uptime", "Bot uptime"),
-            ("/profile [@user]", "View a user's profile"),
-            ("/profile_set bio [text]", "Set your bio (max 200 chars)"),
-            ("/profile_set pronouns [text]", "Set your pronouns"),
-            ("/profile_set timezone [text]", "Set your timezone"),
         ],
     },
     "server": {
@@ -101,31 +134,15 @@ CATEGORIES = {
             ("/avatar [user]", "Show user avatar"),
         ],
     },
-    "community": {
-        "emoji": "🌍",
-        "name": "Community",
-        "desc": "Polls, confessions, birthdays, reminders",
-        "color": COLOR_FUN,
-        "commands": [
-            ("/poll create <q> <o1> <o2> [o3] [o4] [dur]", "Create a poll with up to 4 options"),
-            ("/poll end <message_id>", "End a poll early and show results"),
-            ("/confess text [text]", "Submit an anonymous confession"),
-            ("/confess setup #channel", "Set confession channel (admin)"),
-            ("/birthday set [month] [day]", "Set your birthday"),
-            ("/birthday upcoming", "Show upcoming birthdays"),
-            ("/birthday channel #channel", "Set announcement channel (admin)"),
-            ("/reminders", "List your active reminders"),
-        ],
-    },
     "settings": {
         "emoji": "⚙️",
         "name": "Settings",
-        "desc": "Welcome, goodbye, autorole, logging, bot status, prefix, rules",
+        "desc": "Welcome, autorole, logging, status, prefix, rules",
         "color": COLOR_DEFAULT,
         "commands": [
-            ("/welcome config [setting] [value] [channel]", "Configure welcome & goodbye settings"),
-            ("/welcome test [type]", "Test welcome/goodbye/DM messages"),
-            ("/welcome show", "Show current welcome/goodbye config"),
+            ("/welcome config [setting] [value] [channel]", "Configure welcome & goodbye"),
+            ("/welcome test [type]", "Test welcome/goodbye/DM"),
+            ("/welcome show", "Show current config"),
             ("/autorole set @role", "Assign role to new members"),
             ("/autorole remove", "Disable autorole"),
             ("/autorole show", "Show configured autorole"),
@@ -137,14 +154,14 @@ CATEGORIES = {
             ("/status reset", "Resume auto-rotation (owner)"),
             ("/status current", "Show current status"),
             ("/status info", "How Discord displays bot status"),
-            ("/rules set [text]", "Set server rules (Manage Guild)"),
+            ("/rules set [text]", "Set server rules"),
             ("/rules show", "Show server rules"),
-            ("/rules agree", "Agree to rules (get role)"),
-            ("/rules agree_role @role", "Set the agreement role (Manage Guild)"),
-            ("/bump remind", "Set a 2-hour bump reminder (admin)"),
-            ("/prefix set [prefix]", "Set a custom prefix for AI chat (Manage Guild)"),
-            ("/prefix remove", "Remove custom prefix (Manage Guild)"),
-            ("/prefix list", "Show the current prefix"),
+            ("/rules agree", "Agree to rules"),
+            ("/rules agree_role @role", "Set the agreement role"),
+            ("/bump remind", "Set a 2-hour bump reminder"),
+            ("/prefix set [prefix]", "Set a custom prefix"),
+            ("/prefix remove", "Remove custom prefix"),
+            ("/prefix list", "Show current prefix"),
         ],
     },
     "owner": {
@@ -153,7 +170,7 @@ CATEGORIES = {
         "desc": "Owner-only bot management (requires OWNER_ID)",
         "color": COLOR_MOD,
         "commands": [
-            ("/owner status", "Bot statistics (servers, users, cogs, memory)"),
+            ("/owner status", "Bot statistics"),
             ("/owner reload [cog]", "Reload a cog by name"),
             ("/owner sync", "Force command sync to all guilds"),
             ("/owner shutdown", "Shut down the bot gracefully"),
@@ -162,11 +179,11 @@ CATEGORIES = {
             ("/owner announce [message] [channel?] [embed?]", "Announce to a channel or all servers"),
             ("/owner createrole [name] [color] [admin]", "Create a role"),
             ("/owner giverole [role] [member]", "Give a role to a member"),
-            ("/owner removerole [role] [member]", "Remove a role from a member"),
-            ("/owner servers", "List all servers the bot is in"),
+            ("/owner removerole [role] [member]", "Remove a role"),
+            ("/owner servers", "List all servers"),
             ("/owner say [message] [channel]", "Send a message as the bot"),
-            ("/owner leave [guild_id]", "Leave a server by ID (with confirmation)"),
-            ("/owner personality [note]", "Set server personality note (owner/server owner)"),
+            ("/owner leave [guild_id]", "Leave a server by ID"),
+            ("/owner personality [note]", "Set server personality note"),
             ("/owner personality_clear", "Clear server personality note"),
         ],
     },
@@ -214,13 +231,13 @@ class HelpView(discord.ui.View):
         self.next_btn = None
 
     def build_home_embed(self):
-        embed = discord.Embed(title="cyn — commands", description="pick a category from the dropdown.", color=COLOR_DEFAULT, timestamp=datetime.utcnow())
+        embed = veloura_embed("aurelia — commands", "pick a category from the dropdown.")
         if self.bot.user and self.bot.user.avatar:
             embed.set_thumbnail(url=self.bot.user.avatar.url)
         for key, cat in CATEGORIES.items():
             embed.add_field(name=f"{cat['emoji']} {cat['name']}", value=f"{cat['desc']}\n`{len(cat['commands'])} commands`", inline=True)
         total = sum(len(c['commands']) for c in CATEGORIES.values())
-        embed.set_footer(text=f"{total} total commands")
+        embed.set_footer(text=f"{total} total commands • ✩ ━━ aurelia ༉‧₊˚. ღ")
         return embed
 
     def build_category_embeds(self, key):
@@ -240,7 +257,7 @@ class HelpView(discord.ui.View):
                 commands_text += f"`{cmd}`\n{desc}\n\n"
             if commands_text:
                 embed.add_field(name=f"Commands (page {page_idx+1}/{total_pages})", value=commands_text[:1024], inline=False)
-            embed.set_footer(text=f"click 🏠 Home to return · {len(commands)} total")
+            embed.set_footer(text=f"click 🏠 Home to return · {len(commands)} total · ✩ aurelia")
             pages.append(embed)
         return pages
 
