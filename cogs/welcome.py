@@ -81,12 +81,23 @@ class Welcome(commands.Cog):
         return self.get_economy_data(user_id).get('total_earned', 0)
 
     def _format_welcome(self, template: str, member: discord.Member) -> str:
-        return template.format(
-            user=member.mention,
-            user_id=member.id,
-            server=member.guild.name,
-            membercount=member.guild.member_count,
-        )
+        """BUG 2 — Safe string replacement instead of .format().
+
+        User-provided message templates can contain unescaped braces
+        (e.g. '[membercount}' or '100% off {item}') that crash
+        Python's .format() method with ValueError: Single '}'.
+
+        Fix: use .replace() for each known variable. Unknown braces
+        are left as-is in the output (harmless).
+        """
+        if not template:
+            return ""
+        text = str(template)
+        text = text.replace("{user}", member.mention)
+        text = text.replace("{user_id}", str(member.id))
+        text = text.replace("{server}", member.guild.name)
+        text = text.replace("{membercount}", str(member.guild.member_count))
+        return text
 
     async def send_safe_mode_notification(self, user, guild, total_earned):
         if user.id in self.safe_mode_notified or total_earned < 10000 or not self.wants_dms(user.id):
@@ -383,12 +394,31 @@ class Welcome(commands.Cog):
         key, name = setting.value, setting.name
         bool_words = {"on": True, "true": True, "yes": True, "off": False, "false": False, "no": False}
 
-        # FIX 1 — helper to save + verify persistence with read-after-write logging.
-        async def _save_and_verify(cfg, setting_name, setting_value):
+        # BUG 1 — Map user-facing setting names to actual Supabase column
+        # names. The config dict keys already match the column names, but
+        # the logging was showing the user-facing setting name (e.g.
+        # "welcome_channel") instead of the column name (e.g. "channel_id"),
+        # which made it look like the save was using the wrong key.
+        SETTING_TO_COLUMN = {
+            "welcome_channel": "channel_id",
+            "welcome_message": "message",
+            "welcome_toggle": "enabled",
+            "goodbye_channel": "goodbye_channel_id",
+            "goodbye_message": "goodbye_message",
+            "goodbye_toggle": "goodbye_enabled",
+            "welcome_dm": "dm_message",
+            "embed_mode": "embed_mode",
+        }
+        column_name = SETTING_TO_COLUMN.get(key, key)
+
+        # BUG 1 — helper to save + verify persistence with read-after-write
+        # logging. Now logs the actual column name and value.
+        async def _save_and_verify(cfg, col_name, col_value):
             set_guild_setting(gid, "welcome_settings", cfg)
             logger.info(
                 f"[welcome] SAVED to welcome_settings for guild {gid}: "
-                f"{setting_name}={setting_value}"
+                f"column '{col_name}'='{col_value}' "
+                f"(full config keys: {list(cfg.keys())})"
             )
             # Read back immediately to verify persistence
             readback = get_guild_setting(gid, "welcome_settings")
@@ -396,7 +426,10 @@ class Welcome(commands.Cog):
                 f"[welcome] READBACK from welcome_settings for guild {gid}: "
                 f"enabled={readback.get('enabled') if readback else 'NONE'}, "
                 f"channel_id={readback.get('channel_id') if readback else 'NONE'}, "
-                f"goodbye_enabled={readback.get('goodbye_enabled') if readback else 'NONE'}"
+                f"message={str(readback.get('message', ''))[:60] if readback else 'NONE'}, "
+                f"goodbye_enabled={readback.get('goodbye_enabled') if readback else 'NONE'}, "
+                f"goodbye_channel_id={readback.get('goodbye_channel_id') if readback else 'NONE'}, "
+                f"dm_message={str(readback.get('dm_message', ''))[:60] if readback else 'NONE'}"
             )
 
         # Channel-based settings
@@ -407,7 +440,7 @@ class Welcome(commands.Cog):
                 config['channel_id'] = str(channel.id); config['enabled'] = True
             else:
                 config['goodbye_channel_id'] = str(channel.id); config['goodbye_enabled'] = True
-            await _save_and_verify(config, key, channel.id)
+            await _save_and_verify(config, column_name, str(channel.id))
             return await interaction.response.send_message(f"✅ {name} set to {channel.mention}")
 
         # Toggle-based settings
@@ -419,7 +452,7 @@ class Welcome(commands.Cog):
                 return await self._err(interaction, f"❌ Invalid `{value}`. Use on/off, true/false, yes/no.")
             enabled = bool_words[parsed]
             config['enabled' if key == "welcome_toggle" else 'goodbye_enabled'] = enabled
-            await _save_and_verify(config, key, enabled)
+            await _save_and_verify(config, column_name, enabled)
             return await interaction.response.send_message(f"✅ {name} **{'enabled' if enabled else 'disabled'}**")
 
         # Embed mode
@@ -430,7 +463,7 @@ class Welcome(commands.Cog):
             if parsed not in ("embed", "text"):
                 return await self._err(interaction, f"❌ Invalid `{value}`. Use `embed` or `text`.")
             config['embed_mode'] = parsed
-            await _save_and_verify(config, key, parsed)
+            await _save_and_verify(config, column_name, parsed)
             return await interaction.response.send_message(f"✅ Embed mode set to **{parsed}**")
 
         # Text-based settings (welcome_message / goodbye_message / welcome_dm)
@@ -441,10 +474,10 @@ class Welcome(commands.Cog):
             is_dm = key == "welcome_dm"
             if is_dm and value.lower() == "off":
                 config[cfg_key] = ""
-                await _save_and_verify(config, key, "(disabled)")
+                await _save_and_verify(config, cfg_key, "(disabled)")
                 return await interaction.response.send_message("✅ Welcome DM disabled.")
             config[cfg_key] = value[:1000] if is_dm else value
-            await _save_and_verify(config, key, value[:80])
+            await _save_and_verify(config, cfg_key, value[:80])
             if is_dm:
                 preview = value.replace("{user}", interaction.user.display_name).replace("{server}", interaction.guild.name)
                 return await interaction.response.send_message(f"✅ Welcome DM set. Variables: {vars_str}\nPreview: {preview}")
