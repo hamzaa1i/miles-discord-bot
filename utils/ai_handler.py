@@ -1,17 +1,28 @@
 """
 utils/ai_handler.py — Single source of truth for all AI calls.
 
-Uses Groq API (console.groq.com) with moonshotai/kimi-k2-instruct-0905 for
-high quality chat/reasoning and gemma2-9b-it for fast intent parsing and
-simple chat. Previous models (openai/gpt-oss-120b / openai/gpt-oss-20b)
-were prone to returning EMPTY content (tool_calls / reasoning_content
-fields) and have been replaced.
+Uses Groq API (console.groq.com) with three stable models as of
+late August 2026:
+
+  MODEL_CHAT     = "llama-3.3-70b-versatile"   (primary chat / reasoning)
+  MODEL_FAST     = "llama-3.1-8b-instant"      (intent parsing, short chat)
+  MODEL_FALLBACK = "qwen/qwen3-32b"            (fallback if primary fails)
+
+Decommissioned / forbidden models (DO NOT USE):
+  - gemma2-9b-it          (decommissioned by Groq → 400 error)
+  - openai/gpt-oss-20b    (returns empty content via tool_calls)
+  - openai/gpt-oss-120b   (returns empty content via tool_calls)
+  - moonshotai/kimi-k2-instruct-0905 (was unreliable in practice)
 
 FIX 2 — Robust empty-response handling: if the model returns tool_calls
 or reasoning_content instead of plain content, we fall back gracefully
 instead of sending "NONE" to Discord.
+
+FIX 2 (extended) — If a model fails with a 400 or 404 error (e.g.
+decommissioned model), we automatically retry with MODEL_FALLBACK.
 """
 import os
+import re
 import time
 import logging
 from groq import AsyncGroq
@@ -21,26 +32,34 @@ logger = logging.getLogger('cyn.ai')
 _client = None
 
 # ─── Model constants ────────────────────────────────────────────
-# FIX 1 — Switched from openai/gpt-oss-120b (empty replies) and
-# openai/gpt-oss-20b (unstable for chat) to proven-stable models.
+# FIX 1 — Switched to currently-live Groq models.
 #
-#   MOONSHOT_K2  — primary chat/reasoning model (kimi-k2)
-#   QWEN_32B     — fallback if kimi-k2 is rate-limited or unavailable
-#   GEMMA_9B     — fast model for intent parsing and simple short chat
+#   MODEL_CHAT     — primary chat/reasoning model (llama-3.3-70b-versatile)
+#   MODEL_FAST     — fast model for intent parsing / simple short chat
+#                    (llama-3.1-8b-instant; proven stable for JSON output)
+#   MODEL_FALLBACK — fallback if MODEL_CHAT is rate-limited OR if a model
+#                    returns 400 / 404 (decommissioned / not found)
 #
-# Both kimi-k2 and gemma2-9b-it return plain content in
-# `choices[0].message.content`, which fixes the empty-response bug.
-MOONSHOT_K2 = "moonshotai/kimi-k2-instruct-0905"
-QWEN_32B = "qwen/qwen3-32b"
-GEMMA_9B = "gemma2-9b-it"
+# All three models return plain text in `choices[0].message.content`,
+# which fixes the empty-response bug seen with gpt-oss-* models.
+MODEL_CHAT = "llama-3.3-70b-versatile"
+MODEL_FAST = "llama-3.1-8b-instant"
+MODEL_FALLBACK = "qwen/qwen3-32b"
 
 # Valid Groq model names (used for validation logging)
-VALID_MODELS = {MOONSHOT_K2, QWEN_32B, GEMMA_9B}
+VALID_MODELS = {MODEL_CHAT, MODEL_FAST, MODEL_FALLBACK}
 
 # Default primary chat model (used when caller doesn't specify)
-DEFAULT_MODEL = MOONSHOT_K2
+DEFAULT_MODEL = MODEL_CHAT
 # Default fast model (used by call_ai_fast)
-DEFAULT_FAST_MODEL = GEMMA_9B
+DEFAULT_FAST_MODEL = MODEL_FAST
+
+# Error signatures that indicate "model unavailable / decommissioned"
+# — these should trigger an automatic retry with MODEL_FALLBACK.
+_MODEL_UNAVAILABLE_SIGNATURES = (
+    "400", "404", "model_not_found", "model not found",
+    "does not exist", "decommissioned", "not_available",
+)
 
 
 def get_client() -> AsyncGroq:
@@ -85,32 +104,59 @@ def _validate_messages(messages: list) -> list:
     return clean_messages
 
 
-def _extract_content(msg) -> str:
-    """FIX 2 — Robustly extract text from a Groq chat completion message.
+def _extract_content(response) -> str:
+    """FIX 2 — Robustly extract text from a Groq chat completion response.
 
     Some reasoning models (gpt-oss, kimi-k2 in reasoning mode) put the
     actual text inside `reasoning_content` instead of `content`. Some
     models return `tool_calls` instead of any text at all. We try every
-    field in order and never return an empty string.
+    field in order and NEVER return an empty string.
     """
-    # 1. Primary content field
-    content = (getattr(msg, "content", None) or "").strip()
-    if content:
-        return content
+    try:
+        msg = response.choices[0].message
+        # 1. Primary content field
+        content = (getattr(msg, "content", None) or "").strip()
+        if content:
+            return content
 
-    # 2. Reasoning models sometimes hide text in reasoning_content
-    reasoning = (getattr(msg, "reasoning_content", None) or "").strip()
-    if reasoning:
-        return reasoning
+        # 2. Reasoning models sometimes hide text in reasoning_content
+        reasoning = (getattr(msg, "reasoning_content", None) or "").strip()
+        if reasoning:
+            return reasoning
 
-    # 3. If the model tried to invoke tools instead of replying, don't
-    #    send an empty message — give the user a soft fallback.
-    tool_calls = getattr(msg, "tool_calls", None)
-    if tool_calls:
-        return "hm, i'm not sure how to respond to that."
+        # 3. If the model tried to invoke tools instead of replying,
+        #    give the user a soft fallback rather than empty text.
+        tool_calls = getattr(msg, "tool_calls", None)
+        if tool_calls:
+            return "hmm, let me think about that differently."
 
-    # 4. Absolute last resort — never return None / empty to the caller
-    return "..."
+        # 4. Absolute last resort — never return None / empty to the caller
+        return "..."
+    except Exception as e:
+        logger.error(f"[_extract_content] {type(e).__name__}: {e}")
+        return "..."
+
+
+def _is_model_unavailable_error(error_str: str) -> bool:
+    """FIX 2 — Return True if the error suggests the model itself is
+    unavailable (400 Bad Request, 404 Not Found, decommissioned, etc.).
+    In that case we should retry with MODEL_FALLBACK instead of giving up.
+    """
+    err_lower = (error_str or "").lower()
+    return any(sig in err_lower for sig in _MODEL_UNAVAILABLE_SIGNATURES)
+
+
+async def _call_groq(model: str, messages: list, max_tokens: int,
+                     temperature: float) -> str:
+    """Single Groq API call with content extraction. Raises on error."""
+    client = get_client()
+    response = await client.chat.completions.create(
+        model=model,
+        messages=messages,
+        max_tokens=max_tokens,
+        temperature=temperature,
+    )
+    return _extract_content(response)
 
 
 async def call_ai(
@@ -119,10 +165,19 @@ async def call_ai(
     max_tokens: int = 300,
     temperature: float = 0.9
 ) -> str:
+    """Call Groq with automatic fallback.
+
+    Failure chain:
+      1. Try the requested `model` (defaults to MODEL_CHAT).
+      2. If it returns 400 / 404 / "model not found" → retry with MODEL_FALLBACK.
+      3. If MODEL_CHAT was rate-limited (429) → retry with MODEL_FALLBACK.
+      4. If MODEL_FALLBACK is also rate-limited → return a "try again later" msg.
+      5. Anything else → return "something broke on my end. try again."
+    """
     start = time.time()
     clean_messages = []
     try:
-        # Validate model name
+        # Validate model name — fall back to MODEL_CHAT if unknown
         if model not in VALID_MODELS:
             logger.warning(f"[AI] unknown model '{model}', falling back to {DEFAULT_MODEL}")
             model = DEFAULT_MODEL
@@ -153,33 +208,67 @@ async def call_ai(
             logger.warning("[AI] messages list had no valid entries after cleaning")
             return "something broke. try again."
 
-        client = get_client()
-        response = await client.chat.completions.create(
-            model=model,
-            messages=clean_messages,
-            max_tokens=max_tokens,
-            temperature=temperature
-        )
-
-        # FIX 2 — Use robust content extraction so we NEVER send empty text
-        result = _extract_content(response.choices[0].message)
-
-        elapsed = time.time() - start
-        logger.info(f"[GROQ] model={model} tokens={max_tokens} "
-                    f"time={elapsed:.2f}s messages={len(clean_messages)} "
-                    f"resp_len={len(result)}")
-
-        # PHASE 1D — Track metrics for /health endpoint
+        # ── Attempt 1 — requested model ───────────────────────────
         try:
-            import keep_alive as _kl
-            _kl.total_ai_calls += 1
-            _kl.recent_response_times.append(elapsed * 1000)
-            if len(_kl.recent_response_times) > 100:
-                _kl.recent_response_times.pop(0)
-        except Exception:
-            pass
+            result = await _call_groq(model, clean_messages, max_tokens, temperature)
+            elapsed = time.time() - start
+            logger.info(f"[GROQ] model={model} tokens={max_tokens} "
+                        f"time={elapsed:.2f}s messages={len(clean_messages)} "
+                        f"resp_len={len(result)}")
 
-        return result
+            # PHASE 1D — Track metrics for /health endpoint
+            try:
+                import keep_alive as _kl
+                _kl.total_ai_calls += 1
+                _kl.recent_response_times.append(elapsed * 1000)
+                if len(_kl.recent_response_times) > 100:
+                    _kl.recent_response_times.pop(0)
+            except Exception:
+                pass
+
+            return result
+        except Exception as e:
+            error_str = str(e)
+            # If the model itself is unavailable (400/404), retry with fallback.
+            # If it's a 429 rate limit on MODEL_CHAT, also retry with fallback.
+            should_retry = (
+                _is_model_unavailable_error(error_str)
+                or ("429" in error_str and model == MODEL_CHAT)
+            )
+            if not should_retry:
+                # Re-raise so the outer except can handle it
+                raise
+
+            # ── Attempt 2 — MODEL_FALLBACK ────────────────────────
+            logger.warning(
+                f"[GROQ] {model} failed ({type(e).__name__}); "
+                f"retrying with {MODEL_FALLBACK}"
+            )
+            try:
+                result = await _call_groq(
+                    MODEL_FALLBACK, clean_messages,
+                    max_tokens=min(max_tokens, 400),
+                    temperature=temperature,
+                )
+                elapsed = time.time() - start
+                logger.info(f"[GROQ FALLBACK] {MODEL_FALLBACK} responded "
+                            f"(len={len(result)} time={elapsed:.2f}s)")
+                # Track metrics
+                try:
+                    import keep_alive as _kl
+                    _kl.total_ai_calls += 1
+                    _kl.recent_response_times.append(elapsed * 1000)
+                    if len(_kl.recent_response_times) > 100:
+                        _kl.recent_response_times.pop(0)
+                except Exception:
+                    pass
+                return result
+            except Exception as e2:
+                # If fallback also fails, fall through to the 429 handler
+                # below or the generic error handler.
+                e = e2
+                error_str = str(e2)
+                raise
 
     except Exception as e:
         elapsed = time.time() - start
@@ -190,37 +279,8 @@ async def call_ai(
         import traceback
         traceback.print_exc()
 
-        # FIX 1 — Rate limit on primary (kimi-k2) → try qwen3-32b fallback
-        if "429" in error_str and model == MOONSHOT_K2:
-            logger.warning(f"[GROQ] {MOONSHOT_K2} rate limited, trying {QWEN_32B} fallback")
-            try:
-                client = get_client()
-                response = await client.chat.completions.create(
-                    model=QWEN_32B,
-                    messages=clean_messages if clean_messages else _validate_messages(messages),
-                    max_tokens=min(max_tokens, 200),
-                    temperature=temperature
-                )
-                result = _extract_content(response.choices[0].message)
-                logger.info(f"[GROQ FALLBACK] {QWEN_32B} responded successfully (len={len(result)})")
-                return result
-            except Exception as e2:
-                logger.error(f"[GROQ FALLBACK CRITICAL] {type(e2).__name__}: {e2}")
-                traceback.print_exc()
-                if "429" in str(e2):
-                    import re
-                    wait_match = re.search(
-                        r'try again in (\d+m\d+s|\d+\.\d+s|\d+s)',
-                        str(e2)
-                    )
-                    wait_str = wait_match.group(1) if wait_match else "a few minutes"
-                    logger.error(f"[GROQ] Both chat models rate limited. Wait: {wait_str}")
-                    return f"i'm at capacity right now. try again in {wait_str}."
-                logger.error(f"[GROQ] {QWEN_32B} fallback failed: {e2}")
-
-        # Extract wait time for any 429
+        # Both models rate-limited
         if "429" in error_str:
-            import re
             wait_match = re.search(
                 r'try again in (\d+m[\d.]+s|\d+\.\d+s|\d+s)',
                 error_str
@@ -247,14 +307,14 @@ async def call_ai_fast(
     messages: list,
     max_tokens: int = 150
 ) -> str:
-    """Fast path: uses gemma2-9b-it for intent parsing / simple short chat.
+    """Fast path: uses llama-3.1-8b-instant for intent parsing / short chat.
 
-    gemma2-9b-it is a proven stable model for JSON output and short
-    responses, and it always returns plain content (no tool_calls).
+    llama-3.1-8b-instant is a proven stable model for JSON output and
+    short responses, and it always returns plain content (no tool_calls).
     """
     return await call_ai(
         messages,
-        model=GEMMA_9B,
+        model=MODEL_FAST,
         max_tokens=max_tokens,
         temperature=0.85
     )
@@ -264,8 +324,9 @@ async def call_ai_fast(
 def pick_model(message_content: str, intent: str = "chat") -> str:
     """Pick the right Groq model based on complexity.
 
-    Returns MOONSHOT_K2 (kimi-k2) for complex questions / reasoning,
-    GEMMA_9B for simple short chat and intent-based mod commands.
+    Returns MODEL_CHAT (llama-3.3-70b-versatile) for complex questions /
+    reasoning, MODEL_FAST (llama-3.1-8b-instant) for simple short chat
+    and intent-based mod/utility commands.
     """
     # Intent-based routing: mod/utility commands use fast model
     if intent in ("warn", "ban", "kick", "mute", "timeout", "unmute",
@@ -273,7 +334,7 @@ def pick_model(message_content: str, intent: str = "chat") -> str:
                   "weather", "flip", "roll", "joke", "fact", "remind_cancel",
                   "warn_clear", "delete_message", "nick", "serverinfo",
                   "ping", "botinfo", "uptime", "whois", "avatar"):
-        return GEMMA_9B
+        return MODEL_FAST
 
     # Content-based routing for chat
     content_lower = message_content.lower()
@@ -284,12 +345,12 @@ def pick_model(message_content: str, intent: str = "chat") -> str:
                           "explain", "how does", "what is", "why does",
                           "difference between", "compare", "analyze"]
     if any(kw in content_lower for kw in technical_keywords):
-        return MOONSHOT_K2
+        return MODEL_CHAT
 
     # Very short messages → fast model
     words = message_content.split()
     if len(words) <= 5:
-        return GEMMA_9B
+        return MODEL_FAST
 
-    # Default to kimi-k2 for longer casual chat (richer responses)
-    return MOONSHOT_K2
+    # Default to llama-3.3-70b for longer casual chat (richer responses)
+    return MODEL_CHAT

@@ -17,7 +17,7 @@ CATEGORIES = {
         "color": COLOR_AI,
         "commands": [
             ("@aurelia <message>", "Chat naturally with Aurelia via mention"),
-            ("/cyn <message>", "Slash alternative to @mention"),
+            ("/aurelia <message>", "Slash alternative to @mention"),
             ("/chat <message>", "Slash-command AI conversation"),
             ("/summarize <text>", "Summarize text in 3-5 bullets"),
             ("/translate <language> <text>", "Translate text to a language"),
@@ -51,7 +51,8 @@ CATEGORIES = {
             ("/mod ban <user>", "Ban a member"),
             ("/mod unban <id>", "Unban a user"),
             ("/mod timeout <user> <time>", "Timeout a member"),
-            ("/mod unmute <user>", "Remove timeout from a user"),
+            ("/mod mute <user> [reason]", "Voice-mute a member in VC"),
+            ("/mod unmute <user>", "Remove timeout and/or voice mute"),
             ("/mod warnings <action> <user> [reason]", "Add/list/clear warnings"),
             ("/mod purge <amount>", "Delete messages"),
             ("/mod nuke", "Clone & delete the channel"),

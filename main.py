@@ -337,7 +337,8 @@ class CynBot(commands.Bot):
 
         # Test Groq API + print active cog count + command count
         try:
-            from utils.ai_handler import call_ai_fast
+            # FIX 1 — call_ai_fast now uses MODEL_FAST (llama-3.1-8b-instant).
+            from utils.ai_handler import call_ai_fast, MODEL_FAST
             result = await call_ai_fast([
                 {"role": "user", "content": "say ok"}
             ])
@@ -347,10 +348,10 @@ class CynBot(commands.Bot):
                 len(g.commands) if hasattr(g, 'commands') else 1
                 for g in all_cmds
             )
-            print(f"✅ Groq API working: {result[:50]}")
+            print(f"✅ Groq API working (model={MODEL_FAST}): {result[:50]}")
             print(f"✅ Active cogs loaded: {active_cogs}")
             print(f"✅ Commands in tree: {len(all_cmds)} groups, {total_cmds} total")
-            logger.info(f"✅ Groq API working: {result[:50]}")
+            logger.info(f"✅ Groq API working (model={MODEL_FAST}): {result[:50]}")
             logger.info(f"✅ Active cogs loaded: {active_cogs}")
             logger.info(f"[STARTUP] Commands in tree: {len(all_cmds)} groups, {total_cmds} total")
         except Exception as e:
@@ -575,6 +576,54 @@ async def botinfo(ctx):
     await ctx.send(embed=embed)
 
 
+# FIX 5 — start_with_retry: exponential backoff if Discord rate-limits us
+# (HTTP 429 / Cloudflare 1015). Without this, the bot would retry too fast
+# and get banned longer, eventually getting IP-banned by Cloudflare.
+async def start_with_retry(bot_instance, token: str, max_retries: int = 5):
+    """Start the bot with exponential backoff on rate-limit errors.
+
+    On 429 / 1015 errors we wait `delay` seconds (starting at 30s, doubling
+    each retry, capped at 600s = 10 min) before retrying. Other exceptions
+    are re-raised immediately so we don't silently swallow real bugs.
+    """
+    delay = 30  # start with 30 seconds
+    for attempt in range(max_retries):
+        try:
+            await bot_instance.start(token)
+            # bot.start only returns when the bot shuts down cleanly
+            return
+        except discord.HTTPException as e:
+            error_str = str(e)
+            if e.status == 429 or "1015" in error_str:
+                logger.warning(
+                    f"Rate limited by Discord (attempt {attempt + 1}/{max_retries}). "
+                    f"Waiting {delay}s before retry."
+                )
+                print(f"⚠️ Rate limited. Waiting {delay}s before retry "
+                      f"({attempt + 1}/{max_retries}).")
+                await asyncio.sleep(delay)
+                delay = min(delay * 2, 600)  # cap at 10 minutes
+            else:
+                raise
+        except Exception as e:
+            error_str = str(e)
+            # Cloudflare 1015 errors sometimes come through as generic
+            # ConnectionErrors rather than HTTPException — catch those too.
+            if "1015" in error_str or "429" in error_str:
+                logger.warning(
+                    f"Connection rate-limited (attempt {attempt + 1}/{max_retries}). "
+                    f"Waiting {delay}s before retry."
+                )
+                print(f"⚠️ Connection rate-limited. Waiting {delay}s "
+                      f"({attempt + 1}/{max_retries}).")
+                await asyncio.sleep(delay)
+                delay = min(delay * 2, 600)
+            else:
+                raise
+    logger.error(f"❌ Bot failed to start after {max_retries} retries.")
+    print(f"❌ Bot failed to start after {max_retries} retries.")
+
+
 if __name__ == "__main__":
     token = os.getenv('DISCORD_TOKEN')
     if not token:
@@ -584,6 +633,10 @@ if __name__ == "__main__":
     keep_alive()
 
     try:
-        bot.run(token)
+        asyncio.run(start_with_retry(bot, token))
+    except KeyboardInterrupt:
+        logger.info("Bot stopped by user.")
     except Exception as e:
         logger.error(f"❌ Failed to start: {e}")
+        import traceback
+        traceback.print_exc()

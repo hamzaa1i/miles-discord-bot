@@ -414,9 +414,9 @@ class AIChat(commands.Cog):
         max_tokens = 300 if is_complex else 100
 
         # PHASE 3C — Use smart model routing if chosen_model is provided,
-        # otherwise default to kimi-k2 (primary chat model).
-        from utils.ai_handler import MOONSHOT_K2
-        model = chosen_model or MOONSHOT_K2
+        # otherwise default to MODEL_CHAT (llama-3.3-70b-versatile).
+        from utils.ai_handler import MODEL_CHAT
+        model = chosen_model or MODEL_CHAT
 
         ai_response = await call_ai(
             messages, model=model,
@@ -1586,9 +1586,9 @@ class AIChat(commands.Cog):
                             f"only acknowledge it once."
                         )
                         extra_context = silence_ctx + extra_context
-                        # FIX 1 — Force kimi-k2 model when silence is detected
-                        from utils.ai_handler import MOONSHOT_K2
-                        chosen_model = MOONSHOT_K2
+                        # FIX 1 — Force llama-3.3-70b model when silence is detected
+                        from utils.ai_handler import MODEL_CHAT
+                        chosen_model = MODEL_CHAT
             except Exception:
                 pass
 
@@ -1672,7 +1672,7 @@ class AIChat(commands.Cog):
         self.save_settings(interaction.guild_id, settings)
         await interaction.followup.send("admin role removed.")
 
-    @app_commands.command(name="chat", description="Talk to cyn")
+    @app_commands.command(name="chat", description="Talk to aurelia")
     @app_commands.checks.cooldown(1, 5.0, key=lambda i: i.user.id)
     async def chat(self, interaction: discord.Interaction, message: str):
         self.bot.increment_command('chat')
@@ -1681,22 +1681,40 @@ class AIChat(commands.Cog):
         is_owner_msg = interaction.user.id == OWNER_ID
         # For slash commands, interaction.user is a Member in a guild
         member = interaction.user if isinstance(interaction.user, discord.Member) else None
-        response = await self.get_ai_response(
-            interaction.user.id, message, is_owner=is_owner_msg,
-            guild=interaction.guild, author_name=interaction.user.display_name,
-            channel=interaction.channel, member=member
-        )
+        try:
+            response = await asyncio.wait_for(
+                self.get_ai_response(
+                    interaction.user.id, message, is_owner=is_owner_msg,
+                    guild=interaction.guild, author_name=interaction.user.display_name,
+                    channel=interaction.channel, member=member
+                ),
+                timeout=30.0,
+            )
+        except asyncio.TimeoutError:
+            await interaction.followup.send("took too long. try again.")
+            return
+        except Exception as e:
+            logger.error(f"[chat] {type(e).__name__}: {e}")
+            await interaction.followup.send("something went wrong.")
+            return
         await interaction.followup.send(response)
 
-    @app_commands.command(name="cyn", description="Talk to cyn or run commands naturally")
+    # FIX 4 — Renamed from /cyn to /aurelia as part of the Veloura rebrand.
+    # The old name was missed in the previous rebrand pass.
+    @app_commands.command(name="aurelia", description="Talk to aurelia or run commands naturally")
     @app_commands.describe(message="What do you want to say or do")
     @app_commands.checks.cooldown(1, 8.0, key=lambda i: i.user.id)
-    async def cyn_command(self, interaction: discord.Interaction, message: str):
-        self.bot.increment_command('cyn')
+    async def aurelia_command(self, interaction: discord.Interaction, message: str):
+        self.bot.increment_command('aurelia')
         await interaction.response.defer()
 
         try:
-            intent_data = await parse_intent(message, self)
+            intent_data = await asyncio.wait_for(
+                parse_intent(message, self),
+                timeout=15.0,
+            )
+        except asyncio.TimeoutError:
+            intent_data = {"intent": "chat", "params": {}}
         except Exception:
             intent_data = {"intent": "chat", "params": {}}
 
@@ -1708,7 +1726,8 @@ class AIChat(commands.Cog):
                     self.guild = interaction.guild
                     self.content = content
                     # Parse user mentions from the message content so mod intents
-                    # work via /cyn warn @user. Discord mention format: <@123> or <@!123>
+                    # work via /aurelia warn @user. Discord mention format:
+                    # <@123> or <@!123>
                     import re as _re
                     mentioned_ids = [int(m) for m in _re.findall(r'<@!?(\d+)>', content)]
                     self.mentions = []
@@ -1722,17 +1741,37 @@ class AIChat(commands.Cog):
                     await interaction.followup.send(content=content, embed=embed)
 
             fake_msg = FakeMessage(interaction, message)
-            handled = await self._execute_intent(fake_msg, intent_data)
+            try:
+                handled = await asyncio.wait_for(
+                    self._execute_intent(fake_msg, intent_data),
+                    timeout=30.0,
+                )
+            except asyncio.TimeoutError:
+                handled = False
+            except Exception as e:
+                logger.error(f"[aurelia] intent execution error: {type(e).__name__}: {e}")
+                handled = False
             if handled:
                 return
 
         is_owner_msg = interaction.user.id == OWNER_ID
         member = interaction.user if isinstance(interaction.user, discord.Member) else None
-        response = await self.get_ai_response(
-            interaction.user.id, message, is_owner=is_owner_msg,
-            guild=interaction.guild, author_name=interaction.user.display_name,
-            channel=interaction.channel, member=member
-        )
+        try:
+            response = await asyncio.wait_for(
+                self.get_ai_response(
+                    interaction.user.id, message, is_owner=is_owner_msg,
+                    guild=interaction.guild, author_name=interaction.user.display_name,
+                    channel=interaction.channel, member=member
+                ),
+                timeout=30.0,
+            )
+        except asyncio.TimeoutError:
+            await interaction.followup.send("took too long. try again.")
+            return
+        except Exception as e:
+            logger.error(f"[aurelia] {type(e).__name__}: {e}")
+            await interaction.followup.send("something went wrong.")
+            return
         await interaction.followup.send(response)
 
     # PHASE 2A — /forget command: clears persistent conversation memory
