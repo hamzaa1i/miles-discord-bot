@@ -191,6 +191,20 @@ CREATE TABLE server_personality (
 -- );
 -- GRANT ALL ON public.invite_tracking TO anon;
 -- ALTER TABLE public.invite_tracking DISABLE ROW LEVEL SECURITY;
+--
+-- FIX 4 — leveling_settings table (was missing, causing 404 spam).
+-- Run this in Supabase SQL editor if you see "leveling_settings does not exist":
+--
+-- CREATE TABLE IF NOT EXISTS leveling_settings (
+--   guild_id TEXT PRIMARY KEY,
+--   enabled BOOLEAN DEFAULT TRUE,
+--   channel_id TEXT,
+--   rate FLOAT DEFAULT 1.0,
+--   rewards JSONB DEFAULT '{}'::jsonb,
+--   updated_at TEXT
+-- );
+-- GRANT ALL ON public.leveling_settings TO anon;
+-- ALTER TABLE public.leveling_settings DISABLE ROW LEVEL SECURITY;
 """
 import os
 import json
@@ -207,6 +221,12 @@ _use_supabase = False
 # the logs every 30 seconds (e.g. reminder background task polling).
 # Each error is logged ONCE, then we silently fall back to JSON.
 _supabase_error_logged = set()
+
+# FIX 3 — Track which tables are MISSING from Supabase (returned 404 /
+# PGRST205 / "does not exist"). Once a table is marked missing, we skip
+# the Supabase query entirely and go straight to JSON — no more repeated
+# 404 errors on every single message.
+_supabase_table_missing = set()
 
 
 def init_db():
@@ -256,17 +276,46 @@ def _write_json(path: str, data: dict):
 # ─── Guild settings (welcome, logs, autorole, bot config) ──────
 
 def get_guild_setting(guild_id: int, table: str) -> dict:
-    """Get settings for a guild from a specific table/file."""
-    if _use_supabase:
-        try:
-            result = _supabase.table(table).select("*").eq(
-                "guild_id", str(guild_id)
-            ).execute()
-            if result.data:
-                return result.data[0]
-            return {}
-        except Exception as e:
-            error_key = f"get_guild_setting_{table}"
+    """Get settings for a guild from a specific table/file.
+
+    FIX 3 — If a table has previously returned a "does not exist" / 404 /
+    PGRST205 error, we skip the Supabase query entirely and go straight
+    to the JSON fallback. This stops the repeated `GET /rest/v1/<table>
+    404 Not Found` spam that was polluting the logs on every message.
+    """
+    if not _use_supabase:
+        data = _read_json(f"data/{table}.json")
+        return data.get(str(guild_id), {})
+
+    # FIX 3 — Short-circuit: if we already know this table doesn't exist
+    # in Supabase, skip the query entirely.
+    if table in _supabase_table_missing:
+        data = _read_json(f"data/{table}.json")
+        return data.get(str(guild_id), {})
+
+    try:
+        result = _supabase.table(table).select("*").eq(
+            "guild_id", str(guild_id)
+        ).execute()
+        if result.data:
+            return result.data[0]
+        return {}
+    except Exception as e:
+        error_str = str(e)
+        error_key = f"get_guild_setting_{table}"
+
+        # FIX 3 — Table missing? Mark it permanently so we skip Supabase
+        # entirely on all future reads for this table.
+        if "PGRST205" in error_str or "does not exist" in error_str or "404" in error_str:
+            _supabase_table_missing.add(table)
+            if error_key not in _supabase_error_logged:
+                logger.warning(
+                    f"[DB] Table '{table}' does not exist in Supabase. "
+                    f"Using JSON fallback (this message won't repeat)."
+                )
+                _supabase_error_logged.add(error_key)
+        else:
+            # Only log other errors once per table
             if error_key not in _supabase_error_logged:
                 logger.error(f"[DB] get_guild_setting ({table}) error: {e}")
                 logger.warning(
@@ -275,31 +324,57 @@ def get_guild_setting(guild_id: int, table: str) -> dict:
                     "Falling back to JSON."
                 )
                 _supabase_error_logged.add(error_key)
-            # Fall back to JSON silently
-            data = _read_json(f"data/{table}.json")
-            return data.get(str(guild_id), {})
-    else:
+
+        # Fall back to JSON silently
         data = _read_json(f"data/{table}.json")
         return data.get(str(guild_id), {})
 
 
 def set_guild_setting(guild_id: int, table: str, settings: dict):
-    """Save settings for a guild."""
-    if _use_supabase:
-        try:
-            existing = _supabase.table(table).select("guild_id").eq(
+    """Save settings for a guild.
+
+    FIX 3 — If the table is known-missing from Supabase, skip straight
+    to JSON to avoid repeated 404 errors on writes too.
+    """
+    if not _use_supabase:
+        data = _read_json(f"data/{table}.json")
+        data[str(guild_id)] = settings
+        _write_json(f"data/{table}.json", data)
+        return
+
+    # FIX 3 — Short-circuit for known-missing tables
+    if table in _supabase_table_missing:
+        data = _read_json(f"data/{table}.json")
+        data[str(guild_id)] = settings
+        _write_json(f"data/{table}.json", data)
+        return
+
+    try:
+        existing = _supabase.table(table).select("guild_id").eq(
+            "guild_id", str(guild_id)
+        ).execute()
+        if existing.data:
+            _supabase.table(table).update(settings).eq(
                 "guild_id", str(guild_id)
             ).execute()
-            if existing.data:
-                _supabase.table(table).update(settings).eq(
-                    "guild_id", str(guild_id)
-                ).execute()
-            else:
-                _supabase.table(table).insert({
-                    "guild_id": str(guild_id), **settings
-                }).execute()
-        except Exception as e:
-            error_key = f"set_guild_setting_{table}"
+        else:
+            _supabase.table(table).insert({
+                "guild_id": str(guild_id), **settings
+            }).execute()
+    except Exception as e:
+        error_str = str(e)
+        error_key = f"set_guild_setting_{table}"
+
+        # FIX 3 — Table missing? Mark it permanently.
+        if "PGRST205" in error_str or "does not exist" in error_str or "404" in error_str:
+            _supabase_table_missing.add(table)
+            if error_key not in _supabase_error_logged:
+                logger.warning(
+                    f"[DB] Table '{table}' does not exist in Supabase. "
+                    f"Using JSON fallback for writes (this message won't repeat)."
+                )
+                _supabase_error_logged.add(error_key)
+        else:
             if error_key not in _supabase_error_logged:
                 logger.error(f"[DB] set_guild_setting ({table}) error: {e}")
                 logger.warning(
@@ -308,11 +383,8 @@ def set_guild_setting(guild_id: int, table: str, settings: dict):
                     "Falling back to JSON."
                 )
                 _supabase_error_logged.add(error_key)
-            # Fall back to JSON silently
-            data = _read_json(f"data/{table}.json")
-            data[str(guild_id)] = settings
-            _write_json(f"data/{table}.json", data)
-    else:
+
+        # Fall back to JSON silently
         data = _read_json(f"data/{table}.json")
         data[str(guild_id)] = settings
         _write_json(f"data/{table}.json", data)

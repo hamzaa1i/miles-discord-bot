@@ -217,6 +217,12 @@ class AIChat(commands.Cog):
                              personality_note: str = "",
                              formality: str = "neutral") -> str:
         base = (
+            "CRITICAL FORMATTING RULE: never output ildo, <thinking>, or any "
+            "XML-style tags. never explain your reasoning process. never say "
+            "'here's what i'm thinking' or 'let me analyze'. just respond "
+            "directly with your answer as if you already thought about it. "
+            "your response goes DIRECTLY to a Discord chat, no reasoning shown. "
+            "\n\n"
             "you are Aurelia, Veloura's custom community and moderation bot. "
             "you are a girl (she/her). "
             "IDENTITY: your creator, developer, and owner is volc. "

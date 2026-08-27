@@ -229,6 +229,17 @@ class Moderation(commands.Cog):
             await self._send_mod_log(interaction.guild, "Kick", member, interaction.user, reason, color=0xe67e22)
         except discord.Forbidden:
             await interaction.followup.send("i don't have permission to kick this member.", ephemeral=True)
+        except discord.HTTPException as e:
+            # FIX 5 — Handle Discord 429 rate limits gracefully
+            if e.status == 429:
+                logger.warning("[Discord 429] Rate limited on /mod kick")
+                await interaction.followup.send(
+                    "discord is rate limiting me. wait a moment and try again.",
+                    ephemeral=True,
+                )
+            else:
+                logger.error(f"[kick] HTTP error: {e}")
+                await interaction.followup.send(f"failed: `{e}`", ephemeral=True)
 
     @mod.command(name="ban", description="Ban a member")
     @app_commands.checks.has_permissions(ban_members=True)
@@ -250,6 +261,17 @@ class Moderation(commands.Cog):
             await self._send_mod_log(interaction.guild, "Ban", member, interaction.user, reason, color=0xed4245)
         except discord.Forbidden:
             await interaction.followup.send("i don't have permission.", ephemeral=True)
+        except discord.HTTPException as e:
+            # FIX 5 — Handle Discord 429 rate limits gracefully
+            if e.status == 429:
+                logger.warning("[Discord 429] Rate limited on /mod ban")
+                await interaction.followup.send(
+                    "discord is rate limiting me. wait a moment and try again.",
+                    ephemeral=True,
+                )
+            else:
+                logger.error(f"[ban] HTTP error: {e}")
+                await interaction.followup.send(f"failed: `{e}`", ephemeral=True)
 
     @mod.command(name="unban", description="Unban a user")
     @app_commands.checks.has_permissions(ban_members=True)
@@ -264,10 +286,24 @@ class Moderation(commands.Cog):
             await self._send_mod_log(interaction.guild, "Unban", user, interaction.user, "Manual unban", color=0x57f287)
         except discord.NotFound:
             await interaction.followup.send("user not found or not banned.", ephemeral=True)
+        except discord.HTTPException as e:
+            # FIX 5 — Handle Discord 429 rate limits gracefully
+            if e.status == 429:
+                logger.warning("[Discord 429] Rate limited on /mod unban")
+                await interaction.followup.send(
+                    "discord is rate limiting me. wait a moment and try again.",
+                    ephemeral=True,
+                )
+            else:
+                logger.error(f"[unban] HTTP error: {e}")
+                await interaction.followup.send(f"failed: `{e}`", ephemeral=True)
 
     @mod.command(name="timeout", description="Timeout a member")
     @app_commands.checks.has_permissions(moderate_members=True)
     async def timeout(self, interaction: discord.Interaction, member: discord.Member, duration: str, reason: str = "No reason"):
+        # FIX 2 — defer FIRST, then always use followup.send().
+        # Previously this command called interaction.response.send_message()
+        # after defer(), which raised discord.errors.InteractionResponded.
         await interaction.response.defer(ephemeral=True)
         time_units = {'s': 1, 'm': 60, 'h': 3600, 'd': 86400}
         try:
@@ -284,15 +320,23 @@ class Moderation(commands.Cog):
             await member.timeout(timedelta(seconds=seconds), reason=reason)
             self.log_action(interaction.guild.id, "timeout", str(interaction.user), str(member), f"{reason} ({duration})")
             embed = discord.Embed(description=f"timed out **{member}** for **{duration}**\nreason: {reason}", color=0xe67e22)
-            try:
-                await interaction.response.send_message(embed=embed)
-            except discord.InteractionResponded:
-                await interaction.followup.send(embed=embed)
+            await interaction.followup.send(embed=embed)
         except discord.Forbidden:
-            try:
-                await interaction.response.send_message("i don't have permission.", ephemeral=True)
-            except discord.InteractionResponded:
-                pass
+            await interaction.followup.send("i don't have permission.", ephemeral=True)
+        except discord.HTTPException as e:
+            # FIX 5 — Handle Discord 429 rate limits gracefully
+            if e.status == 429:
+                logger.warning(f"[Discord 429] Rate limited on /mod timeout")
+                await interaction.followup.send(
+                    "discord is rate limiting me. wait a moment and try again.",
+                    ephemeral=True,
+                )
+            else:
+                logger.error(f"[timeout] HTTP error: {e}")
+                await interaction.followup.send(f"failed: `{e}`", ephemeral=True)
+        except Exception as e:
+            logger.error(f"[timeout] {type(e).__name__}: {e}")
+            await interaction.followup.send(f"failed: `{e}`", ephemeral=True)
 
     # PHASE 2B — Consolidated /mod warnings command
     @mod.command(name="warnings", description="Add, list, or clear warnings for a user")
@@ -362,15 +406,32 @@ class Moderation(commands.Cog):
     @mod.command(name="purge", description="Delete messages")
     @app_commands.checks.has_permissions(manage_messages=True)
     async def purge(self, interaction: discord.Interaction, amount: int):
-        if amount < 1 or amount > 100:
-            try:
-                await interaction.response.send_message("amount must be 1-100.", ephemeral=True)
-            except discord.InteractionResponded:
-                pass
-            return
+        # FIX 2 — defer FIRST, then always use followup.send().
+        # Previously this used response.send_message for the validation
+        # error path, which is fine on its own but breaks if the command
+        # is ever re-invoked after a defer. Unified to defer+followup.
         await interaction.response.defer(ephemeral=True)
-        deleted = await interaction.channel.purge(limit=amount)
-        await interaction.followup.send(f"deleted {len(deleted)} messages.", ephemeral=True)
+        if amount < 1 or amount > 100:
+            await interaction.followup.send("amount must be 1-100.", ephemeral=True)
+            return
+        try:
+            deleted = await interaction.channel.purge(limit=amount)
+            await interaction.followup.send(f"deleted {len(deleted)} messages.", ephemeral=True)
+        except discord.Forbidden:
+            await interaction.followup.send("i don't have permission to delete messages.", ephemeral=True)
+        except discord.HTTPException as e:
+            if e.status == 429:
+                logger.warning("[Discord 429] Rate limited on /mod purge")
+                await interaction.followup.send(
+                    "discord is rate limiting me. wait a moment and try again.",
+                    ephemeral=True,
+                )
+            else:
+                logger.error(f"[purge] HTTP error: {e}")
+                await interaction.followup.send(f"failed: `{e}`", ephemeral=True)
+        except Exception as e:
+            logger.error(f"[purge] {type(e).__name__}: {e}")
+            await interaction.followup.send(f"failed: `{e}`", ephemeral=True)
 
     @mod.command(name="nuke", description="Clone and delete the channel")
     @app_commands.checks.has_permissions(manage_channels=True)
@@ -503,6 +564,18 @@ class Moderation(commands.Cog):
                 ephemeral=True,
             )
             return
+        except discord.HTTPException as e:
+            # FIX 5 — Handle Discord 429 rate limits gracefully
+            if e.status == 429:
+                logger.warning("[Discord 429] Rate limited on /mod mute")
+                await interaction.followup.send(
+                    "discord is rate limiting me. wait a moment and try again.",
+                    ephemeral=True,
+                )
+            else:
+                logger.error(f"[mute] HTTP error: {e}")
+                await interaction.followup.send(f"failed: `{e}`", ephemeral=True)
+            return
         except Exception as e:
             await interaction.followup.send(f"failed: `{e}`", ephemeral=True)
             return
@@ -602,6 +675,18 @@ class Moderation(commands.Cog):
             await member.ban(reason=f"Tempban ({duration.value}): {reason}", delete_message_days=0)
         except discord.Forbidden:
             await interaction.followup.send("i don't have permission to ban this member.", ephemeral=True)
+            return
+        except discord.HTTPException as e:
+            # FIX 5 — Handle Discord 429 rate limits gracefully
+            if e.status == 429:
+                logger.warning("[Discord 429] Rate limited on /mod tempban")
+                await interaction.followup.send(
+                    "discord is rate limiting me. wait a moment and try again.",
+                    ephemeral=True,
+                )
+            else:
+                logger.error(f"[tempban] HTTP error: {e}")
+                await interaction.followup.send(f"failed: `{e}`", ephemeral=True)
             return
         except Exception as e:
             await interaction.followup.send(f"failed to ban: `{e}`", ephemeral=True)

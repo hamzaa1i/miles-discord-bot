@@ -127,10 +127,16 @@ def _validate_messages(messages: list) -> list:
 def _extract_content(response) -> str:
     """FIX 2 — Robustly extract text from a Groq chat completion response.
 
-    Reasoning models (gpt-oss-120b, qwen3.6) sometimes put the actual
-    text inside `reasoning_content` instead of `content`. Some models
-    return `tool_calls` instead of any text at all. We try every field
-    in order and NEVER return an empty string.
+    Reasoning models (gpt-oss-20b, gpt-oss-120b, qwen3.6) sometimes put
+    the actual text inside `reasoning_content` instead of `content`, or
+    wrap their internal reasoning in <think>...</think> tags. Some models
+    return `tool_calls` instead of any text at all. We try every field in
+    order, strip all reasoning tags, and NEVER return an empty string.
+
+    FIX 1 — Strip <think>...</think> blocks, standalone "thinking" markers,
+    and common reasoning-process preambles ("Here's a thinking process:",
+    "Let me think..."). These were being sent raw to Discord and users saw
+    the model's internal monologue.
     """
     try:
         if not response or not response.choices:
@@ -140,22 +146,80 @@ def _extract_content(response) -> str:
 
         # 1. Primary content field
         content = (getattr(msg, "content", None) or "").strip()
-        if content:
-            return content
 
         # 2. Reasoning models sometimes hide text in reasoning_content
-        reasoning = (getattr(msg, "reasoning_content", None) or "").strip()
-        if reasoning:
-            return reasoning
+        if not content and hasattr(msg, 'reasoning_content') and msg.reasoning_content:
+            content = (msg.reasoning_content or "").strip()
+
+        # FIX 1 — Strip <think>...</think> blocks (including multi-line).
+        # The gpt-oss-20b model outputs internal reasoning wrapped in
+        # <think>...</think> tags. Without this, users see the raw
+        # reasoning ("Here's a thinking process: Analyze User Input: ...").
+        if content:
+            content = re.sub(
+                r'<think>.*?</think>',
+                '',
+                content,
+                flags=re.DOTALL | re.IGNORECASE,
+            )
+            content = re.sub(
+                r'<thinking>.*?</thinking>',
+                '',
+                content,
+                flags=re.DOTALL | re.IGNORECASE,
+            )
+
+            # If the model started a <think> block but never closed it,
+            # strip from <think> to the end of the string.
+            if '<think>' in content.lower():
+                content = re.sub(
+                    r'<think>.*',
+                    '',
+                    content,
+                    flags=re.DOTALL | re.IGNORECASE,
+                )
+            if '<thinking>' in content.lower():
+                content = re.sub(
+                    r'<thinking>.*',
+                    '',
+                    content,
+                    flags=re.DOTALL | re.IGNORECASE,
+                )
+
+            # Strip common reasoning-process preambles that some models
+            # emit even without XML tags.
+            content = re.sub(
+                r"^Here's (?:a |my )?thinking process:.*?\n\n",
+                '',
+                content,
+                flags=re.DOTALL | re.IGNORECASE,
+            )
+            content = re.sub(
+                r"^Let me think.*?\n\n",
+                '',
+                content,
+                flags=re.DOTALL | re.IGNORECASE,
+            )
+
+            content = content.strip()
 
         # 3. If the model tried to invoke tools instead of replying,
         #    give the user a soft fallback rather than empty text.
-        tool_calls = getattr(msg, "tool_calls", None)
-        if tool_calls:
-            return "i'm here. what's on your mind?"
+        if not content:
+            tool_calls = getattr(msg, "tool_calls", None)
+            if tool_calls:
+                return "i'm here. what's on your mind?"
 
         # 4. Absolute last resort — never return None / empty to the caller
-        return "i'm here. what's on your mind?"
+        if not content:
+            return "i'm here. what's on your mind?"
+
+        # 5. Cap at 1900 chars for Discord's 2000-char message limit,
+        #    leaving room for the "..." suffix.
+        if len(content) > 1900:
+            content = content[:1900] + "..."
+
+        return content
     except Exception as e:
         logger.error(f"[_extract_content error] {type(e).__name__}: {e}")
         return "something went wrong on my end."
