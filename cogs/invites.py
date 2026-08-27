@@ -1,8 +1,9 @@
 """
 cogs/invites.py — Veloura invite tracking.
 
-  /invites [@user]          — show your (or someone's) invite count
-  /invite_leaderboard       — top 10 inviters in this server
+  /invites show [@user]     — show your (or someone's) invite count
+  /invites set @user [count] — set invite count (owner/admin only)
+  /invite_leaderboard        — top 10 inviters in this server
 
 Listeners:
   on_ready            — prime the invite cache for every guild
@@ -10,11 +11,11 @@ Listeners:
   on_invite_delete    — remove invite from cache
   on_member_join      — diff cache vs current invites to find the inviter
 
-Storage: data/invite_tracking.json (or Supabase via get/set_guild_setting
-under the "invite_tracking" table). Format:
-  { "guild_id": { "inviter_user_id": {"count": N, "valid": M} } }
+Storage: data/invite_tracking.json (primary) + Supabase mirror (best-effort).
+Format: { "guild_id": { "inviter_user_id": {"count": N, "valid": M} } }
 """
 import logging
+import os
 
 import discord
 from discord.ext import commands, tasks
@@ -27,6 +28,7 @@ from utils.veloura_embeds import veloura_embed, COLOR_PINK, COLOR_LAVENDER
 logger = logging.getLogger('cyn.invites')
 
 SETTINGS_TABLE = "invite_tracking"
+INVITES_JSON_PATH = "data/invite_tracking.json"
 
 
 class Invites(commands.Cog):
@@ -34,6 +36,23 @@ class Invites(commands.Cog):
         self.bot = bot
         # { guild_id: { code: uses } }
         self.invite_cache: dict = {}
+        # FIX 4A — load persisted invite data on startup so counts
+        # survive restarts. The JSON file is the source of truth.
+        self._load_persisted_invites()
+
+    def _load_persisted_invites(self):
+        """FIX 4A — Load invite data from JSON on cog init.
+        Logs how many guilds/users were loaded for verification."""
+        try:
+            data = _read_json(INVITES_JSON_PATH)
+            total_guilds = len(data)
+            total_users = sum(len(v) for v in data.values() if isinstance(v, dict))
+            logger.info(
+                f"[invites] loaded persisted data: {total_guilds} guilds, "
+                f"{total_users} inviter records"
+            )
+        except Exception as e:
+            logger.warning(f"[invites] failed to load persisted data: {e}")
 
     # ─── Cog lifecycle ──────────────────────────────────────────
     async def cog_load(self):
@@ -79,29 +98,19 @@ class Invites(commands.Cog):
     # FIX 3 — The invite_tracking Supabase table has columns:
     #   guild_id, inviter_id, invites, joins, leaves
     # (composite PK: guild_id + inviter_id)
-    # The OLD code wrapped data as {"inviters": {uid: {count, valid}}}
-    # and tried to store it via get/set_guild_setting — but those helpers
-    # expect a single row per guild_id, which doesn't match the table's
-    # composite-PK schema. This caused "Could not find the 'inviters'
-    # column" errors.
-    #
-    # FIX: Use JSON file as the primary store (works reliably), and use
-    # Supabase directly with the correct column names as a mirror. The
-    # JSON format is: { "guild_id": { "uid": {"count": N, "valid": M} } }
+    # JSON file is the primary store; Supabase is a best-effort mirror.
 
     def get_guild_data(self, guild_id: int) -> dict:
         # Primary: JSON file (always works)
-        data = _read_json("data/invite_tracking.json")
+        data = _read_json(INVITES_JSON_PATH)
         return data.get(str(guild_id), {}) or {}
 
     def save_guild_data(self, guild_id: int, inviters: dict):
         # Primary: JSON file
-        data = _read_json("data/invite_tracking.json")
+        data = _read_json(INVITES_JSON_PATH)
         data[str(guild_id)] = inviters
-        _write_json("data/invite_tracking.json", data)
+        _write_json(INVITES_JSON_PATH, data)
         # Best-effort Supabase mirror using the correct column names.
-        # The table schema is (guild_id, inviter_id, invites, joins, leaves).
-        # We upsert one row per inviter.
         try:
             sb = _db._supabase if _db.using_supabase() else None
             if sb:
@@ -115,9 +124,6 @@ class Invites(commands.Cog):
                             "leaves": 0,
                         }).execute()
                     except Exception:
-                        # Supabase mirror is best-effort; JSON is the
-                        # source of truth. Don't let one bad row kill
-                        # the whole save.
                         pass
         except Exception as e:
             logger.debug(f"[invites] supabase mirror failed: {e}")
@@ -128,6 +134,16 @@ class Invites(commands.Cog):
         entry = inviters.get(key, {"count": 0, "valid": 0})
         entry["count"] = int(entry.get("count", 0)) + 1
         entry["valid"] = int(entry.get("valid", 0)) + 1
+        inviters[key] = entry
+        self.save_guild_data(guild_id, inviters)
+
+    def set_inviter_count(self, guild_id: int, inviter_id: int, count: int):
+        """FIX 4B — Set invite count for a specific user (manual override)."""
+        inviters = self.get_guild_data(guild_id)
+        key = str(inviter_id)
+        entry = inviters.get(key, {"count": 0, "valid": 0})
+        entry["count"] = int(count)
+        entry["valid"] = int(count)
         inviters[key] = entry
         self.save_guild_data(guild_id, inviters)
 
@@ -209,10 +225,13 @@ class Invites(commands.Cog):
             logger.info(f"[invites] {member} joined {guild.name} via inviter {inviter_id}")
 
     # ─── Slash commands ─────────────────────────────────────────
-    @app_commands.command(name="invites", description="Show how many invites you (or someone) have")
+    # FIX 4B — /invites is now a group with "show" and "set" subcommands.
+    invites = app_commands.Group(name="invites", description="Invite tracking commands")
+
+    @invites.command(name="show", description="Show how many invites you (or someone) have")
     @app_commands.describe(user="Whose invite count to show (defaults to you)")
-    async def invites(self, interaction: discord.Interaction, user: discord.Member = None):
-        self.bot.increment_command('invites')
+    async def invites_show(self, interaction: discord.Interaction, user: discord.Member = None):
+        self.bot.increment_command('invites_show')
         if not interaction.guild:
             await interaction.response.send_message(
                 "this command only works in servers.", ephemeral=True
@@ -229,6 +248,41 @@ class Invites(commands.Cog):
         )
         if target.avatar:
             embed.set_thumbnail(url=target.avatar.url)
+        await interaction.response.send_message(embed=embed)
+
+    @invites.command(name="set", description="Set invite count for a user (owner/admin only)")
+    @app_commands.describe(user="The user whose invite count to set", count="The new invite count")
+    @app_commands.checks.has_permissions(manage_guild=True)
+    async def invites_set(self, interaction: discord.Interaction, user: discord.Member, count: int):
+        self.bot.increment_command('invites_set')
+        # Also allow bot owner
+        owner_id = int(os.getenv("OWNER_ID", "0"))
+        if interaction.user.id != owner_id and not interaction.user.guild_permissions.manage_guild:
+            await interaction.response.send_message(
+                "only the server owner or bot owner can set invite counts.",
+                ephemeral=True,
+            )
+            return
+        if count < 0:
+            await interaction.response.send_message(
+                "count must be 0 or higher.", ephemeral=True
+            )
+            return
+        if not interaction.guild:
+            await interaction.response.send_message(
+                "this command only works in servers.", ephemeral=True
+            )
+            return
+        self.set_inviter_count(interaction.guild.id, user.id, count)
+        logger.info(
+            f"[invites] set {user.display_name}'s invite count to {count} "
+            f"in guild {interaction.guild.id} by {interaction.user.display_name}"
+        )
+        embed = veloura_embed(
+            "invites set",
+            f"**{user.display_name}**'s invite count set to **{count}**. ✩",
+            COLOR_PINK,
+        )
         await interaction.response.send_message(embed=embed)
 
     @app_commands.command(name="invite_leaderboard", description="Top 10 inviters in this server")

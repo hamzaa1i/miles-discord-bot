@@ -379,6 +379,22 @@ class Welcome(commands.Cog):
         key, name = setting.value, setting.name
         bool_words = {"on": True, "true": True, "yes": True, "off": False, "false": False, "no": False}
 
+        # FIX 1 — helper to save + verify persistence with read-after-write logging.
+        async def _save_and_verify(cfg, setting_name, setting_value):
+            set_guild_setting(gid, "welcome_settings", cfg)
+            logger.info(
+                f"[welcome] SAVED to welcome_settings for guild {gid}: "
+                f"{setting_name}={setting_value}"
+            )
+            # Read back immediately to verify persistence
+            readback = get_guild_setting(gid, "welcome_settings")
+            logger.info(
+                f"[welcome] READBACK from welcome_settings for guild {gid}: "
+                f"enabled={readback.get('enabled') if readback else 'NONE'}, "
+                f"channel_id={readback.get('channel_id') if readback else 'NONE'}, "
+                f"goodbye_enabled={readback.get('goodbye_enabled') if readback else 'NONE'}"
+            )
+
         # Channel-based settings
         if key in ("welcome_channel", "goodbye_channel"):
             if channel is None:
@@ -387,13 +403,7 @@ class Welcome(commands.Cog):
                 config['channel_id'] = str(channel.id); config['enabled'] = True
             else:
                 config['goodbye_channel_id'] = str(channel.id); config['goodbye_enabled'] = True
-            set_guild_setting(gid, "welcome_settings", config)
-            # FIX 2 — log the save so we can confirm persistence
-            logger.info(
-                f"[welcome] config saved: {key}={channel.id} (as str) "
-                f"for guild {gid}. enabled={config.get('enabled')}, "
-                f"goodbye_enabled={config.get('goodbye_enabled')}"
-            )
+            await _save_and_verify(config, key, channel.id)
             return await interaction.response.send_message(f"✅ {name} set to {channel.mention}")
 
         # Toggle-based settings
@@ -405,10 +415,7 @@ class Welcome(commands.Cog):
                 return await self._err(interaction, f"❌ Invalid `{value}`. Use on/off, true/false, yes/no.")
             enabled = bool_words[parsed]
             config['enabled' if key == "welcome_toggle" else 'goodbye_enabled'] = enabled
-            set_guild_setting(gid, "welcome_settings", config)
-            logger.info(
-                f"[welcome] config saved: {key}={enabled} for guild {gid}"
-            )
+            await _save_and_verify(config, key, enabled)
             return await interaction.response.send_message(f"✅ {name} **{'enabled' if enabled else 'disabled'}**")
 
         # Embed mode
@@ -419,7 +426,7 @@ class Welcome(commands.Cog):
             if parsed not in ("embed", "text"):
                 return await self._err(interaction, f"❌ Invalid `{value}`. Use `embed` or `text`.")
             config['embed_mode'] = parsed
-            set_guild_setting(gid, "welcome_settings", config)
+            await _save_and_verify(config, key, parsed)
             return await interaction.response.send_message(f"✅ Embed mode set to **{parsed}**")
 
         # Text-based settings (welcome_message / goodbye_message / welcome_dm)
@@ -429,10 +436,11 @@ class Welcome(commands.Cog):
             cfg_key, vars_str = text_cfg[key]
             is_dm = key == "welcome_dm"
             if is_dm and value.lower() == "off":
-                config[cfg_key] = ""; set_guild_setting(gid, "welcome_settings", config)
+                config[cfg_key] = ""
+                await _save_and_verify(config, key, "(disabled)")
                 return await interaction.response.send_message("✅ Welcome DM disabled.")
             config[cfg_key] = value[:1000] if is_dm else value
-            set_guild_setting(gid, "welcome_settings", config)
+            await _save_and_verify(config, key, value[:80])
             if is_dm:
                 preview = value.replace("{user}", interaction.user.display_name).replace("{server}", interaction.guild.name)
                 return await interaction.response.send_message(f"✅ Welcome DM set. Variables: {vars_str}\nPreview: {preview}")
@@ -485,6 +493,14 @@ class Welcome(commands.Cog):
     @welcome.command(name="show", description="Show the current welcome & goodbye configuration")
     async def welcome_show(self, interaction: discord.Interaction):
         config = self.get_config(interaction.guild.id)
+        # FIX 1 — log what show reads so we can compare with what config saved
+        logger.info(
+            f"[welcome] SHOW reading welcome_settings for guild {interaction.guild.id}: "
+            f"enabled={config.get('enabled')}, "
+            f"channel_id={config.get('channel_id')}, "
+            f"goodbye_enabled={config.get('goodbye_enabled')}, "
+            f"goodbye_channel_id={config.get('goodbye_channel_id')}"
+        )
         g = interaction.guild
 
         def fmt(kind, eid):

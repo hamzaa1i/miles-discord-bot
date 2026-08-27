@@ -211,7 +211,8 @@ class Moderation(commands.Cog):
     @mod.command(name="kick", description="Kick a member")
     @app_commands.checks.has_permissions(kick_members=True)
     async def kick(self, interaction: discord.Interaction, member: discord.Member, reason: str = "No reason"):
-        await interaction.response.defer(ephemeral=True)
+        # FIX 2 — ephemeral=False so everyone sees the action
+        await interaction.response.defer(ephemeral=False)
         if member.top_role >= interaction.user.top_role:
             await interaction.followup.send("can't kick someone with equal or higher role.", ephemeral=True)
             return
@@ -244,7 +245,8 @@ class Moderation(commands.Cog):
     @mod.command(name="ban", description="Ban a member")
     @app_commands.checks.has_permissions(ban_members=True)
     async def ban(self, interaction: discord.Interaction, member: discord.Member, reason: str = "No reason"):
-        await interaction.response.defer(ephemeral=True)
+        # FIX 2 — ephemeral=False so everyone sees the action
+        await interaction.response.defer(ephemeral=False)
         if member.top_role >= interaction.user.top_role:
             await interaction.followup.send("can't ban someone with equal or higher role.", ephemeral=True)
             return
@@ -276,7 +278,8 @@ class Moderation(commands.Cog):
     @mod.command(name="unban", description="Unban a user")
     @app_commands.checks.has_permissions(ban_members=True)
     async def unban(self, interaction: discord.Interaction, user_id: str):
-        await interaction.response.defer(ephemeral=True)
+        # FIX 2 — ephemeral=False so everyone sees the action
+        await interaction.response.defer(ephemeral=False)
         try:
             user = await self.bot.fetch_user(int(user_id))
             await interaction.guild.unban(user)
@@ -304,7 +307,8 @@ class Moderation(commands.Cog):
         # FIX 2 — defer FIRST, then always use followup.send().
         # Previously this command called interaction.response.send_message()
         # after defer(), which raised discord.errors.InteractionResponded.
-        await interaction.response.defer(ephemeral=True)
+        # ephemeral=False so everyone sees the timeout action.
+        await interaction.response.defer(ephemeral=False)
         time_units = {'s': 1, 'm': 60, 'h': 3600, 'd': 86400}
         try:
             unit = duration[-1].lower()
@@ -407,16 +411,14 @@ class Moderation(commands.Cog):
     @app_commands.checks.has_permissions(manage_messages=True)
     async def purge(self, interaction: discord.Interaction, amount: int):
         # FIX 2 — defer FIRST, then always use followup.send().
-        # Previously this used response.send_message for the validation
-        # error path, which is fine on its own but breaks if the command
-        # is ever re-invoked after a defer. Unified to defer+followup.
-        await interaction.response.defer(ephemeral=True)
+        # ephemeral=False so everyone sees the purge count.
+        await interaction.response.defer(ephemeral=False)
         if amount < 1 or amount > 100:
             await interaction.followup.send("amount must be 1-100.", ephemeral=True)
             return
         try:
             deleted = await interaction.channel.purge(limit=amount)
-            await interaction.followup.send(f"deleted {len(deleted)} messages.", ephemeral=True)
+            await interaction.followup.send(f"deleted {len(deleted)} messages.")
         except discord.Forbidden:
             await interaction.followup.send("i don't have permission to delete messages.", ephemeral=True)
         except discord.HTTPException as e:
@@ -491,7 +493,8 @@ class Moderation(commands.Cog):
     @mod.command(name="slowmode", description="Set channel slowmode (0 disables)")
     @app_commands.checks.has_permissions(manage_channels=True)
     async def slowmode(self, interaction: discord.Interaction, seconds: int = 0):
-        await interaction.response.defer(ephemeral=True)
+        # FIX 2 — ephemeral=False so everyone sees the slowmode change
+        await interaction.response.defer(ephemeral=False)
         if seconds < 0 or seconds > 21600:
             await interaction.followup.send("slowmode must be 0-21600 seconds.", ephemeral=True)
             return
@@ -527,7 +530,8 @@ class Moderation(commands.Cog):
     @mod.command(name="lock", description="Lock a channel")
     @app_commands.checks.has_permissions(manage_channels=True)
     async def lock(self, interaction: discord.Interaction, reason: str = "No reason"):
-        await interaction.response.defer(ephemeral=True)
+        # FIX 2 — ephemeral=False so everyone sees the lock
+        await interaction.response.defer(ephemeral=False)
         try:
             overwrite = interaction.channel.overwrites_for(interaction.guild.default_role)
             overwrite.send_messages = False
@@ -561,7 +565,8 @@ class Moderation(commands.Cog):
     @mod.command(name="unlock", description="Unlock a channel")
     @app_commands.checks.has_permissions(manage_channels=True)
     async def unlock(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True)
+        # FIX 2 — ephemeral=False so everyone sees the unlock
+        await interaction.response.defer(ephemeral=False)
         try:
             overwrite = interaction.channel.overwrites_for(interaction.guild.default_role)
             overwrite.send_messages = None
@@ -595,36 +600,54 @@ class Moderation(commands.Cog):
     @mod.command(name="unmute", description="Remove timeout and/or voice mute from a user")
     @app_commands.describe(user="The user to unmute")
     async def mod_unmute(self, interaction: discord.Interaction, user: discord.Member):
-        await interaction.response.defer(ephemeral=True)
+        # FIX 2 — ephemeral=False so everyone sees the unmute
+        await interaction.response.defer(ephemeral=False)
         if not interaction.user.guild_permissions.moderate_members:
             await interaction.followup.send("you need moderate members permission.")
             return
+        # FIX 3 — properly check for active timeout via timed_out_until.
+        # The old code used user.timed_out which doesn't exist in discord.py;
+        # the correct attribute is user.timed_out_until (a datetime or None).
+        # If timed_out_until is in the future, the user is currently timed out.
         actions = []
         rate_limited = False
-        # Clear timeout if present
+
+        # Remove timeout if active
         try:
-            if user.timed_out:
-                await user.timeout(None)
+            is_timed_out = (
+                user.timed_out_until is not None
+                and user.timed_out_until > discord.utils.utcnow()
+            )
+            if is_timed_out:
+                await user.timeout(None, reason=f"Unmuted by {interaction.user}")
                 actions.append("timeout")
+                logger.info(f"[unmute] removed timeout from {user.display_name}")
         except discord.HTTPException as e:
             if e.status == 429:
                 rate_limited = True
                 logger.warning("[Discord 429] Rate limited on /mod unmute (timeout clear)")
-        except Exception:
-            pass
-        # Clear voice mute if present
+            else:
+                logger.error(f"[unmute] timeout clear HTTP error: {e}")
+        except Exception as e:
+            logger.warning(f"[unmute] timeout clear error: {e}")
+
+        # Remove voice mute if in VC and muted
         try:
             if user.voice and user.voice.mute:
                 await user.edit(mute=False, reason=f"Voice unmute by {interaction.user}")
                 actions.append("voice mute")
+                logger.info(f"[unmute] removed voice mute from {user.display_name}")
         except discord.Forbidden:
             pass
         except discord.HTTPException as e:
             if e.status == 429:
                 rate_limited = True
                 logger.warning("[Discord 429] Rate limited on /mod unmute (voice mute clear)")
+            else:
+                logger.error(f"[unmute] voice mute clear HTTP error: {e}")
         except Exception:
             pass
+
         if rate_limited:
             try:
                 await interaction.followup.send(
@@ -635,10 +658,16 @@ class Moderation(commands.Cog):
                 pass
             return
         if not actions:
-            await interaction.followup.send(f"{user.display_name} wasn't muted or timed out.")
+            await interaction.followup.send(
+                f"{user.display_name} is not timed out or voice muted."
+            )
             return
         await interaction.followup.send(
-            f"removed {' + '.join(actions)} from {user.display_name}."
+            f"unmuted {user.display_name}: removed {' + '.join(actions)}."
+        )
+        await self._send_mod_log(
+            interaction.guild, "Unmute", user, interaction.user,
+            f"Removed: {', '.join(actions)}", color=0x57f287
         )
 
     # FIX 3 — /mod mute: voice-mute a user in their current voice channel.
@@ -651,7 +680,8 @@ class Moderation(commands.Cog):
     async def mod_mute(self, interaction: discord.Interaction,
                        user: discord.Member, reason: str = "No reason"):
         self.bot.increment_command('mod_mute')
-        await interaction.response.defer(ephemeral=True)
+        # FIX 2 — ephemeral=False so everyone sees the mute
+        await interaction.response.defer(ephemeral=False)
         # Hierarchy check
         if user.top_role >= interaction.user.top_role and user.id != interaction.user.id:
             await interaction.followup.send(
@@ -759,7 +789,8 @@ class Moderation(commands.Cog):
     async def mod_tempban(self, interaction: discord.Interaction, member: discord.Member,
                           duration: app_commands.Choice[str], reason: str = "No reason"):
         self.bot.increment_command('mod_tempban')
-        await interaction.response.defer(ephemeral=True)
+        # FIX 2 — ephemeral=False so everyone sees the tempban
+        await interaction.response.defer(ephemeral=False)
         if member.top_role >= interaction.user.top_role:
             await interaction.followup.send("can't tempban someone with equal or higher role.", ephemeral=True)
             return

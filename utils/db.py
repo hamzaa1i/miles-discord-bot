@@ -39,7 +39,11 @@ CREATE TABLE welcome_settings (
   goodbye_channel_id TEXT,
   goodbye_message TEXT,
   goodbye_enabled BOOLEAN DEFAULT TRUE,
-  autorole_id TEXT
+  autorole_id TEXT,
+  dm_message TEXT,
+  embed_mode TEXT DEFAULT 'embed',
+  welcome_reward INT DEFAULT 500,
+  welcomer_reward INT DEFAULT 1000
 );
 
 CREATE TABLE log_settings (
