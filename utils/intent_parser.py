@@ -1,6 +1,6 @@
 """
 utils/intent_parser.py — Natural language → command intent parser.
-Uses Groq API (llama-3.1-8b-instant for speed and stable JSON output).
+Uses Groq API (openai/gpt-oss-20b for speed and stable JSON output).
 """
 import json
 import os

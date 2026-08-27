@@ -411,10 +411,13 @@ class AIChat(commands.Cog):
                 ["why", "how", "explain", "what do you think",
                  "tell me about", "describe"])
         )
+        # FIX 2 — max_tokens floor is enforced inside call_ai() (≥300),
+        # so even when is_complex is False and we pass 100 here, the
+        # handler will raise it to 300 to leave room for reasoning models.
         max_tokens = 300 if is_complex else 100
 
         # PHASE 3C — Use smart model routing if chosen_model is provided,
-        # otherwise default to MODEL_CHAT (llama-3.3-70b-versatile).
+        # otherwise default to MODEL_CHAT (qwen/qwen3.6-27b).
         from utils.ai_handler import MODEL_CHAT
         model = chosen_model or MODEL_CHAT
 
@@ -1586,7 +1589,7 @@ class AIChat(commands.Cog):
                             f"only acknowledge it once."
                         )
                         extra_context = silence_ctx + extra_context
-                        # FIX 1 — Force llama-3.3-70b model when silence is detected
+                        # FIX 1 — Force MODEL_CHAT (qwen/qwen3.6-27b) when silence is detected
                         from utils.ai_handler import MODEL_CHAT
                         chosen_model = MODEL_CHAT
             except Exception:

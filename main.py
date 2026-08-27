@@ -337,7 +337,7 @@ class CynBot(commands.Bot):
 
         # Test Groq API + print active cog count + command count
         try:
-            # FIX 1 — call_ai_fast now uses MODEL_FAST (llama-3.1-8b-instant).
+            # FIX 1 — call_ai_fast now uses MODEL_FAST (openai/gpt-oss-20b).
             from utils.ai_handler import call_ai_fast, MODEL_FAST
             result = await call_ai_fast([
                 {"role": "user", "content": "say ok"}

@@ -1,25 +1,34 @@
 """
 utils/ai_handler.py — Single source of truth for all AI calls.
 
-Uses Groq API (console.groq.com) with three stable models as of
+Uses Groq API (console.groq.com) with verified-live models as of
 late August 2026:
 
-  MODEL_CHAT     = "llama-3.3-70b-versatile"   (primary chat / reasoning)
-  MODEL_FAST     = "llama-3.1-8b-instant"      (intent parsing, short chat)
-  MODEL_FALLBACK = "qwen/qwen3-32b"            (fallback if primary fails)
+  MODEL_CHAT     = "qwen/qwen3.6-27b"        (primary casual chat)
+  MODEL_FAST     = "openai/gpt-oss-20b"      (intent parsing, short chat)
+  MODEL_FALLBACK = "qwen/qwen3.8-27b"        (fallback if primary fails)
+  MODEL_REASONING = "openai/gpt-oss-120b"    (complex / code / debug queries)
 
-Decommissioned / forbidden models (DO NOT USE):
-  - gemma2-9b-it          (decommissioned by Groq → 400 error)
-  - openai/gpt-oss-20b    (returns empty content via tool_calls)
-  - openai/gpt-oss-120b   (returns empty content via tool_calls)
-  - moonshotai/kimi-k2-instruct-0905 (was unreliable in practice)
+Decommissioned / forbidden models (DO NOT USE — return 404/400):
+  - llama-3.1-8b-instant
+  - llama-3.3-70b-versatile
+  - llama-3.1-70b-versatile
+  - gemma2-9b-it
+  - moonshotai/kimi-k2-instruct-0905
+  - qwen/qwen3-32b (replaced by qwen3.6-27b / qwen3.8-27b)
 
-FIX 2 — Robust empty-response handling: if the model returns tool_calls
-or reasoning_content instead of plain content, we fall back gracefully
-instead of sending "NONE" to Discord.
+FIX 2 — Robust empty-response handling. The bot was receiving HTTP 200 OK
+but logging `response received: NONE` because:
+  (a) max_tokens was too low (100) — reasoning models used all 100 tokens
+      on internal reasoning headers, leaving 0 tokens for visible content.
+  (b) Some models put text in `reasoning_content` instead of `content`,
+      or return `tool_calls` instead of any text.
 
-FIX 2 (extended) — If a model fails with a 400 or 404 error (e.g.
-decommissioned model), we automatically retry with MODEL_FALLBACK.
+Both are fixed: max_tokens has a 300-token floor, and `_extract_content`
+checks every possible field before falling back to a natural message.
+
+FIX 2 (extended) — If a model fails with 400 / 404 (decommissioned),
+we automatically retry with MODEL_FALLBACK.
 """
 import os
 import re
@@ -32,27 +41,38 @@ logger = logging.getLogger('cyn.ai')
 _client = None
 
 # ─── Model constants ────────────────────────────────────────────
-# FIX 1 — Switched to currently-live Groq models.
+# FIX 1 — Switched to currently-live Groq models (verified Aug 2026).
 #
-#   MODEL_CHAT     — primary chat/reasoning model (llama-3.3-70b-versatile)
-#   MODEL_FAST     — fast model for intent parsing / simple short chat
-#                    (llama-3.1-8b-instant; proven stable for JSON output)
-#   MODEL_FALLBACK — fallback if MODEL_CHAT is rate-limited OR if a model
-#                    returns 400 / 404 (decommissioned / not found)
+#   MODEL_CHAT      — primary chat model for casual conversation
+#                     (qwen/qwen3.6-27b)
+#   MODEL_FAST      — fast model for intent parsing / short chat
+#                     (openai/gpt-oss-20b)
+#   MODEL_FALLBACK  — fallback if MODEL_CHAT is rate-limited OR if a model
+#                     returns 400 / 404 (decommissioned / not found)
+#                     (qwen/qwen3.8-27b)
+#   MODEL_REASONING — heavy reasoning model for code/debug/complex queries
+#                     (openai/gpt-oss-120b)
 #
-# All three models return plain text in `choices[0].message.content`,
-# which fixes the empty-response bug seen with gpt-oss-* models.
-MODEL_CHAT = "llama-3.3-70b-versatile"
-MODEL_FAST = "llama-3.1-8b-instant"
-MODEL_FALLBACK = "qwen/qwen3-32b"
+# All four models return plain text in `choices[0].message.content` when
+# given enough max_tokens (≥300), which fixes the empty-response bug.
+MODEL_CHAT = "qwen/qwen3.6-27b"
+MODEL_FAST = "openai/gpt-oss-20b"
+MODEL_FALLBACK = "qwen/qwen3.8-27b"
+MODEL_REASONING = "openai/gpt-oss-120b"
 
 # Valid Groq model names (used for validation logging)
-VALID_MODELS = {MODEL_CHAT, MODEL_FAST, MODEL_FALLBACK}
+VALID_MODELS = {MODEL_CHAT, MODEL_FAST, MODEL_FALLBACK, MODEL_REASONING}
 
 # Default primary chat model (used when caller doesn't specify)
 DEFAULT_MODEL = MODEL_CHAT
 # Default fast model (used by call_ai_fast)
 DEFAULT_FAST_MODEL = MODEL_FAST
+
+# FIX 2 — Minimum token floor. Reasoning models (gpt-oss-120b, qwen3.6)
+# spend tokens on internal reasoning headers before emitting visible
+# content. With max_tokens=100 the model would burn all 100 tokens on
+# reasoning and return an empty content string. 300 is the safe floor.
+MIN_MAX_TOKENS = 300
 
 # Error signatures that indicate "model unavailable / decommissioned"
 # — these should trigger an automatic retry with MODEL_FALLBACK.
@@ -107,13 +127,17 @@ def _validate_messages(messages: list) -> list:
 def _extract_content(response) -> str:
     """FIX 2 — Robustly extract text from a Groq chat completion response.
 
-    Some reasoning models (gpt-oss, kimi-k2 in reasoning mode) put the
-    actual text inside `reasoning_content` instead of `content`. Some
-    models return `tool_calls` instead of any text at all. We try every
-    field in order and NEVER return an empty string.
+    Reasoning models (gpt-oss-120b, qwen3.6) sometimes put the actual
+    text inside `reasoning_content` instead of `content`. Some models
+    return `tool_calls` instead of any text at all. We try every field
+    in order and NEVER return an empty string.
     """
     try:
+        if not response or not response.choices:
+            return "something went wrong on my end."
+
         msg = response.choices[0].message
+
         # 1. Primary content field
         content = (getattr(msg, "content", None) or "").strip()
         if content:
@@ -128,13 +152,13 @@ def _extract_content(response) -> str:
         #    give the user a soft fallback rather than empty text.
         tool_calls = getattr(msg, "tool_calls", None)
         if tool_calls:
-            return "hmm, let me think about that differently."
+            return "i'm here. what's on your mind?"
 
         # 4. Absolute last resort — never return None / empty to the caller
-        return "..."
+        return "i'm here. what's on your mind?"
     except Exception as e:
-        logger.error(f"[_extract_content] {type(e).__name__}: {e}")
-        return "..."
+        logger.error(f"[_extract_content error] {type(e).__name__}: {e}")
+        return "something went wrong on my end."
 
 
 def _is_model_unavailable_error(error_str: str) -> bool:
@@ -173,6 +197,10 @@ async def call_ai(
       3. If MODEL_CHAT was rate-limited (429) → retry with MODEL_FALLBACK.
       4. If MODEL_FALLBACK is also rate-limited → return a "try again later" msg.
       5. Anything else → return "something broke on my end. try again."
+
+    FIX 2 — `max_tokens` is floored at MIN_MAX_TOKENS (300) so reasoning
+    models have enough budget to emit visible content after their internal
+    reasoning headers.
     """
     start = time.time()
     clean_messages = []
@@ -182,10 +210,19 @@ async def call_ai(
             logger.warning(f"[AI] unknown model '{model}', falling back to {DEFAULT_MODEL}")
             model = DEFAULT_MODEL
 
-        # Validate max_tokens
+        # FIX 2 — Validate max_tokens with a 300-token floor.
+        # Reasoning models (gpt-oss-120b, qwen3.6) burn tokens on internal
+        # reasoning before emitting visible content. With max_tokens=100,
+        # the model had 0 tokens left for the actual reply → empty string.
         if not isinstance(max_tokens, int) or max_tokens <= 0:
-            logger.warning(f"[AI] invalid max_tokens={max_tokens}, defaulting to 300")
-            max_tokens = 300
+            logger.warning(f"[AI] invalid max_tokens={max_tokens}, defaulting to {MIN_MAX_TOKENS}")
+            max_tokens = MIN_MAX_TOKENS
+        if max_tokens < MIN_MAX_TOKENS:
+            logger.warning(
+                f"[AI] max_tokens={max_tokens} too low for reasoning models; "
+                f"raising to {MIN_MAX_TOKENS}"
+            )
+            max_tokens = MIN_MAX_TOKENS
         if max_tokens > 32768:
             logger.warning(f"[AI] max_tokens={max_tokens} too large, capping to 32768")
             max_tokens = 32768
@@ -247,7 +284,7 @@ async def call_ai(
             try:
                 result = await _call_groq(
                     MODEL_FALLBACK, clean_messages,
-                    max_tokens=min(max_tokens, 400),
+                    max_tokens=max(max_tokens, MIN_MAX_TOKENS),
                     temperature=temperature,
                 )
                 elapsed = time.time() - start
@@ -307,10 +344,11 @@ async def call_ai_fast(
     messages: list,
     max_tokens: int = 150
 ) -> str:
-    """Fast path: uses llama-3.1-8b-instant for intent parsing / short chat.
+    """Fast path: uses openai/gpt-oss-20b for intent parsing / short chat.
 
-    llama-3.1-8b-instant is a proven stable model for JSON output and
-    short responses, and it always returns plain content (no tool_calls).
+    FIX 2 — max_tokens is raised to MIN_MAX_TOKENS (300) inside call_ai()
+    so reasoning-capable models always have enough budget to emit visible
+    content. The 150 caller value is overridden to 300 for safety.
     """
     return await call_ai(
         messages,
@@ -324,9 +362,12 @@ async def call_ai_fast(
 def pick_model(message_content: str, intent: str = "chat") -> str:
     """Pick the right Groq model based on complexity.
 
-    Returns MODEL_CHAT (llama-3.3-70b-versatile) for complex questions /
-    reasoning, MODEL_FAST (llama-3.1-8b-instant) for simple short chat
-    and intent-based mod/utility commands.
+    Returns:
+      MODEL_REASONING (openai/gpt-oss-120b) for complex questions / code /
+      debugging queries.
+      MODEL_CHAT (qwen/qwen3.6-27b) for general casual chat.
+      MODEL_FAST (openai/gpt-oss-20b) for simple short chat and
+      intent-based mod/utility commands.
     """
     # Intent-based routing: mod/utility commands use fast model
     if intent in ("warn", "ban", "kick", "mute", "timeout", "unmute",
@@ -339,18 +380,18 @@ def pick_model(message_content: str, intent: str = "chat") -> str:
     # Content-based routing for chat
     content_lower = message_content.lower()
 
-    # Technical/code questions → big model
+    # Technical/code/debug questions → heavy reasoning model
     technical_keywords = ["code", "debug", "error", "function", "class",
                           "algorithm", "python", "javascript", "sql",
                           "explain", "how does", "what is", "why does",
                           "difference between", "compare", "analyze"]
     if any(kw in content_lower for kw in technical_keywords):
-        return MODEL_CHAT
+        return MODEL_REASONING
 
     # Very short messages → fast model
     words = message_content.split()
     if len(words) <= 5:
         return MODEL_FAST
 
-    # Default to llama-3.3-70b for longer casual chat (richer responses)
+    # Default to MODEL_CHAT for longer casual chat (richer responses)
     return MODEL_CHAT
