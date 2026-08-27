@@ -43,7 +43,8 @@ CREATE TABLE IF NOT EXISTS welcome_settings (
   welcome_reward INT DEFAULT 0,
   welcomer_reward INT DEFAULT 0,
   embed_mode TEXT DEFAULT 'embed',
-  dm_message TEXT
+  dm_message TEXT,
+  welcome_image TEXT
 );
 
 CREATE TABLE log_settings (
@@ -292,7 +293,7 @@ _TABLE_COLUMNS = {
         "guild_id", "channel_id", "message", "enabled",
         "goodbye_channel_id", "goodbye_message", "goodbye_enabled",
         "autorole_id", "welcome_reward", "welcomer_reward",
-        "embed_mode", "dm_message",
+        "embed_mode", "dm_message", "welcome_image",
     },
     "log_settings": {
         "guild_id", "channel_id", "enabled",

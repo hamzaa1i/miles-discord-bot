@@ -18,7 +18,6 @@ CATEGORIES = {
         "commands": [
             ("@aurelia <message>", "Chat naturally with Aurelia via mention"),
             ("/aurelia <message>", "Slash alternative to @mention"),
-            ("/chat <message>", "Slash-command AI conversation"),
             ("/summarize <text>", "Summarize text in 3-5 bullets"),
             ("/translate <language> <text>", "Translate text to a language"),
             ("/explain <topic>", "Explain a topic like you're 12"),

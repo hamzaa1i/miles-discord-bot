@@ -1675,32 +1675,9 @@ class AIChat(commands.Cog):
         self.save_settings(interaction.guild_id, settings)
         await interaction.followup.send("admin role removed.")
 
-    @app_commands.command(name="chat", description="Talk to aurelia")
-    @app_commands.checks.cooldown(1, 5.0, key=lambda i: i.user.id)
-    async def chat(self, interaction: discord.Interaction, message: str):
-        self.bot.increment_command('chat')
-        await interaction.response.defer()
-        self.update_rate_limit(interaction.user.id)
-        is_owner_msg = interaction.user.id == OWNER_ID
-        # For slash commands, interaction.user is a Member in a guild
-        member = interaction.user if isinstance(interaction.user, discord.Member) else None
-        try:
-            response = await asyncio.wait_for(
-                self.get_ai_response(
-                    interaction.user.id, message, is_owner=is_owner_msg,
-                    guild=interaction.guild, author_name=interaction.user.display_name,
-                    channel=interaction.channel, member=member
-                ),
-                timeout=30.0,
-            )
-        except asyncio.TimeoutError:
-            await interaction.followup.send("took too long. try again.")
-            return
-        except Exception as e:
-            logger.error(f"[chat] {type(e).__name__}: {e}")
-            await interaction.followup.send("something went wrong.")
-            return
-        await interaction.followup.send(response)
+    # FIX 4 — /chat command removed (duplicate of /aurelia).
+    # /aurelia provides the same functionality with intent parsing + AI response.
+    # This frees up 1 command slot (99 total instead of 100).
 
     # FIX 4 — Renamed from /cyn to /aurelia as part of the Veloura rebrand.
     # The old name was missed in the previous rebrand pass.
