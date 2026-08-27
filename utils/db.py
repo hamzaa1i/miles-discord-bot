@@ -31,7 +31,7 @@ CREATE TABLE reminders (
   fired BOOLEAN DEFAULT FALSE
 );
 
-CREATE TABLE welcome_settings (
+CREATE TABLE IF NOT EXISTS welcome_settings (
   guild_id TEXT PRIMARY KEY,
   channel_id TEXT,
   message TEXT,
@@ -40,10 +40,10 @@ CREATE TABLE welcome_settings (
   goodbye_message TEXT,
   goodbye_enabled BOOLEAN DEFAULT TRUE,
   autorole_id TEXT,
-  dm_message TEXT,
+  welcome_reward INT DEFAULT 0,
+  welcomer_reward INT DEFAULT 0,
   embed_mode TEXT DEFAULT 'embed',
-  welcome_reward INT DEFAULT 500,
-  welcomer_reward INT DEFAULT 1000
+  dm_message TEXT
 );
 
 CREATE TABLE log_settings (
@@ -279,6 +279,79 @@ def _write_json(path: str, data: dict):
 
 # ─── Guild settings (welcome, logs, autorole, bot config) ──────
 
+# FIX (schema mismatch) — Known column sets for Supabase tables that
+# have a fixed schema. When set_guild_setting sends a dict to Supabase,
+# it first filters the dict to only include keys that exist as columns
+# in the table. This prevents "Could not find the column" errors that
+# cause silent fallback to JSON + stale reads.
+#
+# If a table is not listed here, the full dict is sent as-is (backward
+# compatible with tables that accept arbitrary columns via JSONB).
+_TABLE_COLUMNS = {
+    "welcome_settings": {
+        "guild_id", "channel_id", "message", "enabled",
+        "goodbye_channel_id", "goodbye_message", "goodbye_enabled",
+        "autorole_id", "welcome_reward", "welcomer_reward",
+        "embed_mode", "dm_message",
+    },
+    "log_settings": {
+        "guild_id", "channel_id", "enabled",
+        "message_delete", "message_edit",
+        "member_join", "member_leave",
+        "member_ban", "member_unban",
+        "role_change", "nickname_change",
+        "voice_join", "voice_leave",
+    },
+    "mod_settings": {
+        "guild_id", "log_channel_id", "admin_role_id",
+        "max_warns_before_ban",
+        "warn_threshold_count", "warn_threshold_action",
+        "antilink_channels", "antispam_enabled",
+    },
+    "prefix_settings": {
+        "guild_id", "prefix",
+    },
+    "server_settings": {
+        "guild_id", "autorole_id", "custom_status", "custom_status_type",
+    },
+    "confess_settings": {
+        "guild_id", "channel_id", "count",
+    },
+    "server_rules": {
+        "guild_id", "rules", "agree_role_id", "announcement_channel_id",
+    },
+    "birthday_settings": {
+        "guild_id", "channel_id",
+    },
+    "leveling_settings": {
+        "guild_id", "enabled", "channel_id", "rate", "rewards",
+    },
+    "bump_reminder_state": {
+        "guild_id", "channel_id", "last_bump_message_id", "last_bump_at",
+    },
+    "self_role_panels": {
+        "guild_id", "panels",
+    },
+}
+
+
+def _sanitize_columns(table: str, settings: dict) -> dict:
+    """Filter a settings dict to only include keys that exist as columns
+    in the specified Supabase table.
+
+    If the table is not in _TABLE_COLUMNS, return the dict unchanged
+    (backward compatible with tables that use JSONB or accept arbitrary
+    columns).
+    """
+    if not isinstance(settings, dict):
+        return {}
+    valid_cols = _TABLE_COLUMNS.get(table)
+    if valid_cols is None:
+        # Unknown table — send as-is
+        return settings
+    return {k: v for k, v in settings.items() if k in valid_cols}
+
+
 def get_guild_setting(guild_id: int, table: str) -> dict:
     """Get settings for a guild from a specific table/file.
 
@@ -339,6 +412,18 @@ def set_guild_setting(guild_id: int, table: str, settings: dict):
 
     FIX 3 — If the table is known-missing from Supabase, skip straight
     to JSON to avoid repeated 404 errors on writes too.
+
+    FIX (schema mismatch) — Some tables (notably welcome_settings) have
+    a fixed column set in Supabase, but the code's config dict may
+    contain extra keys that don't exist as columns. When the Supabase
+    insert/update fails with a "Could not find the column" error, the
+    write falls back to JSON — BUT get_guild_setting reads from Supabase
+    first, so it returns stale/empty data and the config appears to not
+    persist.
+
+    Fix: Before sending the payload to Supabase, sanitize the dict so
+    only known columns for that table are included. This prevents the
+    column-mismatch error entirely.
     """
     if not _use_supabase:
         data = _read_json(f"data/{table}.json")
@@ -353,17 +438,22 @@ def set_guild_setting(guild_id: int, table: str, settings: dict):
         _write_json(f"data/{table}.json", data)
         return
 
+    # FIX (schema mismatch) — Sanitize the settings dict so only valid
+    # columns are sent to Supabase. This prevents "Could not find the
+    # column" errors that cause silent fallback to JSON + stale reads.
+    sanitized = _sanitize_columns(table, settings)
+
     try:
         existing = _supabase.table(table).select("guild_id").eq(
             "guild_id", str(guild_id)
         ).execute()
         if existing.data:
-            _supabase.table(table).update(settings).eq(
+            _supabase.table(table).update(sanitized).eq(
                 "guild_id", str(guild_id)
             ).execute()
         else:
             _supabase.table(table).insert({
-                "guild_id": str(guild_id), **settings
+                "guild_id": str(guild_id), **sanitized
             }).execute()
     except Exception as e:
         error_str = str(e)
@@ -379,12 +469,15 @@ def set_guild_setting(guild_id: int, table: str, settings: dict):
                 )
                 _supabase_error_logged.add(error_key)
         else:
+            # Log the exact failure (not just once — this is a real error
+            # the user needs to see so they can fix the schema).
+            logger.error(f"[DB] set_guild_setting ({table}) error: {e}")
             if error_key not in _supabase_error_logged:
-                logger.error(f"[DB] set_guild_setting ({table}) error: {e}")
                 logger.warning(
-                    f"[DB] Supabase permission issue for table '{table}'. "
-                    "Run GRANT SQL in your Supabase SQL editor. "
-                    "Falling back to JSON."
+                    f"[DB] Supabase write failed for table '{table}'. "
+                    "Falling back to JSON. If this persists, the table "
+                    "schema may be missing columns — see the SQL comment "
+                    "at the top of utils/db.py."
                 )
                 _supabase_error_logged.add(error_key)
 

@@ -41,9 +41,11 @@ class Welcome(commands.Cog):
                 'goodbye_message': "Goodbye {user}, we'll miss you.",
                 'autorole_id': None,
                 'welcome_reward': 500,
-                'welcomer_reward': 1000
+                'welcomer_reward': 1000,
+                'embed_mode': 'embed',
+                'dm_message': '',
             }
-        # Ensure all keys present
+        # Ensure all keys present (in case Supabase returns a partial row)
         config.setdefault('enabled', False)
         config.setdefault('channel_id', None)
         config.setdefault('message', 'Welcome {user} to {server}! You are member #{membercount}.')
@@ -53,6 +55,8 @@ class Welcome(commands.Cog):
         config.setdefault('autorole_id', None)
         config.setdefault('welcome_reward', 500)
         config.setdefault('welcomer_reward', 1000)
+        config.setdefault('embed_mode', 'embed')
+        config.setdefault('dm_message', '')
         return config
 
     def wants_dms(self, user_id: int) -> bool:
