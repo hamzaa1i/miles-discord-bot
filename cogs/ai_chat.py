@@ -203,6 +203,11 @@ class AIChat(commands.Cog):
     # (respectful tone, cooperation) ONLY active when is_owner is True.
     # PHASE 3B — Added formality detection, self-awareness about limitations,
     # varied sentence starters, server summary caching, silence acknowledgment.
+    # FIX 7 — Reinforced Veloura / Aurelia personality. The old prompt
+    # produced stiff corporate replies like "i'm functioning smoothly,
+    # thank you. how can i assist you today?". Now the personality rules
+    # explicitly forbid that pattern and give the model concrete examples
+    # of how Aurelia should sound.
     def _build_system_prompt(self, is_owner: bool = False,
                              guild: discord.Guild = None,
                              channel=None,
@@ -221,11 +226,26 @@ class AIChat(commands.Cog):
             "NEVER say you were made by any AI company. "
             "WHEN NOT ASKED about ownership: never bring it up. "
             "Do not add creator references to unrelated responses. "
-            "personality: elegant, soft, aesthetic. not overly robotic. "
-            "short, clean responses. use lowercase, minimal decoration "
-            "in casual chat. only sarcastic when someone is being rude. "
-            "never say 'as an AI'. you can see channel names but NOT "
-            "their messages. emoji usage: minimal. "
+            "\n\n"
+            "PERSONALITY:\n"
+            "- You are Aurelia, Veloura's custom bot.\n"
+            "- Speak in a soft, elegant, but slightly playful tone.\n"
+            "- Use lowercase for casual chat.\n"
+            "- Never sound like a corporate assistant.\n"
+            "- Don't say 'how can I assist you today' or 'I'm here to help' "
+            "or 'I'm functioning smoothly' or anything similar.\n"
+            "- Just talk normally. Example: 'doing good ♡ what's up?' or "
+            "'hanging in there. u?' or 'alive, somehow. you?' \n"
+            "- Keep replies short (1-2 sentences unless asked otherwise).\n"
+            "- Match the Veloura aesthetic in official messages "
+            "(welcome, level-up, announcements).\n"
+            "- not overly robotic. short, clean responses. "
+            "minimal decoration in casual chat. "
+            "only sarcastic when someone is being rude. "
+            "- never say 'as an AI'. you can see channel names but NOT "
+            "their messages. emoji usage: minimal — a ♡ or ✩ is fine, "
+            "don't overdo it. "
+            "\n\n"
             "VARIETY: never start two responses in a row with the same word. "
             "mix up response length — sometimes 3 words, sometimes 2 sentences. "
             "if someone brings up nsfw content, do not engage. "
@@ -254,12 +274,12 @@ class AIChat(commands.Cog):
         if formality == "formal":
             base += (
                 " this user writes formally. match their energy slightly. "
-                "less slang, slightly more composed. still be cyn."
+                "less slang, slightly more composed. still be aurelia."
             )
         elif formality == "casual":
             base += (
                 " this user is very casual. full banter mode. "
-                "maximum cyn personality."
+                "maximum aurelia personality."
             )
 
         # PHASE 2B — inject server personality note if set
@@ -394,8 +414,9 @@ class AIChat(commands.Cog):
         max_tokens = 300 if is_complex else 100
 
         # PHASE 3C — Use smart model routing if chosen_model is provided,
-        # otherwise default to the 70b model
-        model = chosen_model or "openai/gpt-oss-120b"
+        # otherwise default to kimi-k2 (primary chat model).
+        from utils.ai_handler import MOONSHOT_K2
+        model = chosen_model or MOONSHOT_K2
 
         ai_response = await call_ai(
             messages, model=model,
@@ -1527,7 +1548,7 @@ class AIChat(commands.Cog):
             # FIX 2 — Fast-path ONLY if no history exists
             if not db_history_check and self.is_obvious_chat(content):
                 intent_data = {"intent": "chat", "params": {}}
-                logger.info(f"[FAST-PATH] {message.author.display_name} → skipped intent parser (no history)")
+                logger.debug(f"[FAST-PATH] {message.author.display_name} → skipped intent parser (no history)")
             else:
                 try:
                     intent_data = await parse_intent(content, self)
@@ -1538,7 +1559,7 @@ class AIChat(commands.Cog):
             # IMPROVEMENT 1 — log the parsed intent
             intent = intent_data.get('intent', 'chat')
             params = intent_data.get('params', {})
-            logger.info(f"[INTENT] {message.author.display_name} → intent={intent} params={params}")
+            logger.debug(f"[INTENT] {message.author.display_name} → intent={intent} params={params}")
 
             if intent != 'chat':
                 handled = await self._execute_intent(message, intent_data)
@@ -1565,8 +1586,9 @@ class AIChat(commands.Cog):
                             f"only acknowledge it once."
                         )
                         extra_context = silence_ctx + extra_context
-                        # FIX 3A — Force 70b model when silence is detected
-                        chosen_model = "openai/gpt-oss-120b"
+                        # FIX 1 — Force kimi-k2 model when silence is detected
+                        from utils.ai_handler import MOONSHOT_K2
+                        chosen_model = MOONSHOT_K2
             except Exception:
                 pass
 
@@ -1576,7 +1598,7 @@ class AIChat(commands.Cog):
                 chosen_model = pick_model(content, intent)
 
             # DIAGNOSTIC — Log before AI call
-            logger.info(f"[AI_CALL] about to call get_ai_response with model={chosen_model}")
+            logger.debug(f"[AI_CALL] about to call get_ai_response with model={chosen_model}")
 
             async with message.channel.typing():
                 response = await self.get_ai_response(
@@ -1588,10 +1610,10 @@ class AIChat(commands.Cog):
                 )
 
             # DIAGNOSTIC — Log after AI call
-            logger.info(f"[AI_CALL] response received: {response[:100] if response else 'NONE'}")
+            logger.debug(f"[AI_CALL] response received: {response[:100] if response else 'NONE'}")
 
             # IMPROVEMENT 1 — log the response
-            logger.info(f"[RESPONSE] → {response[:100]}")
+            logger.debug(f"[RESPONSE] → {response[:100]}")
 
             try:
                 await message.reply(response, mention_author=False)
@@ -1751,7 +1773,7 @@ class AIChat(commands.Cog):
         # Log the prefix-triggered message
         guild_name = message.guild.name if message.guild else "DM"
         channel_name = f"#{message.channel.name}" if hasattr(message.channel, 'name') else "DM"
-        logger.info(f"[PREFIX] {guild_name} | {channel_name} | "
+        logger.debug(f"[PREFIX] {guild_name} | {channel_name} | "
                     f"{message.author.display_name} ({message.author.id}) → "
                     f"{content[:100]}")
 
@@ -1807,7 +1829,7 @@ class AIChat(commands.Cog):
             # Fast-path check
             if self.is_obvious_chat(content):
                 intent_data = {"intent": "chat", "params": {}}
-                logger.info(f"[FAST-PATH] {message.author.display_name} → skipped intent parser")
+                logger.debug(f"[FAST-PATH] {message.author.display_name} → skipped intent parser")
             else:
                 try:
                     intent_data = await parse_intent(content, self)
@@ -1817,7 +1839,7 @@ class AIChat(commands.Cog):
 
             intent = intent_data.get('intent', 'chat')
             params = intent_data.get('params', {})
-            logger.info(f"[INTENT] {message.author.display_name} → intent={intent} params={params}")
+            logger.debug(f"[INTENT] {message.author.display_name} → intent={intent} params={params}")
 
             if intent != 'chat':
                 handled = await self._execute_intent(message, intent_data)
@@ -1850,7 +1872,7 @@ class AIChat(commands.Cog):
                     chosen_model=chosen_model
                 )
 
-            logger.info(f"[RESPONSE] → {response[:100]}")
+            logger.debug(f"[RESPONSE] → {response[:100]}")
 
             try:
                 await message.reply(response, mention_author=False)
@@ -1867,7 +1889,11 @@ class AIChat(commands.Cog):
         if hasattr(self, 'check_reminders') and self.check_reminders.is_running():
             self.check_reminders.cancel()
 
-    @tasks.loop(seconds=30)
+    # FIX 6 — Polling interval raised from 30s to 60s. The reminder loop
+    # used to log every cycle (even when nothing was due), producing a
+    # constant stream of "reminders?select=%2A&fired=eq.False" entries.
+    # Now it stays silent unless a reminder actually fires.
+    @tasks.loop(seconds=60)
     async def check_reminders(self):
         import time as _time
         # PHASE 1A — Use utils/db instead of direct JSON
@@ -1876,7 +1902,11 @@ class AIChat(commands.Cog):
             all_reminders = get_all_reminders()
         except Exception:
             return
+        # FIX 6 — Silent when there's nothing to fire. No more spam.
+        if not all_reminders:
+            return
         now = int(_time.time())
+        fired_count = 0
         for r in all_reminders:
             try:
                 end_time = int(r.get('end_time', 0))
@@ -1908,6 +1938,10 @@ class AIChat(commands.Cog):
                     remove_reminder(int(user_id_str), str(reminder_id))
                 except Exception:
                     pass
+            fired_count += 1
+        # FIX 6 — Only log when something actually fired
+        if fired_count:
+            logger.info(f"[REMINDERS] fired {fired_count} reminder(s) this cycle")
 
     @check_reminders.before_loop
     async def before_check_reminders(self):

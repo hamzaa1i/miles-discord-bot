@@ -1,6 +1,6 @@
 """
 utils/intent_parser.py — Natural language → command intent parser.
-Uses Groq API (openai/gpt-oss-20b for speed).
+Uses Groq API (gemma2-9b-it for speed and stable JSON output).
 """
 import json
 import os
@@ -148,14 +148,16 @@ async def parse_intent(message_content: str, ai_handler) -> dict:
             return fallback
 
         import logging as _log
-        _log.getLogger('cyn.intent').info(f"[INTENT_PARSER] calling call_ai_fast for: {message_content[:80]}")
+        # FIX 6 — demote per-message intent parser logs from INFO to DEBUG
+        # so they don't spam Render logs on every @mention / prefix command.
+        _log.getLogger('cyn.intent').debug(f"[INTENT_PARSER] calling call_ai_fast for: {message_content[:80]}")
 
         raw = await call_ai_fast([
             {"role": "system", "content": INTENT_SYSTEM_PROMPT},
             {"role": "user", "content": message_content}
         ], max_tokens=100)
 
-        _log.getLogger('cyn.intent').info(f"[INTENT_PARSER] raw response: {raw[:100] if raw else 'NONE'}")
+        _log.getLogger('cyn.intent').debug(f"[INTENT_PARSER] raw response: {raw[:100] if raw else 'NONE'}")
 
         if not raw or "something broke" in raw:
             _log.getLogger('cyn.intent').warning(f"[INTENT_PARSER] got error response: {raw[:100] if raw else 'NONE'}")

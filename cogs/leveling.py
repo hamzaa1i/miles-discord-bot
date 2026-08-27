@@ -1,6 +1,7 @@
 """cogs/leveling.py — Veloura leveling system (XP, levels, role rewards)."""
 import logging
 import random
+import time as _time
 from datetime import datetime
 import discord
 from discord.ext import commands
@@ -12,12 +13,18 @@ from utils.veloura_embeds import veloura_embed, level_up_embed, COLOR_PINK, COLO
 logger = logging.getLogger('cyn.leveling')
 TBL, JSON_PATH = "leveling_settings", "data/user_levels.json"
 XP_MIN, XP_MAX, CD = 15, 25, 60
+# FIX 5 — Cache TTL for leveling settings (seconds). Reduces Supabase
+# queries from every-message to once-per-minute-per-guild.
+CONFIG_CACHE_TTL = 60
 
 
 class Leveling(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.xp_cooldowns = {}
+        # FIX 5 — {guild_id: (config_dict, timestamp)}; refreshed at most
+        # once per CONFIG_CACHE_TTL seconds per guild.
+        self._config_cache: dict[int, tuple[dict, float]] = {}
 
     def get_level_from_xp(self, total_xp: int):
         level, remaining = 0, max(0, int(total_xp))
@@ -29,6 +36,23 @@ class Leveling(commands.Cog):
             level += 1
 
     def get_config(self, guild_id: int) -> dict:
+        """FIX 5 — Return leveling config with a 60s in-memory cache.
+
+        Previously this hit Supabase on every single message, which
+        caused the repeated `GET /rest/v1/leveling_settings 404` log
+        spam and wasted quota. The cache is invalidated on save_config().
+        """
+        now = _time.time()
+        cached = self._config_cache.get(guild_id)
+        if cached is not None:
+            config, ts = cached
+            if now - ts < CONFIG_CACHE_TTL:
+                # Ensure default keys are present on cached reads too
+                config.setdefault("enabled", True)
+                config.setdefault("channel_id", None)
+                config.setdefault("rate", 1.0)
+                config.setdefault("rewards", {})
+                return config
         config = get_guild_setting(guild_id, TBL)
         if not isinstance(config, dict):
             config = {}
@@ -36,10 +60,13 @@ class Leveling(commands.Cog):
         config.setdefault("channel_id", None)
         config.setdefault("rate", 1.0)
         config.setdefault("rewards", {})
+        self._config_cache[guild_id] = (config, now)
         return config
 
     def save_config(self, guild_id: int, config: dict):
         set_guild_setting(guild_id, TBL, config)
+        # FIX 5 — Invalidate cache so the next read picks up the new value
+        self._config_cache.pop(guild_id, None)
 
     def get_user_level(self, guild_id: int, user_id: int) -> dict:
         sb = _db._supabase if _db.using_supabase() else None

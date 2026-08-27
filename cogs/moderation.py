@@ -443,20 +443,78 @@ class Moderation(commands.Cog):
         except discord.Forbidden:
             await interaction.followup.send("i don't have permission.", ephemeral=True)
 
-    @mod.command(name="unmute", description="Remove timeout from a user (unmute)")
+    @mod.command(name="unmute", description="Remove timeout and/or voice mute from a user")
     @app_commands.describe(user="The user to unmute")
     async def mod_unmute(self, interaction: discord.Interaction, user: discord.Member):
         await interaction.response.defer(ephemeral=True)
         if not interaction.user.guild_permissions.moderate_members:
             await interaction.followup.send("you need moderate members permission.")
             return
+        actions = []
+        # Clear timeout if present
         try:
-            await user.timeout(None)
-            await interaction.followup.send(f"removed timeout from {user.display_name}.")
+            if user.timed_out:
+                await user.timeout(None)
+                actions.append("timeout")
+        except Exception:
+            pass
+        # Clear voice mute if present
+        try:
+            if user.voice and user.voice.mute:
+                await user.edit(mute=False, reason=f"Voice unmute by {interaction.user}")
+                actions.append("voice mute")
         except discord.Forbidden:
-            await interaction.followup.send("i don't have permission to do that.")
+            pass
+        except Exception:
+            pass
+        if not actions:
+            await interaction.followup.send(f"{user.display_name} wasn't muted or timed out.")
+            return
+        await interaction.followup.send(
+            f"removed {' + '.join(actions)} from {user.display_name}."
+        )
+
+    # FIX 3 — /mod mute: voice-mute a user in their current voice channel.
+    # This is distinct from /mod timeout (which is a server-wide text+voice
+    # mute via Discord's timeout feature) and from /mod unmute (which only
+    # clears timeouts). /mod mute sets member.voice.mute = True.
+    @mod.command(name="mute", description="Server-mute a user in voice channels")
+    @app_commands.describe(user="The member to voice-mute", reason="Reason for the mute")
+    @app_commands.checks.has_permissions(mute_members=True)
+    async def mod_mute(self, interaction: discord.Interaction,
+                       user: discord.Member, reason: str = "No reason"):
+        self.bot.increment_command('mod_mute')
+        await interaction.response.defer(ephemeral=True)
+        # Hierarchy check
+        if user.top_role >= interaction.user.top_role and user.id != interaction.user.id:
+            await interaction.followup.send(
+                "can't mute someone with equal or higher role.", ephemeral=True
+            )
+            return
+        # Member must be in a voice channel for the mute to apply right now.
+        # Discord will still apply the mute state to their next VC join if
+        # they aren't currently connected.
+        try:
+            await user.edit(mute=True, reason=f"Voice mute by {interaction.user}: {reason}")
+        except discord.Forbidden:
+            await interaction.followup.send(
+                "i don't have permission to mute that member "
+                "(check role hierarchy and Mute Members perm).",
+                ephemeral=True,
+            )
+            return
         except Exception as e:
-            await interaction.followup.send(f"failed: {e}")
+            await interaction.followup.send(f"failed: `{e}`", ephemeral=True)
+            return
+        embed = discord.Embed(
+            description=f"🔇 voice-muted **{user}**\nreason: {reason}",
+            color=0xe67e22,
+        )
+        embed.set_footer(text=f"by {interaction.user}")
+        await interaction.followup.send(embed=embed)
+        await self._send_mod_log(
+            interaction.guild, "Voice Mute", user, interaction.user, reason, color=0xe67e22
+        )
 
     @mod.command(name="antispam", description="Toggle antispam automod on or off")
     @app_commands.describe(enabled="on or off")
