@@ -6,6 +6,7 @@ Commands:
 - /welcome show          — show current config
 - /toggledms             — toggle DMs from cyn
 """
+import logging
 import discord
 from discord.ext import commands
 from discord import app_commands
@@ -13,6 +14,8 @@ from datetime import datetime
 from typing import Optional
 from utils.database import Database
 from utils.db import get_guild_setting, set_guild_setting
+
+logger = logging.getLogger('cyn.welcome')
 
 
 class Welcome(commands.Cog):
@@ -106,22 +109,38 @@ class Welcome(commands.Cog):
     @commands.Cog.listener()
     async def on_member_join(self, member: discord.Member):
         config = self.get_config(member.guild.id)
+        # FIX 2 — diagnostic logging to confirm the listener fires and
+        # settings are loaded correctly.
+        logger.info(
+            f"[welcome] on_member_join fired for {member.display_name} "
+            f"({member.id}) in guild {member.guild.id}"
+        )
+        logger.info(
+            f"[welcome] settings: enabled={config.get('enabled')}, "
+            f"channel_id={config.get('channel_id')}, "
+            f"goodbye_enabled={config.get('goodbye_enabled')}"
+        )
 
         # Autorole assignment
         autorole_id = config.get('autorole_id')
         if autorole_id:
-            role = member.guild.get_role(int(autorole_id))
-            if role:
-                try:
+            try:
+                role = member.guild.get_role(int(autorole_id))
+                if role:
                     await member.add_roles(role, reason="Autorole")
-                except:
-                    pass
+                    logger.info(f"[welcome] autorole {role.name} assigned to {member.display_name}")
+            except Exception as e:
+                logger.warning(f"[welcome] autorole failed: {e}")
 
         # Welcome message
         if config.get('enabled'):
             channel_id = config.get('channel_id')
             if channel_id:
-                channel = member.guild.get_channel(int(channel_id))
+                try:
+                    channel = member.guild.get_channel(int(channel_id))
+                except (TypeError, ValueError) as e:
+                    logger.warning(f"[welcome] invalid channel_id '{channel_id}': {e}")
+                    channel = None
                 if channel:
                     msg_text = self._format_welcome(
                         config.get('message', 'Welcome {user} to {server}!'),
@@ -137,8 +156,22 @@ class Welcome(commands.Cog):
                     embed.set_footer(text=f"User ID: {member.id}")
                     try:
                         await channel.send(embed=embed)
-                    except:
-                        pass
+                        logger.info(f"[welcome] welcome message sent to #{channel.name}")
+                    except discord.Forbidden:
+                        logger.warning(f"[welcome] no permission to send in #{channel.name}")
+                    except discord.HTTPException as e:
+                        if e.status == 429:
+                            logger.warning("[welcome] rate limited sending welcome message")
+                        else:
+                            logger.error(f"[welcome] send failed: {e}")
+                    except Exception as e:
+                        logger.error(f"[welcome] send error: {e}")
+                else:
+                    logger.warning(f"[welcome] channel_id {channel_id} not found in guild")
+            else:
+                logger.debug("[welcome] no channel_id configured")
+        else:
+            logger.debug("[welcome] welcome not enabled for this guild")
 
         # PHASE 4E1 — Send custom DM message if configured
         dm_msg = config.get('dm_message', '')
@@ -241,13 +274,29 @@ class Welcome(commands.Cog):
     @commands.Cog.listener()
     async def on_member_remove(self, member: discord.Member):
         config = self.get_config(member.guild.id)
+        # FIX 2 — diagnostic logging
+        logger.info(
+            f"[welcome] on_member_remove fired for {member.display_name} "
+            f"({member.id}) in guild {member.guild.id}"
+        )
+        logger.info(
+            f"[welcome] goodbye settings: goodbye_enabled={config.get('goodbye_enabled')}, "
+            f"goodbye_channel_id={config.get('goodbye_channel_id')}"
+        )
         if not config.get('goodbye_enabled'):
+            logger.debug("[welcome] goodbye not enabled, skipping")
             return
         channel_id = config.get('goodbye_channel_id') or config.get('channel_id')
         if not channel_id:
+            logger.warning("[welcome] no goodbye channel_id configured")
             return
-        channel = member.guild.get_channel(int(channel_id))
+        try:
+            channel = member.guild.get_channel(int(channel_id))
+        except (TypeError, ValueError) as e:
+            logger.warning(f"[welcome] invalid goodbye channel_id '{channel_id}': {e}")
+            return
         if not channel:
+            logger.warning(f"[welcome] goodbye channel_id {channel_id} not found in guild")
             return
 
         if member.id in self.pending_welcomes:
@@ -282,8 +331,16 @@ class Welcome(commands.Cog):
         embed.set_footer(text=f"User ID: {member.id}")
         try:
             await channel.send(embed=embed)
-        except:
-            pass
+            logger.info(f"[welcome] goodbye message sent to #{channel.name}")
+        except discord.Forbidden:
+            logger.warning(f"[welcome] no permission to send goodbye in #{channel.name}")
+        except discord.HTTPException as e:
+            if e.status == 429:
+                logger.warning("[welcome] rate limited sending goodbye message")
+            else:
+                logger.error(f"[welcome] goodbye send failed: {e}")
+        except Exception as e:
+            logger.error(f"[welcome] goodbye send error: {e}")
 
     # ==================== STANDALONE COMMAND ====================
     @app_commands.command(name="toggledms", description="Toggle DMs from cyn")
@@ -331,6 +388,12 @@ class Welcome(commands.Cog):
             else:
                 config['goodbye_channel_id'] = str(channel.id); config['goodbye_enabled'] = True
             set_guild_setting(gid, "welcome_settings", config)
+            # FIX 2 — log the save so we can confirm persistence
+            logger.info(
+                f"[welcome] config saved: {key}={channel.id} (as str) "
+                f"for guild {gid}. enabled={config.get('enabled')}, "
+                f"goodbye_enabled={config.get('goodbye_enabled')}"
+            )
             return await interaction.response.send_message(f"✅ {name} set to {channel.mention}")
 
         # Toggle-based settings
@@ -343,6 +406,9 @@ class Welcome(commands.Cog):
             enabled = bool_words[parsed]
             config['enabled' if key == "welcome_toggle" else 'goodbye_enabled'] = enabled
             set_guild_setting(gid, "welcome_settings", config)
+            logger.info(
+                f"[welcome] config saved: {key}={enabled} for guild {gid}"
+            )
             return await interaction.response.send_message(f"✅ {name} **{'enabled' if enabled else 'disabled'}**")
 
         # Embed mode

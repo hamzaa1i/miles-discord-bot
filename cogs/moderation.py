@@ -465,6 +465,28 @@ class Moderation(commands.Cog):
                 await interaction.followup.send("i don't have permission.", ephemeral=True)
             except Exception:
                 pass
+        except discord.HTTPException as e:
+            if e.status == 429:
+                logger.warning("[Discord 429] Rate limited on /mod nuke")
+                try:
+                    await interaction.followup.send(
+                        "discord is rate limiting me. wait a moment and try again.",
+                        ephemeral=True,
+                    )
+                except Exception:
+                    pass
+            else:
+                logger.error(f"[nuke] HTTP error: {e}")
+                try:
+                    await interaction.followup.send(f"failed: `{e}`", ephemeral=True)
+                except Exception:
+                    pass
+        except Exception as e:
+            logger.error(f"[nuke] {type(e).__name__}: {e}")
+            try:
+                await interaction.followup.send(f"failed: `{e}`", ephemeral=True)
+            except Exception:
+                pass
 
     @mod.command(name="slowmode", description="Set channel slowmode (0 disables)")
     @app_commands.checks.has_permissions(manage_channels=True)
@@ -479,6 +501,28 @@ class Moderation(commands.Cog):
             await interaction.followup.send(msg)
         except discord.Forbidden:
             await interaction.followup.send("i don't have permission.", ephemeral=True)
+        except discord.HTTPException as e:
+            if e.status == 429:
+                logger.warning("[Discord 429] Rate limited on /mod slowmode")
+                try:
+                    await interaction.followup.send(
+                        "discord is rate limiting me. wait a moment and try again.",
+                        ephemeral=True,
+                    )
+                except Exception:
+                    pass
+            else:
+                logger.error(f"[slowmode] HTTP error: {e}")
+                try:
+                    await interaction.followup.send(f"failed: `{e}`", ephemeral=True)
+                except Exception:
+                    pass
+        except Exception as e:
+            logger.error(f"[slowmode] {type(e).__name__}: {e}")
+            try:
+                await interaction.followup.send(f"failed: `{e}`", ephemeral=True)
+            except Exception:
+                pass
 
     @mod.command(name="lock", description="Lock a channel")
     @app_commands.checks.has_permissions(manage_channels=True)
@@ -491,6 +535,28 @@ class Moderation(commands.Cog):
             await interaction.followup.send(f"🔒 channel locked. reason: {reason}")
         except discord.Forbidden:
             await interaction.followup.send("i don't have permission.", ephemeral=True)
+        except discord.HTTPException as e:
+            if e.status == 429:
+                logger.warning("[Discord 429] Rate limited on /mod lock")
+                try:
+                    await interaction.followup.send(
+                        "discord is rate limiting me. wait a moment and try again.",
+                        ephemeral=True,
+                    )
+                except Exception:
+                    pass
+            else:
+                logger.error(f"[lock] HTTP error: {e}")
+                try:
+                    await interaction.followup.send(f"failed: `{e}`", ephemeral=True)
+                except Exception:
+                    pass
+        except Exception as e:
+            logger.error(f"[lock] {type(e).__name__}: {e}")
+            try:
+                await interaction.followup.send(f"failed: `{e}`", ephemeral=True)
+            except Exception:
+                pass
 
     @mod.command(name="unlock", description="Unlock a channel")
     @app_commands.checks.has_permissions(manage_channels=True)
@@ -503,6 +569,28 @@ class Moderation(commands.Cog):
             await interaction.followup.send("🔓 channel unlocked.")
         except discord.Forbidden:
             await interaction.followup.send("i don't have permission.", ephemeral=True)
+        except discord.HTTPException as e:
+            if e.status == 429:
+                logger.warning("[Discord 429] Rate limited on /mod unlock")
+                try:
+                    await interaction.followup.send(
+                        "discord is rate limiting me. wait a moment and try again.",
+                        ephemeral=True,
+                    )
+                except Exception:
+                    pass
+            else:
+                logger.error(f"[unlock] HTTP error: {e}")
+                try:
+                    await interaction.followup.send(f"failed: `{e}`", ephemeral=True)
+                except Exception:
+                    pass
+        except Exception as e:
+            logger.error(f"[unlock] {type(e).__name__}: {e}")
+            try:
+                await interaction.followup.send(f"failed: `{e}`", ephemeral=True)
+            except Exception:
+                pass
 
     @mod.command(name="unmute", description="Remove timeout and/or voice mute from a user")
     @app_commands.describe(user="The user to unmute")
@@ -512,11 +600,16 @@ class Moderation(commands.Cog):
             await interaction.followup.send("you need moderate members permission.")
             return
         actions = []
+        rate_limited = False
         # Clear timeout if present
         try:
             if user.timed_out:
                 await user.timeout(None)
                 actions.append("timeout")
+        except discord.HTTPException as e:
+            if e.status == 429:
+                rate_limited = True
+                logger.warning("[Discord 429] Rate limited on /mod unmute (timeout clear)")
         except Exception:
             pass
         # Clear voice mute if present
@@ -526,8 +619,21 @@ class Moderation(commands.Cog):
                 actions.append("voice mute")
         except discord.Forbidden:
             pass
+        except discord.HTTPException as e:
+            if e.status == 429:
+                rate_limited = True
+                logger.warning("[Discord 429] Rate limited on /mod unmute (voice mute clear)")
         except Exception:
             pass
+        if rate_limited:
+            try:
+                await interaction.followup.send(
+                    "discord is rate limiting me. wait a moment and try again.",
+                    ephemeral=True,
+                )
+            except Exception:
+                pass
+            return
         if not actions:
             await interaction.followup.send(f"{user.display_name} wasn't muted or timed out.")
             return

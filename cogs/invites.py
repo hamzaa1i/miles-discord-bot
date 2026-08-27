@@ -20,6 +20,7 @@ import discord
 from discord.ext import commands, tasks
 from discord import app_commands
 
+from utils import db as _db
 from utils.db import get_guild_setting, set_guild_setting, _read_json, _write_json
 from utils.veloura_embeds import veloura_embed, COLOR_PINK, COLOR_LAVENDER
 
@@ -75,28 +76,51 @@ class Invites(commands.Cog):
         self.invite_cache[guild.id] = mapping
 
     # ─── Storage helpers ────────────────────────────────────────
-    @staticmethod
-    def _load_all() -> dict:
-        # Try Supabase-aware guild setting storage first
-        return None  # placeholder; per-guild fetch handled below
+    # FIX 3 — The invite_tracking Supabase table has columns:
+    #   guild_id, inviter_id, invites, joins, leaves
+    # (composite PK: guild_id + inviter_id)
+    # The OLD code wrapped data as {"inviters": {uid: {count, valid}}}
+    # and tried to store it via get/set_guild_setting — but those helpers
+    # expect a single row per guild_id, which doesn't match the table's
+    # composite-PK schema. This caused "Could not find the 'inviters'
+    # column" errors.
+    #
+    # FIX: Use JSON file as the primary store (works reliably), and use
+    # Supabase directly with the correct column names as a mirror. The
+    # JSON format is: { "guild_id": { "uid": {"count": N, "valid": M} } }
 
     def get_guild_data(self, guild_id: int) -> dict:
-        config = get_guild_setting(guild_id, SETTINGS_TABLE)
-        if isinstance(config, dict) and "inviters" in config:
-            return config.get("inviters", {}) or {}
-        # fall back to JSON file
+        # Primary: JSON file (always works)
         data = _read_json("data/invite_tracking.json")
         return data.get(str(guild_id), {}) or {}
 
     def save_guild_data(self, guild_id: int, inviters: dict):
-        try:
-            set_guild_setting(guild_id, SETTINGS_TABLE, {"inviters": inviters})
-        except Exception as e:
-            logger.error(f"[invites] save_guild_data supabase error: {e}")
-        # mirror to JSON
+        # Primary: JSON file
         data = _read_json("data/invite_tracking.json")
         data[str(guild_id)] = inviters
         _write_json("data/invite_tracking.json", data)
+        # Best-effort Supabase mirror using the correct column names.
+        # The table schema is (guild_id, inviter_id, invites, joins, leaves).
+        # We upsert one row per inviter.
+        try:
+            sb = _db._supabase if _db.using_supabase() else None
+            if sb:
+                for uid_str, entry in inviters.items():
+                    try:
+                        sb.table(SETTINGS_TABLE).upsert({
+                            "guild_id": str(guild_id),
+                            "inviter_id": str(uid_str),
+                            "invites": int(entry.get("count", 0)),
+                            "joins": int(entry.get("valid", 0)),
+                            "leaves": 0,
+                        }).execute()
+                    except Exception:
+                        # Supabase mirror is best-effort; JSON is the
+                        # source of truth. Don't let one bad row kill
+                        # the whole save.
+                        pass
+        except Exception as e:
+            logger.debug(f"[invites] supabase mirror failed: {e}")
 
     def increment_inviter(self, guild_id: int, inviter_id: int):
         inviters = self.get_guild_data(guild_id)
