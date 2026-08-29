@@ -9,7 +9,7 @@ import logging
 import time
 from datetime import datetime, timedelta
 from utils.intent_parser import parse_intent
-from utils.ai_handler import call_ai
+from utils.ai_handler import call_ai, call_ai_fast
 from utils.database import Database
 
 logger = logging.getLogger('cyn.chat')
@@ -96,6 +96,9 @@ class AIChat(commands.Cog):
         # PHASE 1B — per-server message counter (global server limit).
         self._server_message_counts: dict[int, list[float]] = {}
         self.system_prompt = self._build_system_prompt()
+        # PHASE 4 — AI long-term memory: per-user counter for sampled
+        # fact extraction (every Nth message per user).
+        self._fact_msg_counters = {}
         if not self.check_reminders.is_running():
             self.check_reminders.start()
 
@@ -215,7 +218,8 @@ class AIChat(commands.Cog):
                              server_summary: str = "",
                              extra_context: str = "",
                              personality_note: str = "",
-                             formality: str = "neutral") -> str:
+                             formality: str = "neutral",
+                             memory_facts: list = None) -> str:
         base = (
             "CRITICAL: never output <think>, </think>, <thinking>, </thinking>, or any XML-style tags. "
             "never show your reasoning process. just respond directly with your final answer. "
@@ -291,6 +295,18 @@ class AIChat(commands.Cog):
                 "explicitly quoting it."
             )
 
+        # PHASE 4 — AI long-term memory: inject durable facts remembered
+        # about THIS user so the bot can reference them naturally.
+        if memory_facts:
+            facts_str = "; ".join(str(f) for f in memory_facts[:10])
+            base += (
+                f"\nMEMORY — things you remember about the user you're talking "
+                f"to right now: {facts_str}. "
+                "weave these in naturally when relevant (like a friend who "
+                "remembers), but never recite the list verbatim and never "
+                "mention that you have a memory system."
+            )
+
         if server_summary:
             base += f"\n{server_summary}"
 
@@ -358,10 +374,20 @@ class AIChat(commands.Cog):
         formality = self.detect_formality(message)
 
         # PHASE 3A/3B — build the system prompt with global owner identity + formality
+        # PHASE 4 — also load durable user-memory facts (long-term memory)
+        memory_facts = []
+        if guild_id_val := (guild.id if guild else 0):
+            try:
+                from utils.db import get_user_facts_async
+                memory_facts = await get_user_facts_async(guild_id_val, user_id) or []
+            except Exception:
+                memory_facts = []
+
         system_prompt = self._build_system_prompt(
             is_owner=is_owner, guild=guild, channel=channel, member=member,
             server_summary=server_summary, extra_context=extra_context,
-            personality_note=personality_note, formality=formality
+            personality_note=personality_note, formality=formality,
+            memory_facts=memory_facts
         )
 
         # PHASE 2A — Load persistent conversation history from DB.
@@ -448,7 +474,97 @@ class AIChat(commands.Cog):
             except Exception as e:
                 logger.error(f"[conversation_memory] save error: {e}")
 
+            # PHASE 4 — AI long-term memory: fire-and-forget fact extraction.
+            # Runs AFTER the response is saved so it never delays the reply.
+            asyncio.create_task(
+                self._maybe_extract_facts(
+                    guild_id, user_id, author_name or "someone",
+                    message, ai_response
+                )
+            )
+
         return ai_response
+
+    # PHASE 4 — AI long-term memory ──────────────────────────────
+
+    # Per-user message counter: run fact extraction every 4th message so
+    # we don't burn a Groq call on every single chat message.
+    _FACT_EVERY_N_MESSAGES = 4
+    _FACT_MIN_USER_MSG_LEN = 40
+
+    async def _maybe_extract_facts(self, guild_id: int, user_id: int,
+                                   author_name: str, user_msg: str,
+                                   ai_msg: str):
+        """Sampled background task: extract durable facts about the user
+        from this exchange and store them in user_memory.
+
+        Sampled (every 4th message per user, min 40 chars) so API cost stays
+        low. Everything is wrapped — a failure here must NEVER surface to
+        the user or break the chat pipeline."""
+        try:
+            if not guild_id or not user_id:
+                return
+            if not user_msg or len(user_msg) < self._FACT_MIN_USER_MSG_LEN:
+                return
+            counter = self._fact_msg_counters.get(user_id, 0) + 1
+            self._fact_msg_counters[user_id] = counter
+            if counter % self._FACT_EVERY_N_MESSAGES != 0:
+                return
+
+            import json as _json
+            prompt = (
+                "You extract durable, long-term facts about a Discord user from "
+                "a conversation exchange. A durable fact is something still true "
+                "days later: name/nickname, where they're from, what they study or "
+                "do, hobbies, favorite music/games/food, pets, strong preferences, "
+                "important life events. NOT durable: moods, small talk, jokes, "
+                "questions they asked, anything about the assistant.\n\n"
+                "Return ONLY a JSON array of 0-2 short third-person facts about "
+                f"{author_name} (use their name). Empty array [] if nothing durable.\n"
+                "Example: [\"diva is from karachi\", \"diva likes nightcore\"]\n\n"
+                f"User said: {user_msg[:800]}\n\n"
+                f"Assistant replied: {ai_msg[:400]}"
+            )
+            raw = await call_ai_fast(
+                [{"role": "system", "content": prompt},
+                 {"role": "user", "content": "extract facts"}],
+                max_tokens=300,
+            )
+            if not raw or "something broke" in raw:
+                return
+            # strip code fences if present
+            raw = raw.strip()
+            if raw.startswith("```"):
+                parts = raw.split("```")
+                if len(parts) >= 2:
+                    raw = parts[1]
+                if raw.lower().startswith("json"):
+                    raw = raw[4:]
+                raw = raw.strip()
+            # find the JSON array inside the response
+            start, end = raw.find("["), raw.rfind("]")
+            if start == -1 or end <= start:
+                return
+            try:
+                facts = _json.loads(raw[start:end + 1])
+            except (ValueError, TypeError):
+                return
+            if not isinstance(facts, list):
+                return
+
+            from utils.db import add_user_fact_async
+            added = 0
+            for fact in facts[:2]:
+                if isinstance(fact, str) and 3 <= len(fact.strip()) <= 300:
+                    if await add_user_fact_async(guild_id, user_id, fact.strip()):
+                        added += 1
+            if added:
+                logger.info(
+                    f"[MEMORY] stored {added} fact(s) about user {user_id} "
+                    f"in guild {guild_id}"
+                )
+        except Exception as e:
+            logger.debug(f"[MEMORY] fact extraction skipped: {type(e).__name__}: {e}")
 
     # PART 9 — Removed narrate_result() method. It was only used by the
     # balance intent executor (now removed). No other code called it.

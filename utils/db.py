@@ -213,6 +213,95 @@ CREATE TABLE server_personality (
 -- );
 -- GRANT ALL ON public.leveling_settings TO anon;
 -- ALTER TABLE public.leveling_settings DISABLE ROW LEVEL SECURITY;
+--
+-- PHASE 4 — new feature tables (AI memory, AI automod, starboard,
+-- giveaways, custom commands, proactive presence, onboarding).
+-- Run these in the Supabase SQL editor; every function below also has a
+-- JSON-file fallback so the bot works even before the tables exist:
+--
+-- CREATE TABLE IF NOT EXISTS user_memory (
+--   guild_id TEXT NOT NULL,
+--   user_id TEXT NOT NULL,
+--   facts JSONB DEFAULT '[]'::jsonb,
+--   updated_at TEXT,
+--   PRIMARY KEY (guild_id, user_id)
+-- );
+-- GRANT ALL ON public.user_memory TO anon;
+-- ALTER TABLE public.user_memory DISABLE ROW LEVEL SECURITY;
+--
+-- CREATE TABLE IF NOT EXISTS ai_automod_settings (
+--   guild_id TEXT PRIMARY KEY,
+--   enabled BOOLEAN DEFAULT FALSE,
+--   alert_channel_id TEXT,
+--   timeout_minutes INT DEFAULT 10,
+--   min_severity INT DEFAULT 3
+-- );
+-- GRANT ALL ON public.ai_automod_settings TO anon;
+-- ALTER TABLE public.ai_automod_settings DISABLE ROW LEVEL SECURITY;
+--
+-- CREATE TABLE IF NOT EXISTS starboard_settings (
+--   guild_id TEXT PRIMARY KEY,
+--   enabled BOOLEAN DEFAULT FALSE,
+--   channel_id TEXT,
+--   emoji TEXT DEFAULT '⭐',
+--   threshold INT DEFAULT 5
+-- );
+-- GRANT ALL ON public.starboard_settings TO anon;
+-- ALTER TABLE public.starboard_settings DISABLE ROW LEVEL SECURITY;
+--
+-- CREATE TABLE IF NOT EXISTS starboard_posts (
+--   message_id BIGINT PRIMARY KEY,
+--   guild_id TEXT NOT NULL,
+--   channel_id TEXT,
+--   starboard_message_id BIGINT,
+--   author_id TEXT
+-- );
+-- GRANT ALL ON public.starboard_posts TO anon;
+-- ALTER TABLE public.starboard_posts DISABLE ROW LEVEL SECURITY;
+--
+-- CREATE TABLE IF NOT EXISTS giveaways (
+--   id TEXT PRIMARY KEY,
+--   guild_id TEXT NOT NULL,
+--   channel_id TEXT,
+--   message_id BIGINT,
+--   host_id TEXT,
+--   prize TEXT,
+--   ends_at FLOAT,
+--   winners_count INT DEFAULT 1,
+--   required_role_id TEXT,
+--   min_account_days INT DEFAULT 0,
+--   min_level INT DEFAULT 0,
+--   ended BOOLEAN DEFAULT FALSE,
+--   entries JSONB DEFAULT '[]'::jsonb,
+--   winner_ids JSONB DEFAULT '[]'::jsonb,
+--   created_at TEXT
+-- );
+-- GRANT ALL ON public.giveaways TO anon;
+-- ALTER TABLE public.giveaways DISABLE ROW LEVEL SECURITY;
+--
+-- CREATE TABLE IF NOT EXISTS custom_commands (
+--   guild_id TEXT PRIMARY KEY,
+--   commands JSONB DEFAULT '[]'::jsonb
+-- );
+-- GRANT ALL ON public.custom_commands TO anon;
+-- ALTER TABLE public.custom_commands DISABLE ROW LEVEL SECURITY;
+--
+-- CREATE TABLE IF NOT EXISTS proactive_settings (
+--   guild_id TEXT PRIMARY KEY,
+--   enabled BOOLEAN DEFAULT FALSE,
+--   channel_ids JSONB DEFAULT '[]'::jsonb
+-- );
+-- GRANT ALL ON public.proactive_settings TO anon;
+-- ALTER TABLE public.proactive_settings DISABLE ROW LEVEL SECURITY;
+--
+-- CREATE TABLE IF NOT EXISTS onboarding_settings (
+--   guild_id TEXT PRIMARY KEY,
+--   enabled BOOLEAN DEFAULT FALSE,
+--   welcome_text TEXT,
+--   roles JSONB DEFAULT '[]'::jsonb
+-- );
+-- GRANT ALL ON public.onboarding_settings TO anon;
+-- ALTER TABLE public.onboarding_settings DISABLE ROW LEVEL SECURITY;
 """
 import asyncio
 import os
@@ -336,6 +425,23 @@ _TABLE_COLUMNS = {
     },
     "self_role_panels": {
         "guild_id", "panels",
+    },
+    # PHASE 4 — new feature settings tables
+    "ai_automod_settings": {
+        "guild_id", "enabled", "alert_channel_id", "timeout_minutes",
+        "min_severity",
+    },
+    "starboard_settings": {
+        "guild_id", "enabled", "channel_id", "emoji", "threshold",
+    },
+    "custom_commands": {
+        "guild_id", "commands",
+    },
+    "proactive_settings": {
+        "guild_id", "enabled", "channel_ids",
+    },
+    "onboarding_settings": {
+        "guild_id", "enabled", "welcome_text", "roles",
     },
 }
 
@@ -1345,6 +1451,197 @@ def remove_tempban(guild_id: int, user_id: int):
     _write_json("data/tempbans.json", data)
 
 
+# ─── PHASE 4: AI user memory facts ─────────────────────────────
+
+def get_user_facts(guild_id: int, user_id: int) -> list:
+    """Return the durable facts remembered about a user in a guild."""
+    if _use_supabase:
+        try:
+            result = _supabase.table("user_memory").select("facts").eq(
+                "guild_id", str(guild_id)
+            ).eq("user_id", str(user_id)).execute()
+            if result.data:
+                facts = result.data[0].get("facts")
+                return facts if isinstance(facts, list) else []
+            return []
+        except Exception as e:
+            error_key = "get_user_facts"
+            if error_key not in _supabase_error_logged:
+                logger.error(f"[DB] get_user_facts error: {e}")
+                _supabase_error_logged.add(error_key)
+    # JSON fallback
+    data = _read_json("data/user_memory.json")
+    entry = data.get(f"{guild_id}_{user_id}", {})
+    facts = entry.get("facts", [])
+    return facts if isinstance(facts, list) else []
+
+
+def add_user_fact(guild_id: int, user_id: int, fact: str,
+                  max_facts: int = 10) -> bool:
+    """Add a durable fact about a user (deduped, capped at max_facts).
+
+    Returns True if the fact was added, False if it was a duplicate.
+    When over the cap, the OLDEST fact is dropped."""
+    fact = str(fact).strip()[:300]
+    if not fact:
+        return False
+    facts = [f for f in get_user_facts(guild_id, user_id) if isinstance(f, str)]
+    # dedupe: exact match or one containing the other
+    for existing in facts:
+        if fact.lower() == existing.lower() or fact.lower() in existing.lower() \
+                or existing.lower() in fact.lower():
+            return False
+    facts.append(fact)
+    if len(facts) > max_facts:
+        facts = facts[-max_facts:]
+    from datetime import datetime as _dt
+    payload = {
+        "guild_id": str(guild_id),
+        "user_id": str(user_id),
+        "facts": facts,
+        "updated_at": _dt.utcnow().isoformat(),
+    }
+    if _use_supabase:
+        try:
+            _supabase.table("user_memory").upsert(payload).execute()
+            return True
+        except Exception as e:
+            error_key = "add_user_fact"
+            if error_key not in _supabase_error_logged:
+                logger.error(f"[DB] add_user_fact error: {e}")
+                _supabase_error_logged.add(error_key)
+    # JSON fallback
+    data = _read_json("data/user_memory.json")
+    data[f"{guild_id}_{user_id}"] = payload
+    _write_json("data/user_memory.json", data)
+    return True
+
+
+def clear_user_facts(guild_id: int, user_id: int) -> int:
+    """Delete all facts for a user. Returns how many were removed."""
+    facts = get_user_facts(guild_id, user_id)
+    if not facts:
+        return 0
+    if _use_supabase:
+        try:
+            _supabase.table("user_memory").delete().eq(
+                "guild_id", str(guild_id)
+            ).eq("user_id", str(user_id)).execute()
+            return len(facts)
+        except Exception as e:
+            error_key = "clear_user_facts"
+            if error_key not in _supabase_error_logged:
+                logger.error(f"[DB] clear_user_facts error: {e}")
+                _supabase_error_logged.add(error_key)
+    # JSON fallback
+    data = _read_json("data/user_memory.json")
+    data.pop(f"{guild_id}_{user_id}", None)
+    _write_json("data/user_memory.json", data)
+    return len(facts)
+
+
+# ─── PHASE 4: starboard posts ──────────────────────────────────
+
+def get_starboard_post(guild_id: int, message_id: int) -> dict:
+    """Return the starboard record for a source message, or {}."""
+    if _use_supabase:
+        try:
+            result = _supabase.table("starboard_posts").select("*").eq(
+                "guild_id", str(guild_id)
+            ).eq("message_id", int(message_id)).execute()
+            return result.data[0] if result.data else {}
+        except Exception as e:
+            error_key = "get_starboard_post"
+            if error_key not in _supabase_error_logged:
+                logger.error(f"[DB] get_starboard_post error: {e}")
+                _supabase_error_logged.add(error_key)
+    # JSON fallback
+    data = _read_json("data/starboard_posts.json")
+    return data.get(str(message_id), {})
+
+
+def save_starboard_post(guild_id: int, message_id: int, channel_id: int,
+                        starboard_message_id: int, author_id: int):
+    """Record that a message has been reposted to the starboard."""
+    payload = {
+        "guild_id": str(guild_id),
+        "message_id": int(message_id),
+        "channel_id": str(channel_id),
+        "starboard_message_id": int(starboard_message_id),
+        "author_id": str(author_id),
+    }
+    if _use_supabase:
+        try:
+            _supabase.table("starboard_posts").upsert(payload).execute()
+            return
+        except Exception as e:
+            error_key = "save_starboard_post"
+            if error_key not in _supabase_error_logged:
+                logger.error(f"[DB] save_starboard_post error: {e}")
+                _supabase_error_logged.add(error_key)
+    # JSON fallback
+    data = _read_json("data/starboard_posts.json")
+    data[str(message_id)] = payload
+    _write_json("data/starboard_posts.json", data)
+
+
+# ─── PHASE 4: giveaways ─────────────────────────────────────────
+
+def save_giveaway(giveaway: dict):
+    """Upsert a giveaway row by its id."""
+    if _use_supabase:
+        try:
+            _supabase.table("giveaways").upsert(giveaway).execute()
+            return
+        except Exception as e:
+            error_key = "save_giveaway"
+            if error_key not in _supabase_error_logged:
+                logger.error(f"[DB] save_giveaway error: {e}")
+                _supabase_error_logged.add(error_key)
+    # JSON fallback
+    data = _read_json("data/giveaways.json")
+    data[str(giveaway.get("id"))] = giveaway
+    _write_json("data/giveaways.json", data)
+
+
+def get_giveaway(giveaway_id: str) -> dict:
+    """Return one giveaway by id, or {}."""
+    if _use_supabase:
+        try:
+            result = _supabase.table("giveaways").select("*").eq(
+                "id", str(giveaway_id)
+            ).execute()
+            return result.data[0] if result.data else {}
+        except Exception as e:
+            error_key = "get_giveaway"
+            if error_key not in _supabase_error_logged:
+                logger.error(f"[DB] get_giveaway error: {e}")
+                _supabase_error_logged.add(error_key)
+    # JSON fallback
+    data = _read_json("data/giveaways.json")
+    gw = data.get(str(giveaway_id), {})
+    return gw if isinstance(gw, dict) else {}
+
+
+def get_active_giveaways() -> list:
+    """Return all not-yet-ended giveaways across every guild."""
+    if _use_supabase:
+        try:
+            result = _supabase.table("giveaways").select("*").eq(
+                "ended", False
+            ).execute()
+            return result.data or []
+        except Exception as e:
+            error_key = "get_active_giveaways"
+            if error_key not in _supabase_error_logged:
+                logger.error(f"[DB] get_active_giveaways error: {e}")
+                _supabase_error_logged.add(error_key)
+    # JSON fallback
+    data = _read_json("data/giveaways.json")
+    return [gw for gw in data.values()
+            if isinstance(gw, dict) and not gw.get("ended")]
+
+
 # ─── Async wrappers (P1 / D4 — non-blocking event loop) ────────
 #
 # The supabase-py client executes synchronous HTTP REST calls. Calling the
@@ -1399,3 +1696,31 @@ async def save_conversation_message_async(guild_id: int, user_id: int,
         save_conversation_message, guild_id, user_id, role, content,
         timestamp, channel_id
     )
+
+
+async def get_user_facts_async(guild_id: int, user_id: int) -> list:
+    """Non-blocking get_user_facts (PHASE 4 AI memory)."""
+    return await asyncio.to_thread(get_user_facts, guild_id, user_id)
+
+
+async def add_user_fact_async(guild_id: int, user_id: int, fact: str,
+                              max_facts: int = 10) -> bool:
+    """Non-blocking add_user_fact (PHASE 4 AI memory)."""
+    return await asyncio.to_thread(
+        add_user_fact, guild_id, user_id, fact, max_facts
+    )
+
+
+async def clear_user_facts_async(guild_id: int, user_id: int) -> int:
+    """Non-blocking clear_user_facts (PHASE 4 AI memory)."""
+    return await asyncio.to_thread(clear_user_facts, guild_id, user_id)
+
+
+async def get_active_giveaways_async() -> list:
+    """Non-blocking get_active_giveaways (PHASE 4 giveaways loop)."""
+    return await asyncio.to_thread(get_active_giveaways)
+
+
+async def save_giveaway_async(giveaway: dict):
+    """Non-blocking save_giveaway (PHASE 4 giveaways)."""
+    return await asyncio.to_thread(save_giveaway, giveaway)

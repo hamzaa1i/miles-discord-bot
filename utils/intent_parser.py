@@ -144,7 +144,7 @@ def _parse_duration_to_seconds(raw):
     total = 0
     matched = False
     for num, unit in _re.findall(
-            r'(\d+)\s*(s|secs?|seconds?|m|mins?|minutes?|h|hrs?|hours?|d|days?)\b',
+            r'(\d+)\s*(s|secs?|seconds?|m|mins?|minutes?|h|hrs?|hours?|d|days?)(?![a-z])',
             s):
         total += int(num) * _DURATION_UNITS[unit]
         matched = True

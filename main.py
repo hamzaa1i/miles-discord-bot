@@ -195,6 +195,17 @@ DEFAULT_DATA_FILES = [
     "level_rewards.json",
     "self_role_panels.json",
     "invite_tracking.json",
+    # PHASE 4 — new features (AI memory, AI automod, starboard,
+    # giveaways, custom commands, proactive, onboarding). JSON
+    # fallbacks for Supabase.
+    "user_memory.json",
+    "ai_automod_settings.json",
+    "starboard_settings.json",
+    "starboard_posts.json",
+    "giveaways.json",
+    "custom_commands.json",
+    "proactive_settings.json",
+    "onboarding_settings.json",
 ]
 
 
