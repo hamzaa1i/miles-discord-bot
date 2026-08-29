@@ -74,6 +74,11 @@ class Giveaways(commands.Cog):
         self.bot = bot
         # in-memory entry guards: {giveaway_id: set(user_id)} for this boot
         self._click_guard = set()
+        # FIX 4 — in-flight end guard: giveaway ids currently being ended.
+        # Prevents the 30s auto-end loop and /giveaway end (or a double
+        # command invocation) from ending the SAME giveaway twice — which
+        # produced duplicate "ended" announcements and double winner draws.
+        self._ending = set()
         if not self.check_giveaways.is_running():
             self.check_giveaways.start()
 
@@ -241,12 +246,31 @@ class Giveaways(commands.Cog):
     # ─── ending logic ────────────────────────────────────────────
 
     async def _end_giveaway(self, gw: dict, force: bool = False):
-        """Mark ended, pick winners (re-checking requirements), announce."""
+        """Mark ended, pick winners (re-checking requirements), announce.
+
+        FIX 4 — race-guarded and idempotent: returns False (doing nothing)
+        if this giveaway is already being ended right now or was already
+        ended, so the 30s loop + /giveaway end + double clicks can never
+        announce winners twice."""
+        gw_id = str(gw.get('id'))
+        if gw_id in self._ending or gw.get('ended'):
+            logger.info(
+                f"[giveaways] end skipped for {gw_id} "
+                f"(already ending/ended)"
+            )
+            return False
+        self._ending.add(gw_id)
+        try:
+            return await self._end_giveaway_inner(gw, force=force)
+        finally:
+            self._ending.discard(gw_id)
+
+    async def _end_giveaway_inner(self, gw: dict, force: bool = False):
         guild = self.bot.get_guild(int(gw.get('guild_id') or 0))
         if not guild:
             gw['ended'] = True
             await save_giveaway_async(gw)
-            return
+            return True
         channel = None
         try:
             channel = guild.get_channel(int(gw.get('channel_id') or 0))
@@ -296,6 +320,7 @@ class Giveaways(commands.Cog):
             f"[giveaways] ended {gw.get('id')} in {guild.id}: "
             f"{len(entries)} entrants, {len(winners)} winners"
         )
+        return True
 
     @tasks.loop(seconds=30)
     async def check_giveaways(self):
@@ -409,8 +434,20 @@ class Giveaways(commands.Cog):
     async def giveaway_end(self, interaction: discord.Interaction,
                            giveaway_id: str):
         self.bot.increment_command('giveaway_end')
-        gw = await asyncio.to_thread(get_giveaway, giveaway_id.strip().lower())
-        if not gw or gw.get('guild_id') != str(interaction.guild.id):
+        # FIX 4 — the id is stored EXACTLY as an 8-char lowercase hex string
+        # (uuid4().hex[:8], e.g. "d93fc8ac"); normalize the input the same way
+        # and log the lookup so mismatches are diagnosable.
+        lookup_id = giveaway_id.strip().lower()
+        gw = await asyncio.to_thread(get_giveaway, lookup_id)
+        guild_match = (
+            bool(gw) and gw.get('guild_id') == str(interaction.guild.id)
+        )
+        logger.info(
+            f"[giveaways] /end lookup id={lookup_id!r} "
+            f"found={bool(gw)} guild_match={guild_match} "
+            f"ended={bool(gw.get('ended')) if gw else None}"
+        )
+        if not gw or not guild_match:
             await interaction.response.send_message(
                 "no giveaway with that id in this server.", ephemeral=True
             )
@@ -421,8 +458,13 @@ class Giveaways(commands.Cog):
             )
             return
         await interaction.response.defer(ephemeral=True)
-        await self._end_giveaway(gw, force=True)
-        await interaction.followup.send("ended — winners announced ✦")
+        ended = await self._end_giveaway(gw, force=True)
+        if ended:
+            await interaction.followup.send("ended — winners announced ✦")
+        else:
+            await interaction.followup.send(
+                "that giveaway was already ending/ended — no changes made."
+            )
 
     @giveaway.command(name="reroll", description="Pick a new winner for an ended giveaway")
     @app_commands.checks.has_permissions(manage_guild=True)
@@ -430,7 +472,9 @@ class Giveaways(commands.Cog):
     async def giveaway_reroll(self, interaction: discord.Interaction,
                               giveaway_id: str):
         self.bot.increment_command('giveaway_reroll')
-        gw = await asyncio.to_thread(get_giveaway, giveaway_id.strip().lower())
+        # FIX 4 — same lookup path + normalization as /giveaway end
+        lookup_id = giveaway_id.strip().lower()
+        gw = await asyncio.to_thread(get_giveaway, lookup_id)
         if not gw or gw.get('guild_id') != str(interaction.guild.id):
             await interaction.response.send_message(
                 "no giveaway with that id in this server.", ephemeral=True

@@ -239,9 +239,12 @@ class Onboarding(commands.Cog):
         })
         cfg['roles'] = roles
         await self._save_config(interaction.guild.id, cfg)
+        # FIX 5 — confirmation shows the ROLE (as @role_name), not whatever
+        # was typed into the label/emoji options.
         embed = veloura_embed(
             "onboarding",
-            f"added **{role.name}** to the panel (`{label[:80]}`).",
+            f"added {role.mention} to the panel — "
+            f"button label: **{label[:80]}**.",
             COLOR_PINK,
         )
         await interaction.response.send_message(embed=embed, ephemeral=True)
@@ -292,23 +295,59 @@ class Onboarding(commands.Cog):
     @app_commands.checks.has_permissions(manage_guild=True)
     async def onboarding_test(self, interaction: discord.Interaction):
         self.bot.increment_command('onboarding_test')
-        cfg = await self._get_config(interaction.guild.id)
+        # FIX 5 — defer FIRST, before any DB read or DM send. The old flow
+        # answered the interaction only AFTER the config round-trip + DM;
+        # when either was slow the 3s interaction window expired and Discord
+        # showed "The application did not respond".
+        await interaction.response.defer(ephemeral=True)
+        if not interaction.guild:
+            await interaction.followup.send(
+                "this only works in a server.", ephemeral=True
+            )
+            return
+        try:
+            cfg = await self._get_config(interaction.guild.id)
+        except Exception as e:
+            logger.error(f"[onboarding] test config read failed: {e}")
+            await interaction.followup.send(
+                "couldn't read the onboarding config — try again.",
+                ephemeral=True,
+            )
+            return
         if not cfg.get('roles'):
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 "no roles on the panel yet — use /onboarding addrole first.",
                 ephemeral=True,
             )
             return
-        embed, view = self._build_panel(cfg, interaction.user,
-                                        interaction.guild)
+        try:
+            embed, view = self._build_panel(cfg, interaction.user,
+                                            interaction.guild)
+        except Exception as e:
+            logger.error(f"[onboarding] test panel build failed: {e}")
+            await interaction.followup.send(
+                "couldn't build the panel — check your intro text/roles.",
+                ephemeral=True,
+            )
+            return
         try:
             await interaction.user.send(embed=embed, view=view)
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 "sent the preview to your DMs ♡", ephemeral=True
             )
         except discord.Forbidden:
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 "i couldn't DM you — your DMs are closed.", ephemeral=True
+            )
+        except discord.HTTPException as e:
+            logger.error(f"[onboarding] test DM send failed: {e}")
+            await interaction.followup.send(
+                "couldn't send the DM — try again in a moment.", ephemeral=True
+            )
+        except Exception as e:
+            logger.error(f"[onboarding] test failed: {type(e).__name__}: {e}")
+            await interaction.followup.send(
+                "something went wrong sending the preview.", ephemeral=True
             )
 
 

@@ -23,7 +23,8 @@ messages from other moderators' actions (commands).
 Commands (all manage_guild):
   /aiautomod toggle <on|off>
   /aiautomod channel #alerts     — where mod alerts are posted
-  /aiautomod timeout <minutes>   — escalation timeout length (1-120)
+  /aiautomod timeout <duration>  — escalation timeout length (30m, 1h, 2h,
+                                   1d, or a bare number = minutes; 1m–1d)
   /aiautomod status              — current config
 """
 import logging
@@ -34,6 +35,7 @@ import json as _json
 import discord
 from discord.ext import commands
 from discord import app_commands
+from typing import Optional
 from utils.ai_handler import call_ai_fast
 from utils.db import (
     add_warning_async, get_guild_setting_async, set_guild_setting_async,
@@ -43,6 +45,50 @@ from utils.veloura_embeds import veloura_embed, COLOR_LAVENDER, COLOR_PINK
 logger = logging.getLogger('cyn.ai_automod')
 
 OWNER_ID = int(os.getenv('OWNER_ID', '0'))
+
+# FIX 3 — timeout duration parsing. The parameter used to be
+# app_commands.Range[int, 1, 120], which made Discord itself reject any
+# duration string like "30m" / "1h" before the handler even ran. Now the
+# option is a free-form string parsed with the SAME pattern the intent
+# parser uses (compound number+unit regex), with a bare number meaning
+# minutes.
+_TIMEOUT_UNITS = {
+    's': 1, 'sec': 1, 'secs': 1, 'second': 1, 'seconds': 1,
+    'm': 60, 'min': 60, 'mins': 60, 'minute': 60, 'minutes': 60,
+    'h': 3600, 'hr': 3600, 'hrs': 3600, 'hour': 3600, 'hours': 3600,
+    'd': 86400, 'day': 86400, 'days': 86400,
+}
+
+
+def parse_timeout_minutes(raw: str) -> Optional[int]:
+    """Parse '30m', '5m', '1h', '2h', '1d', '90s', or '10' (minutes)
+    into minutes. Returns None if unparseable.
+
+    Uses the same compound number+unit pattern as the intent parser, so
+    values like '1h30m' also work. A bare number is MINUTES (not seconds).
+    Result is clamped to 1..1440 (1 minute to 1 day)."""
+    if raw is None:
+        return None
+    s = str(raw).strip().lower()
+    if not s or '-' in s:
+        return None
+    total_seconds, matched = 0, False
+    for num, unit in re.findall(
+            r'(\d+)\s*(s|secs?|seconds?|m|mins?|minutes?|h|hrs?|hours?|d|days?)(?![a-z])',
+            s):
+        total_seconds += int(num) * _TIMEOUT_UNITS[unit]
+        matched = True
+    if not matched:
+        # bare number → minutes
+        try:
+            return max(1, min(1440, int(s)))
+        except ValueError:
+            return None
+    if total_seconds <= 0:
+        return None
+    minutes = -(-total_seconds // 60)  # ceil division → whole minutes
+    return max(1, min(1440, minutes))
+
 
 # Local heuristic seed words — deliberately tiny; the model handles nuance.
 _HEURISTIC_WORDS = (
@@ -227,8 +273,10 @@ class AIAutoMod(commands.Cog):
         try:
             if severity >= 5:
                 # timeout + alert
+                # FIX 3 — cap raised from 120m to 1440m (1 day) so durations
+                # like '1d' survive a restart without silently shrinking.
                 minutes = int(cfg.get('timeout_minutes') or 10)
-                minutes = max(1, min(120, minutes))
+                minutes = max(1, min(1440, minutes))
                 try:
                     from datetime import timedelta as _td
                     await member.timeout(_td(minutes=minutes), reason=f"aurelia ai-automod: {reason}")
@@ -351,10 +399,21 @@ class AIAutoMod(commands.Cog):
 
     @aiautomod.command(name="timeout", description="Set the escalation timeout length")
     @app_commands.checks.has_permissions(manage_guild=True)
-    @app_commands.describe(minutes="1 to 120 minutes")
+    @app_commands.describe(
+        duration="How long a severity-5 timeout lasts: 30m, 1h, 2h, 1d, "
+                 "or a plain number = minutes (10)"
+    )
     async def aiautomod_timeout(self, interaction: discord.Interaction,
-                                minutes: app_commands.Range[int, 1, 120]):
+                                duration: str):
         self.bot.increment_command('aiautomod_timeout')
+        minutes = parse_timeout_minutes(duration)
+        if minutes is None:
+            await interaction.response.send_message(
+                "that duration doesn't look right — try `30m`, `1h`, `2h`, "
+                "`1d`, or a plain number of minutes like `10`.",
+                ephemeral=True,
+            )
+            return
         cfg = await self._get_config(interaction.guild.id)
         cfg['timeout_minutes'] = minutes
         await self._save_config(interaction.guild.id, cfg)

@@ -297,15 +297,25 @@ class AIChat(commands.Cog):
 
         # PHASE 4 — AI long-term memory: inject durable facts remembered
         # about THIS user so the bot can reference them naturally.
+        # FIX 1 — fully defensive: a bad payload shape can never crash
+        # prompt building (which would kill the whole AI response).
         if memory_facts:
-            facts_str = "; ".join(str(f) for f in memory_facts[:10])
-            base += (
-                f"\nMEMORY — things you remember about the user you're talking "
-                f"to right now: {facts_str}. "
-                "weave these in naturally when relevant (like a friend who "
-                "remembers), but never recite the list verbatim and never "
-                "mention that you have a memory system."
-            )
+            try:
+                facts_list = [
+                    str(f)[:150] for f in list(memory_facts)[:10]
+                    if str(f or '').strip()
+                ]
+                if facts_list:
+                    facts_str = "; ".join(facts_list)
+                    base += (
+                        f"\nMEMORY — things you remember about the user you're talking "
+                        f"to right now: {facts_str}. "
+                        "weave these in naturally when relevant (like a friend who "
+                        "remembers), but never recite the list verbatim and never "
+                        "mention that you have a memory system."
+                    )
+            except Exception as e:
+                logger.warning(f"[memory] failed to inject facts into prompt: {e}")
 
         if server_summary:
             base += f"\n{server_summary}"
@@ -375,12 +385,21 @@ class AIChat(commands.Cog):
 
         # PHASE 3A/3B — build the system prompt with global owner identity + formality
         # PHASE 4 — also load durable user-memory facts (long-term memory)
+        # FIX 1 — every memory operation is wrapped and shape-validated so a
+        # missing user_memory table, a network error, or a malformed row can
+        # NEVER take the AI response path down with it.
         memory_facts = []
         if guild_id_val := (guild.id if guild else 0):
             try:
                 from utils.db import get_user_facts_async
-                memory_facts = await get_user_facts_async(guild_id_val, user_id) or []
-            except Exception:
+                facts = await get_user_facts_async(guild_id_val, user_id) or []
+                if isinstance(facts, list):
+                    # top 5 facts, strings only — anything else is ignored
+                    memory_facts = [
+                        str(f) for f in facts if isinstance(f, str)
+                    ][:5]
+            except Exception as e:
+                logger.warning(f"[memory] failed to load facts: {e}")
                 memory_facts = []
 
         system_prompt = self._build_system_prompt(
@@ -451,18 +470,33 @@ class AIChat(commands.Cog):
         from utils.ai_handler import MODEL_CHAT
         model = chosen_model or MODEL_CHAT
 
+        # FIX 1 — [AI_PATH] diagnostics on the response path
+        logger.info(
+            f"[AI_PATH] calling {model} | msgs={len(messages)} "
+            f"| tokens={max_tokens} | history={len(history)} "
+            f"| facts={len(memory_facts)}"
+        )
         ai_response = await call_ai(
             messages, model=model,
             max_tokens=max_tokens, temperature=0.85
         )
+        logger.info(
+            f"[AI_PATH] model returned {len(ai_response or '')} chars: "
+            f"{(ai_response or '')[:100]!r}"
+        )
 
         # PHASE 2A — Save both the user message and AI response to persistent
         # storage. Only save if it's a real response, not an error message.
+        # FIX 6 — the empty-content fallback ("i'm here. what's on your mind?")
+        # is now treated as an error response too: saving it would pollute the
+        # conversation history (the model then imitates the canned line) and
+        # would feed garbage into fact extraction.
         ERROR_RESPONSES = {
             "something broke. try again.",
             "something broke on my end. try again.",
             "i'm being rate limited right now. try again in a few minutes.",
             "i'm at capacity right now. try again in a few minutes.",
+            "i'm here. what's on your mind?",
         }
         if ai_response and ai_response not in ERROR_RESPONSES and guild_id:
             try:
@@ -510,6 +544,7 @@ class AIChat(commands.Cog):
             self._fact_msg_counters[user_id] = counter
             if counter % self._FACT_EVERY_N_MESSAGES != 0:
                 return
+            logger.info(f"[memory] extracting facts after message {counter}")
 
             import json as _json
             prompt = (
@@ -530,7 +565,11 @@ class AIChat(commands.Cog):
                  {"role": "user", "content": "extract facts"}],
                 max_tokens=300,
             )
-            if not raw or "something broke" in raw:
+            # FIX 6 — treat the empty-content fallback as a failure too, so
+            # a canned line never gets parsed as (non-)facts.
+            if (not raw or "something broke" in raw
+                    or raw == "i'm here. what's on your mind?"):
+                logger.info("[memory] extraction call returned no usable content")
                 return
             # strip code fences if present
             raw = raw.strip()
@@ -551,6 +590,7 @@ class AIChat(commands.Cog):
                 return
             if not isinstance(facts, list):
                 return
+            logger.info(f"[memory] extracted: {facts}")
 
             from utils.db import add_user_fact_async
             added = 0
@@ -1676,8 +1716,23 @@ class AIChat(commands.Cog):
                     logger.error(f"[ON_MESSAGE] get_conversation_history failed: {type(e).__name__}: {e}")
                     # Continue with empty history — don't let DB failure block the response
 
+            # FIX 2 — deterministic (regex) moderation intent detection runs
+            # BEFORE both the fast-path and the AI intent parser, so mod
+            # commands like "mute @user for 1m" never depend on the model
+            # classifying them correctly.
+            from utils.intent_parser import deterministic_mod_intent
+            det_intent = deterministic_mod_intent(
+                content,
+                len(message.mentions) if message.mentions else 0
+            )
+            if det_intent:
+                intent_data = det_intent
+                logger.info(
+                    f"[DETERMINISTIC] {det_intent['intent']} detected for "
+                    f"{message.author.display_name}"
+                )
             # FIX 2 — Fast-path ONLY if no history exists
-            if not db_history_check and self.is_obvious_chat(content):
+            elif not db_history_check and self.is_obvious_chat(content):
                 intent_data = {"intent": "chat", "params": {}}
                 logger.debug(f"[FAST-PATH] {message.author.display_name} → skipped intent parser (no history)")
             else:
@@ -1731,14 +1786,30 @@ class AIChat(commands.Cog):
             # DIAGNOSTIC — Log before AI call
             logger.debug(f"[AI_CALL] about to call get_ai_response with model={chosen_model}")
 
-            async with message.channel.typing():
-                response = await self.get_ai_response(
-                    message.author.id, content, is_owner=is_owner_msg,
-                    guild=message.guild, author_name=message.author.display_name,
-                    channel=message.channel, member=message.author,
-                    extra_context=extra_context,
-                    chosen_model=chosen_model
+            # FIX 1 — [AI_PATH] diagnostics + hardened call: an AI-path
+            # failure must never bubble up as an unhandled crash.
+            logger.info(f"[AI_PATH] about to call get_ai_response")
+            try:
+                async with message.channel.typing():
+                    response = await self.get_ai_response(
+                        message.author.id, content, is_owner=is_owner_msg,
+                        guild=message.guild, author_name=message.author.display_name,
+                        channel=message.channel, member=message.author,
+                        extra_context=extra_context,
+                        chosen_model=chosen_model
+                    )
+                logger.info(
+                    f"[AI_PATH] response: {response[:100] if response else 'NONE'}"
                 )
+            except Exception as e:
+                logger.error(f"[AI_PATH] get_ai_response failed: {e}")
+                import traceback
+                traceback.print_exc()
+                response = None
+
+            # FIX 1 — never reply with None/empty
+            if not response:
+                response = "something broke on my end. try again."
 
             # DIAGNOSTIC — Log after AI call
             logger.debug(f"[AI_CALL] response received: {response[:100] if response else 'NONE'}")
@@ -1973,8 +2044,21 @@ class AIChat(commands.Cog):
             # Smart model routing
             from utils.ai_handler import pick_model
 
+            # FIX 2 — deterministic (regex) moderation intent detection runs
+            # BEFORE both the fast-path and the AI intent parser.
+            from utils.intent_parser import deterministic_mod_intent
+            det_intent = deterministic_mod_intent(
+                content,
+                len(message.mentions) if message.mentions else 0
+            )
+            if det_intent:
+                intent_data = det_intent
+                logger.info(
+                    f"[DETERMINISTIC] {det_intent['intent']} detected for "
+                    f"{message.author.display_name}"
+                )
             # Fast-path check
-            if self.is_obvious_chat(content):
+            elif self.is_obvious_chat(content):
                 intent_data = {"intent": "chat", "params": {}}
                 logger.debug(f"[FAST-PATH] {message.author.display_name} → skipped intent parser")
             else:

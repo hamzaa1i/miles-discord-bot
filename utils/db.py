@@ -265,6 +265,7 @@ CREATE TABLE server_personality (
 --   channel_id TEXT,
 --   message_id BIGINT,
 --   host_id TEXT,
+--   host_name TEXT,
 --   prize TEXT,
 --   ends_at FLOAT,
 --   winners_count INT DEFAULT 1,
@@ -278,6 +279,9 @@ CREATE TABLE server_personality (
 -- );
 -- GRANT ALL ON public.giveaways TO anon;
 -- ALTER TABLE public.giveaways DISABLE ROW LEVEL SECURITY;
+-- (if the table already exists without host_name, run:
+--  ALTER TABLE public.giveaways ADD COLUMN IF NOT EXISTS host_name TEXT;)
+-- The complete, ready-to-run migration lives in scripts/supabase_migration.sql.
 --
 -- CREATE TABLE IF NOT EXISTS custom_commands (
 --   guild_id TEXT PRIMARY KEY,
@@ -1587,32 +1591,90 @@ def save_starboard_post(guild_id: int, message_id: int, channel_id: int,
 
 # ─── PHASE 4: giveaways ─────────────────────────────────────────
 
-def save_giveaway(giveaway: dict):
-    """Upsert a giveaway row by its id."""
-    if _use_supabase:
-        try:
-            _supabase.table("giveaways").upsert(giveaway).execute()
-            return
-        except Exception as e:
-            error_key = "save_giveaway"
-            if error_key not in _supabase_error_logged:
-                logger.error(f"[DB] save_giveaway error: {e}")
-                _supabase_error_logged.add(error_key)
-    # JSON fallback
+# FIX 4 — canonical column set for the giveaways table. save_giveaway()
+# upserts whatever the cog puts in the dict; if the Supabase table was
+# created from an older schema (notably WITHOUT host_name), the extra key
+# made the upsert fail on EVERY write — writes silently fell back to JSON
+# while reads still hit Supabase first and found nothing. That split-brain
+# is exactly what made /giveaway end report "no giveaway with that id"
+# for giveaways that /giveaway start had just created. Only these columns
+# are ever sent; host_name is retried without on schema drift.
+_GIVEAWAY_COLUMNS = (
+    "id", "guild_id", "channel_id", "message_id", "host_id", "host_name",
+    "prize", "ends_at", "winners_count", "required_role_id",
+    "min_account_days", "min_level", "ended", "entries", "winner_ids",
+    "created_at",
+)
+
+
+def _save_giveaway_json(giveaway: dict):
     data = _read_json("data/giveaways.json")
     data[str(giveaway.get("id"))] = giveaway
     _write_json("data/giveaways.json", data)
 
 
+def save_giveaway(giveaway: dict):
+    """Upsert a giveaway row by its id (FIX 4 — schema-drift tolerant).
+
+    1. Send only canonical _GIVEAWAY_COLUMNS to Supabase.
+    2. If that fails (e.g. the table predates the host_name column), retry
+       once WITHOUT host_name instead of losing the row.
+    3. Only if both attempts fail do we fall back to the JSON file.
+    Reads (get_giveaway / get_active_giveaways) heal from JSON when Supabase
+    has no row, so a fallback write is still visible to every reader.
+    """
+    payload = {k: giveaway[k] for k in _GIVEAWAY_COLUMNS if k in giveaway}
+    if _use_supabase and "giveaways" not in _supabase_table_missing:
+        try:
+            _supabase.table("giveaways").upsert(payload).execute()
+            return
+        except Exception as e:
+            # Retry without optional columns — the deployed table may have
+            # been created before host_name existed.
+            try:
+                minimal = {k: v for k, v in payload.items() if k != "host_name"}
+                _supabase.table("giveaways").upsert(minimal).execute()
+                logger.warning(
+                    "[DB] save_giveaway: upserted without host_name "
+                    "(column missing?) — run the migration SQL"
+                )
+                return
+            except Exception as e2:
+                e = e2
+            error_str = str(e)
+            if ("PGRST205" in error_str or "does not exist" in error_str
+                    or "404" in error_str):
+                _supabase_table_missing.add("giveaways")
+            error_key = "save_giveaway"
+            if error_key not in _supabase_error_logged:
+                logger.error(f"[DB] save_giveaway error: {e}")
+                _supabase_error_logged.add(error_key)
+    # JSON fallback (also the only path when the table is known-missing)
+    _save_giveaway_json(giveaway)
+
+
 def get_giveaway(giveaway_id: str) -> dict:
-    """Return one giveaway by id, or {}."""
-    if _use_supabase:
+    """Return one giveaway by id, or {} (FIX 4 — JSON-healed).
+
+    If Supabase has no row for the id, the JSON fallback is checked too —
+    a write may have gone there after an upsert failure — before giving up.
+    """
+    if _use_supabase and "giveaways" not in _supabase_table_missing:
         try:
             result = _supabase.table("giveaways").select("*").eq(
                 "id", str(giveaway_id)
             ).execute()
-            return result.data[0] if result.data else {}
+            if result.data:
+                return result.data[0]
+            # FIX 4 — not in Supabase: heal from JSON before returning {}
+            data = _read_json("data/giveaways.json")
+            gw = data.get(str(giveaway_id), {})
+            return gw if isinstance(gw, dict) else {}
         except Exception as e:
+            error_str = str(e)
+            if ("PGRST205" in error_str or "does not exist" in error_str
+                    or "404" in error_str):
+                _supabase_table_missing.add("giveaways")
             error_key = "get_giveaway"
             if error_key not in _supabase_error_logged:
                 logger.error(f"[DB] get_giveaway error: {e}")
@@ -1624,22 +1686,49 @@ def get_giveaway(giveaway_id: str) -> dict:
 
 
 def get_active_giveaways() -> list:
-    """Return all not-yet-ended giveaways across every guild."""
-    if _use_supabase:
+    """Return all not-yet-ended giveaways across every guild.
+
+    FIX 4 — merges Supabase rows with JSON-stranded rows: a giveaway whose
+    Supabase upsert failed (schema drift) lives ONLY in the JSON file and
+    would otherwise never be ended by the 30s loop. JSON rows that already
+    exist in Supabase (by id) are skipped so ended giveaways stay ended.
+    """
+    rows = []
+    supabase_ids = set()
+    if _use_supabase and "giveaways" not in _supabase_table_missing:
         try:
-            result = _supabase.table("giveaways").select("*").eq(
-                "ended", False
+            result = _supabase.table("giveaways").select(
+                "id, ended"
             ).execute()
-            return result.data or []
+            for row in (result.data or []):
+                supabase_ids.add(str(row.get("id")))
         except Exception as e:
+            error_str = str(e)
+            if ("PGRST205" in error_str or "does not exist" in error_str
+                    or "404" in error_str):
+                _supabase_table_missing.add("giveaways")
             error_key = "get_active_giveaways"
             if error_key not in _supabase_error_logged:
                 logger.error(f"[DB] get_active_giveaways error: {e}")
                 _supabase_error_logged.add(error_key)
-    # JSON fallback
+        else:
+            try:
+                active = _supabase.table("giveaways").select("*").eq(
+                    "ended", False
+                ).execute()
+                rows = active.data or []
+            except Exception as e:
+                error_key = "get_active_giveaways_active"
+                if error_key not in _supabase_error_logged:
+                    logger.error(f"[DB] get_active_giveaways error: {e}")
+                    _supabase_error_logged.add(error_key)
+    # JSON heal: active rows that Supabase doesn't know about at all
     data = _read_json("data/giveaways.json")
-    return [gw for gw in data.values()
-            if isinstance(gw, dict) and not gw.get("ended")]
+    for gid, gw in data.items():
+        if (isinstance(gw, dict) and not gw.get("ended")
+                and str(gid) not in supabase_ids):
+            rows.append(gw)
+    return rows
 
 
 # ─── Async wrappers (P1 / D4 — non-blocking event loop) ────────

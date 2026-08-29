@@ -4,6 +4,7 @@ Uses Groq API (openai/gpt-oss-20b for speed and stable JSON output).
 """
 import json
 import os
+import re
 from utils.ai_handler import call_ai_fast
 
 INTENT_SYSTEM_PROMPT = (
@@ -201,6 +202,108 @@ def _strip_code_fences(text: str) -> str:
         if response.endswith("```"):
             response = response[:-3].strip()
     return response
+
+
+# ─── FIX 2 — deterministic (regex) moderation intent detection ──
+#
+# Runs BEFORE the AI intent parser so moderation commands with an
+# @mention never depend on the model classifying them correctly.
+# Order matters: unmute must be checked before mute/timeout, and
+# lockdown before lock (the \b word boundaries already prevent most
+# substring collisions, but the ordering keeps it bulletproof).
+MOD_PATTERNS = [
+    (r'\bunmute\b|\buntimeout\b|\bremove timeout\b', 'unmute'),
+    (r'\b(?:mute|timeout)\b', 'timeout'),
+    (r'\bban\b', 'ban'),
+    (r'\bkick\b', 'kick'),
+    (r'\bwarn(?:ing)?\b', 'warn'),
+    (r'\bpurge\b|\bclear\s+\d+\s+messages?\b|\bdelete\s+\d+\s+messages?\b', 'purge'),
+    (r'\blockdown\b', 'lockdown'),
+    (r'\block\b', 'lock'),
+    (r'\bunlock\b', 'unlock'),
+    (r'\bslowmode\b', 'slowmode'),
+    (r'\bnuke\b', 'nuke'),
+]
+
+
+def deterministic_mod_intent(content: str, mention_count: int = 0) -> dict | None:
+    """
+    Detect moderation intent via regex before the AI parser.
+    Returns {"intent": ..., "params": {...}} or None.
+
+    Deliberately conservative:
+    - questions ABOUT moderation ("can you mute someone?", "what does
+      mute do?") never trigger — they fall through to the AI parser;
+    - 'unmute' wins over 'mute', 'lockdown' over 'lock' (pattern order);
+    - word boundaries keep tense/compound words safe ("muted",
+      "banned", "unlocked" do not match).
+    """
+    content_lower = content.lower().strip()
+    if not content_lower:
+        return None
+
+    # Question phrases that should NOT trigger mod intent
+    question_phrases = [
+        'can you', 'how do', 'what is', 'what does',
+        'what are', 'how does', 'why does', 'tell me about',
+        'what do you', 'do you know'
+    ]
+
+    # If it's a question ABOUT moderation, don't trigger
+    for qp in question_phrases:
+        if content_lower.startswith(qp) or f'{qp} ' in content_lower:
+            return None
+
+    for pattern, intent in MOD_PATTERNS:
+        match = re.search(pattern, content_lower)
+        if match:
+            params = {}
+
+            # Extract target user from mentions if provided
+            if mention_count > 0:
+                params['user_id'] = None  # executor uses message.mentions
+
+            # Extract duration
+            dur_match = re.search(
+                r'(\d+(?:\.\d+)?)\s*(m|min|mins|minute|minutes|h|hr|hrs|hour|hours|d|day|days)',
+                content_lower
+            )
+            if dur_match:
+                amount = float(dur_match.group(1))
+                unit = dur_match.group(2).lower()
+                if unit.startswith('m'):
+                    params['duration_seconds'] = int(amount * 60)
+                elif unit.startswith('h'):
+                    params['duration_seconds'] = int(amount * 3600)
+                elif unit.startswith('d'):
+                    params['duration_seconds'] = int(amount * 86400)
+
+            # Extract amount for purge
+            if intent == 'purge':
+                amt_match = re.search(r'(\d+)', content_lower)
+                if amt_match:
+                    params['amount'] = int(amt_match.group(1))
+
+            # Extract slowmode seconds
+            if intent == 'slowmode':
+                sm_match = re.search(r'(\d+)', content_lower)
+                if sm_match:
+                    params['seconds'] = int(sm_match.group(1))
+
+            # Extract reason (everything after "for " or "reason: ")
+            reason_match = re.search(
+                r'(?:for|reason[:\s])\s+(.+?)(?:\s+for\s+\d|\s+\d+\s*(?:m|h|d|min|hour|day)|$)',
+                content_lower
+            )
+            if reason_match and reason_match.group(1):
+                # Don't capture duration as reason
+                reason = reason_match.group(1).strip()
+                if not re.match(r'^\d+\s*(m|h|d|min|hour|day)', reason):
+                    params['reason'] = reason
+
+            return {"intent": intent, "params": params}
+
+    return None
 
 
 async def parse_intent(message_content: str, ai_handler) -> dict:

@@ -29,6 +29,18 @@ checks every possible field before falling back to a natural message.
 
 FIX 2 (extended) — If a model fails with 400 / 404 (decommissioned),
 we automatically retry with MODEL_FALLBACK.
+
+FIX (empty content / "i'm here. what's on your mind?") — Groq reasoning
+models (qwen3.6-27b, gpt-oss-20b/120b) emit their chain-of-thought in the
+`message.reasoning` field (NOT `reasoning_content`, which is the DeepSeek
+convention _extract_content originally checked). When the reasoning consumes
+the whole max_tokens budget, `content` comes back as an empty string and the
+extractor returned the "i'm here" fallback — which then leaked into the
+conversation history and starved every downstream feature (intent parsing,
+fact extraction, automod classification, proactive lines all use this path).
+Fix: (a) check `reasoning` as well as `reasoning_content`; (b) if the first
+call still returns no visible content, retry ONCE with a doubled max_tokens
+budget so the model has room to finish reasoning and emit real text.
 """
 import os
 import re
@@ -68,11 +80,16 @@ DEFAULT_MODEL = MODEL_CHAT
 # Default fast model (used by call_ai_fast)
 DEFAULT_FAST_MODEL = MODEL_FAST
 
-# FIX 2 — Minimum token floor. Reasoning models (gpt-oss-120b, qwen3.6)
+# Minimum token floor. Reasoning models (gpt-oss-120b, qwen3.6)
 # spend tokens on internal reasoning headers before emitting visible
 # content. With max_tokens=100 the model would burn all 100 tokens on
 # reasoning and return an empty content string. 300 is the safe floor.
 MIN_MAX_TOKENS = 300
+
+# FIX (empty content) — the canned reply returned when a completion has no
+# visible text at all. call_ai() detects this marker and retries once with a
+# doubled token budget before giving up on it.
+_EMPTY_CONTENT_FALLBACK = "i'm here. what's on your mind?"
 
 # Error signatures that indicate "model unavailable / decommissioned"
 # — these should trigger an automatic retry with MODEL_FALLBACK.
@@ -148,8 +165,12 @@ def _extract_content(response) -> str:
         content = (getattr(msg, "content", None) or "").strip()
 
         # 2. Reasoning models sometimes hide text in reasoning_content
+        #    (DeepSeek convention) or in `reasoning` (Groq's qwen3 / gpt-oss
+        #    convention). Check BOTH — the field name differs by model family.
         if not content and hasattr(msg, 'reasoning_content') and msg.reasoning_content:
             content = (msg.reasoning_content or "").strip()
+        if not content and hasattr(msg, 'reasoning') and msg.reasoning:
+            content = (msg.reasoning or "").strip()
 
         # FIX 1 — Strip <think>...</think> blocks (including multi-line).
         # The gpt-oss-20b model outputs internal reasoning wrapped in
@@ -208,11 +229,11 @@ def _extract_content(response) -> str:
         if not content:
             tool_calls = getattr(msg, "tool_calls", None)
             if tool_calls:
-                return "i'm here. what's on your mind?"
+                return _EMPTY_CONTENT_FALLBACK
 
         # 4. Absolute last resort — never return None / empty to the caller
         if not content:
-            return "i'm here. what's on your mind?"
+            return _EMPTY_CONTENT_FALLBACK
 
         # 5. Cap at 1900 chars for Discord's 2000-char message limit,
         #    leaving room for the "..." suffix.
@@ -312,6 +333,29 @@ async def call_ai(
         # ── Attempt 1 — requested model ───────────────────────────
         try:
             result = await _call_groq(model, clean_messages, max_tokens, temperature)
+
+            # FIX (empty content) — the model burned its whole token budget
+            # on internal reasoning and emitted no visible text (the
+            # _EMPTY_CONTENT_FALLBACK marker). Retry once with a doubled
+            # budget so the reasoning AND the answer both fit.
+            if result == _EMPTY_CONTENT_FALLBACK and max_tokens * 2 <= 32768:
+                logger.warning(
+                    f"[GROQ] {model} returned empty content at "
+                    f"max_tokens={max_tokens} — retrying with {max_tokens * 2}"
+                )
+                try:
+                    retry_result = await _call_groq(
+                        model, clean_messages, max_tokens * 2, temperature
+                    )
+                    if retry_result and retry_result != _EMPTY_CONTENT_FALLBACK:
+                        result = retry_result
+                except Exception as retry_err:
+                    # Retry is best-effort — keep the original fallback.
+                    logger.warning(
+                        f"[GROQ] empty-content retry failed: "
+                        f"{type(retry_err).__name__}: {retry_err}"
+                    )
+
             elapsed = time.time() - start
             logger.info(f"[GROQ] model={model} tokens={max_tokens} "
                         f"time={elapsed:.2f}s messages={len(clean_messages)} "
