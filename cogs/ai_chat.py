@@ -217,8 +217,8 @@ class AIChat(commands.Cog):
                              personality_note: str = "",
                              formality: str = "neutral") -> str:
         base = (
-            "CRITICAL: never output ildo, <thinking>, or any XML tags. "
-            "never explain your reasoning. just respond directly. "
+            "CRITICAL: never output <think>, </think>, <thinking>, </thinking>, or any XML-style tags. "
+            "never show your reasoning process. just respond directly with your final answer. "
             "\n\n"
             "you are aurelia, veloura's custom community bot. "
             "personality: soft, elegant, slightly playful, lowercase always. "
@@ -1374,22 +1374,28 @@ class AIChat(commands.Cog):
         no need to run through the intent parser."""
         content_lower = content.lower().strip()
 
-        # Very short messages are almost always just chat
-        if len(content_lower) < 15:
-            return True
-
+        # FIX B3 — command keyword scan runs BEFORE the length shortcut.
+        # Previously "< 15 chars → chat" short-circuited first, so short
+        # commands like "ban @user", "kick him", "lock", "purge 10"
+        # skipped the intent parser entirely.
         # Contains command keywords — needs intent parsing
+        # (dead economy keywords removed: balance, daily, work, fish, beg,
+        #  crime, rob, bank, shop, buy, pay, earn, inventory, richest)
         command_keywords = [
             "ban", "kick", "warn", "mute", "timeout", "purge",
-            "balance", "daily", "work", "weather", "remind",
+            "weather", "remind",
             "delete message", "lock", "unlock", "slowmode",
-            "richest", "pay", "deposit", "withdraw", "fish", "hunt",
-            "mine", "beg", "crime", "rob", "serverinfo", "whois",
+            "deposit", "withdraw", "hunt",
+            "mine", "serverinfo", "whois",
             "avatar", "poll", "joke", "meme", "flip", "roll"
         ]
         for keyword in command_keywords:
             if keyword in content_lower:
                 return False
+
+        # Very short messages are almost always just chat
+        if len(content_lower) < 15:
+            return True
 
         # Greetings and simple conversation starters — always chat
         chat_starters = [

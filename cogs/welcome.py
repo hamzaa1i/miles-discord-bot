@@ -655,11 +655,12 @@ class Welcome(commands.Cog):
         embed.add_field(name="⚙️ Other", inline=False, value=f"**Embed Mode:** `{config.get('embed_mode', 'embed')}`\n**Welcome Image:** `{image_url[:80] + '...' if image_url and len(image_url) > 80 else image_url or 'not set'}`\n**Welcome Reward:** `${config.get('welcome_reward', 500):,}`\n**Welcomer Reward:** `${config.get('welcomer_reward', 1000):,}`\n**Autorole:** {fmt('role', config.get('autorole_id'))}")
         embed.add_field(name="📝 Available Tags", inline=False, value=(
             "```\n"
-            "{user} {user.name} {user.id} {user.avatar}\n"
+            "Tags: {user} {user.name} {user.id} {user.avatar}\n"
             "{server} {server.id} {membercount} {server.icon}\n"
             "{duration} (goodbye only)\n\n"
-            "Use --- to split normal text and embed text (hybrid mode)\n"
-            "Use \\n for newlines\n"
+            "Embed modes: text, embed, hybrid\n"
+            "Use --- to separate normal text from embed content (hybrid mode)\n"
+            "Use \\n for line breaks\n"
             "```"
         ))
         await interaction.response.send_message(embed=embed)

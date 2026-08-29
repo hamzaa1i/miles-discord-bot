@@ -9,13 +9,14 @@ Also: improved mod log embeds, antilink listener, tempban background task,
 import discord
 from discord.ext import commands, tasks
 from discord import app_commands
-from datetime import timedelta
+from datetime import datetime, timedelta
 import os
 import re
 import time
 import logging
 from utils.database import Database
 from utils.db import (get_guild_setting, set_guild_setting, get_warnings,
+                      add_warning as db_add_warning,
                       add_tempban, get_tempbans_due, remove_tempban)
 
 logger = logging.getLogger(__name__)
@@ -35,6 +36,10 @@ THRESHOLD_ACTION_LABELS = {
 class Moderation(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+        # FIX B1 — legacy JSON store is kept ONLY for log_action() (action
+        # history, capped at 100 entries). Warnings go through utils.db
+        # (Supabase / warnings.json) exclusively so add/list/clear/threshold
+        # all operate on the same store.
         self.db = Database('data/moderation.json')
         # 60s TTL cache for mod_settings reads: {guild_id: (settings, ts)}
         self._settings_cache: dict[int, tuple[dict, float]] = {}
@@ -189,22 +194,10 @@ class Moderation(commands.Cog):
             data['actions'] = data['actions'][-100:]
         self.db.set(str(guild_id), data)
 
-    def add_warning(self, guild_id, user_id, reason, moderator):
-        try:
-            data = self.db.get(str(guild_id), {'actions': [], 'warnings': {}})
-        except Exception:
-            data = {'actions': [], 'warnings': {}}
-        if 'warnings' not in data:
-            data['warnings'] = {}
-        uid = str(user_id)
-        if uid not in data['warnings']:
-            data['warnings'][uid] = []
-        data['warnings'][uid].append({
-            'reason': reason,
-            'moderator': moderator,
-            'timestamp': discord.utils.utcnow().isoformat()
-        })
-        self.db.set(str(guild_id), data)
+    # FIX B1 — the legacy add_warning() method was removed. All warnings are
+    # written via utils.db.add_warning() (Supabase "warnings" table, JSON
+    # fallback) so /mod warnings list, clear, threshold auto-actions and
+    # mod-log "Previous Offenses" all read the same store.
 
     mod = app_commands.Group(name="mod", description="Moderation commands")
 
@@ -364,7 +357,14 @@ class Moderation(commands.Cog):
 
         if action.value == "add":
             self.log_action(interaction.guild.id, "warn", str(interaction.user), str(user), reason)
-            self.add_warning(interaction.guild.id, user.id, reason, str(interaction.user))
+            # FIX B1 — unified warnings store (utils.db → Supabase/warnings.json)
+            case_id = db_add_warning(interaction.guild.id, user.id, {
+                "type": "warn",
+                "reason": reason,
+                "mod_id": str(interaction.user.id),
+                "mod_name": str(interaction.user),
+                "timestamp": datetime.utcnow().isoformat()
+            })
             try:
                 dm = discord.Embed(description=f"you were warned in **{interaction.guild.name}**\nreason: {reason}", color=0xe67e22)
                 await user.send(embed=dm)
@@ -388,7 +388,10 @@ class Moderation(commands.Cog):
             )
             for i, w in enumerate(warnings[:15], 1):
                 w_reason = w.get('reason', 'N/A') if isinstance(w, dict) else str(w)
-                w_mod = w.get('moderator', 'Unknown') if isinstance(w, dict) else 'Unknown'
+                # mod_name is the key used by utils.db.add_warning(); keep the
+                # 'moderator' fallback for any rows written by very old builds.
+                w_mod = (w.get('mod_name') or w.get('moderator', 'Unknown')) \
+                    if isinstance(w, dict) else 'Unknown'
                 embed.add_field(
                     name=f"#{i}",
                     value=f"reason: {w_reason}\nby: {w_mod}",

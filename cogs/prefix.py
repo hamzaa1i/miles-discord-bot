@@ -104,7 +104,7 @@ class Prefix(commands.Cog):
             return
 
         # Fall through to AI
-        ai_cog = self.bot.get_cog("AiChat")
+        ai_cog = self.bot.get_cog("AIChat")
         if ai_cog and hasattr(ai_cog, 'handle_prefix_command'):
             try:
                 await ai_cog.handle_prefix_command(message, full_text)
@@ -230,19 +230,19 @@ class Prefix(commands.Cog):
                 target = message.mentions[0]
                 reason = args_str.replace(f"<@{target.id}>", "").replace(f"<@!{target.id}>", "").replace("add", "").strip()
                 reason = reason or "no reason provided"
-                ai_cog = self.bot.get_cog("AiChat")
+                ai_cog = self.bot.get_cog("AIChat")
                 if ai_cog and hasattr(ai_cog, 'handle_prefix_command'):
                     await ai_cog.handle_prefix_command(message, f"warn {target.mention} {reason}")
                 return
             if sub == "list" and message.mentions:
                 target = message.mentions[0]
-                ai_cog = self.bot.get_cog("AiChat")
+                ai_cog = self.bot.get_cog("AIChat")
                 if ai_cog and hasattr(ai_cog, 'handle_prefix_command'):
                     await ai_cog.handle_prefix_command(message, f"show warnings for {target.mention}")
                 return
             if sub == "clear" and message.mentions:
                 target = message.mentions[0]
-                ai_cog = self.bot.get_cog("AiChat")
+                ai_cog = self.bot.get_cog("AIChat")
                 if ai_cog and hasattr(ai_cog, 'handle_prefix_command'):
                     await ai_cog.handle_prefix_command(message, f"clear warnings for {target.mention}")
                 return
@@ -253,7 +253,7 @@ class Prefix(commands.Cog):
             target = message.mentions[0]
             reason = args_str.replace(f"<@{target.id}>", "").replace(f"<@!{target.id}>", "").strip()
             reason = reason or "no reason provided"
-            ai_cog = self.bot.get_cog("AiChat")
+            ai_cog = self.bot.get_cog("AIChat")
             if ai_cog and hasattr(ai_cog, 'handle_prefix_command'):
                 await ai_cog.handle_prefix_command(message, f"warn {target.mention} {reason}")
             return
@@ -297,7 +297,7 @@ class Prefix(commands.Cog):
             return
 
         # ban/kick → pass to AI for confirmation flow
-        ai_cog = self.bot.get_cog("AiChat")
+        ai_cog = self.bot.get_cog("AIChat")
         if ai_cog and hasattr(ai_cog, 'handle_prefix_command'):
             await ai_cog.handle_prefix_command(message, f"{cmd} {args_str}")
 
@@ -366,7 +366,7 @@ class Prefix(commands.Cog):
             return
 
         # flip, roll, joke, fact, meme, truth, dare, weather → pass to AI
-        ai_cog = self.bot.get_cog("AiChat")
+        ai_cog = self.bot.get_cog("AIChat")
         if ai_cog and hasattr(ai_cog, 'handle_prefix_command'):
             if cmd == "weather" and args:
                 await ai_cog.handle_prefix_command(message, f"weather in {args_str}")
