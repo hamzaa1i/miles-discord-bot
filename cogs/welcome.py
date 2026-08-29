@@ -573,7 +573,10 @@ class Welcome(commands.Cog):
             return await interaction.response.send_message(f"✅ {name} set.\nVariables: {vars_str}")
 
     # ---- /welcome test ----
+    # S2 — manage_guild required: previews post to the real welcome channel,
+    # so this is a moderator action, not a curiosity command.
     @welcome.command(name="test", description="Preview welcome, goodbye, or DM message")
+    @app_commands.checks.has_permissions(manage_guild=True)
     @app_commands.describe(type="Which message type to test")
     @app_commands.choices(type=[
         app_commands.Choice(name="Welcome", value="welcome"),
@@ -616,7 +619,10 @@ class Welcome(commands.Cog):
                 await self._err(interaction, f"❌ Failed: {e}")
 
     # ---- /welcome show ----
+    # S2 — manage_guild required: config preview can reveal DM templates
+    # and reward settings meant for staff.
     @welcome.command(name="show", description="Show the current welcome & goodbye configuration")
+    @app_commands.checks.has_permissions(manage_guild=True)
     async def welcome_show(self, interaction: discord.Interaction):
         config = self.get_config(interaction.guild.id)
         logger.info(

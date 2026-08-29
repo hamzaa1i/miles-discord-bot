@@ -336,7 +336,7 @@ class AIChat(commands.Cog):
                               extra_context: str = "",
                               chosen_model: str = None) -> str:
         from utils.db import (
-            get_conversation_history, save_conversation_message,
+            get_conversation_history_async, save_conversation_message_async,
             get_server_personality,
         )
 
@@ -371,7 +371,11 @@ class AIChat(commands.Cog):
         db_history = []
         if guild_id:
             try:
-                db_history = get_conversation_history(guild_id, user_id, channel_id=channel_id_val, limit=20)
+                # P1 — async wrapper: runs the blocking Supabase REST call in
+                # a thread so the event loop (gateway heartbeats) never stalls.
+                db_history = await get_conversation_history_async(
+                    guild_id, user_id, channel_id=channel_id_val, limit=20
+                )
             except Exception:
                 pass
 
@@ -438,8 +442,9 @@ class AIChat(commands.Cog):
             try:
                 from datetime import datetime as _dt
                 ts = _dt.utcnow().isoformat()
-                save_conversation_message(guild_id, user_id, "user", clean_content, ts, channel_id=channel_id_val)
-                save_conversation_message(guild_id, user_id, "assistant", ai_response, ts, channel_id=channel_id_val)
+                # P1 — async wrappers (thread-pool) for both writes
+                await save_conversation_message_async(guild_id, user_id, "user", clean_content, ts, channel_id=channel_id_val)
+                await save_conversation_message_async(guild_id, user_id, "assistant", ai_response, ts, channel_id=channel_id_val)
             except Exception as e:
                 logger.error(f"[conversation_memory] save error: {e}")
 
@@ -1540,13 +1545,14 @@ class AIChat(commands.Cog):
                         break
 
             # FIX 2 — Load conversation history BEFORE fast-path check.
-            from utils.db import get_conversation_history
+            # P1 — async wrapper keeps the Supabase REST call off the loop.
+            from utils.db import get_conversation_history_async
             guild_id_val = message.guild.id if message.guild else 0
             ch_id_val = message.channel.id if message.channel else 0
             db_history_check = []
             if guild_id_val:
                 try:
-                    db_history_check = get_conversation_history(
+                    db_history_check = await get_conversation_history_async(
                         guild_id_val, message.author.id,
                         channel_id=ch_id_val, limit=8
                     )
@@ -1762,7 +1768,7 @@ class AIChat(commands.Cog):
 
     # PHASE 2A — /forget command: clears persistent conversation memory
     @app_commands.command(name="forget",
-                          description="Clear cyn's memory of your conversation history")
+                          description="Clear Aurelia's memory of your conversation history")
     @app_commands.checks.cooldown(1, 10.0, key=lambda i: i.user.id)
     async def forget(self, interaction: discord.Interaction):
         self.bot.increment_command('forget')

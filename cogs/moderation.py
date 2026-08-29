@@ -15,8 +15,8 @@ import re
 import time
 import logging
 from utils.database import Database
-from utils.db import (get_guild_setting, set_guild_setting, get_warnings,
-                      add_warning as db_add_warning,
+from utils.db import (get_guild_setting_async, set_guild_setting_async,
+                      get_warnings_async, add_warning_async,
                       add_tempban, get_tempbans_due, remove_tempban)
 
 logger = logging.getLogger(__name__)
@@ -50,15 +50,18 @@ class Moderation(commands.Cog):
         if self.tempban_loop.is_running():
             self.tempban_loop.cancel()
 
-    def _get_settings(self, guild_id):
-        """Get mod_settings with 60s cache."""
+    async def _get_settings(self, guild_id):
+        """Get mod_settings with 60s cache.
+
+        P1 — the underlying Supabase REST call runs in a thread via
+        get_guild_setting_async so the event loop never blocks."""
         import time
         now = time.time()
         if guild_id in self._settings_cache:
             cached, ts = self._settings_cache[guild_id]
             if now - ts < 60:
                 return cached
-        settings = get_guild_setting(guild_id, "mod_settings")
+        settings = await get_guild_setting_async(guild_id, "mod_settings")
         self._settings_cache[guild_id] = (settings, now)
         return settings
 
@@ -66,10 +69,10 @@ class Moderation(commands.Cog):
         """Drop cached mod_settings after a write so the next read is fresh."""
         self._settings_cache.pop(guild_id, None)
 
-    def _get_log_channel(self, guild):
+    async def _get_log_channel(self, guild):
         """Resolve the configured mod log channel for a guild, or None."""
         try:
-            settings = self._get_settings(guild.id)
+            settings = await self._get_settings(guild.id)
         except Exception:
             return None
         log_channel_id = settings.get("log_channel_id") if isinstance(settings, dict) else None
@@ -84,7 +87,7 @@ class Moderation(commands.Cog):
                             reason, color=0xe67e22):
         """Send an enriched embed (thumbnail + Account Age + Previous Offenses)
         to the configured mod log channel. No-ops if no log channel is set."""
-        channel = self._get_log_channel(guild)
+        channel = await self._get_log_channel(guild)
         if channel is None:
             return
         embed = discord.Embed(title=f"🛡️ {action_label}", color=color,
@@ -101,7 +104,7 @@ class Moderation(commands.Cog):
         except Exception:
             account_age = 0
         try:
-            prev = len(get_warnings(guild.id, target.id))
+            prev = len(await get_warnings_async(guild.id, target.id))
         except Exception:
             prev = 0
         embed.add_field(name="Account Age", value=f"{account_age} days", inline=True)
@@ -114,7 +117,7 @@ class Moderation(commands.Cog):
     async def log_ai_action(self, guild, action, target_name, target_id,
                             requester_name, original_message):
         """Send an AI mod action embed to the configured mod log channel."""
-        channel = self._get_log_channel(guild)
+        channel = await self._get_log_channel(guild)
         if channel is None:
             return
         embed = discord.Embed(title=f"🤖 AI Mod Action — {action}", color=0x9b59b6,
@@ -133,7 +136,7 @@ class Moderation(commands.Cog):
         """After a warn, auto-apply the configured action if the warning count
         reached the configured threshold."""
         try:
-            settings = self._get_settings(interaction.guild.id)
+            settings = await self._get_settings(interaction.guild.id)
         except Exception:
             return
         if not isinstance(settings, dict):
@@ -147,7 +150,7 @@ class Moderation(commands.Cog):
         except (ValueError, TypeError):
             return
         try:
-            count = len(get_warnings(interaction.guild.id, member.id))
+            count = len(await get_warnings_async(interaction.guild.id, member.id))
         except Exception:
             return
         if count < threshold:
@@ -358,7 +361,8 @@ class Moderation(commands.Cog):
         if action.value == "add":
             self.log_action(interaction.guild.id, "warn", str(interaction.user), str(user), reason)
             # FIX B1 — unified warnings store (utils.db → Supabase/warnings.json)
-            case_id = db_add_warning(interaction.guild.id, user.id, {
+            # P1 — async wrapper keeps the blocking REST insert off the loop.
+            case_id = await add_warning_async(interaction.guild.id, user.id, {
                 "type": "warn",
                 "reason": reason,
                 "mod_id": str(interaction.user.id),
@@ -376,8 +380,7 @@ class Moderation(commands.Cog):
             await self._maybe_apply_threshold(interaction, user, reason)
 
         elif action.value == "list":
-            from utils.db import get_warnings
-            warnings = get_warnings(interaction.guild.id, user.id)
+            warnings = await get_warnings_async(interaction.guild.id, user.id)
             if not warnings:
                 await interaction.followup.send(f"no warnings for {user.display_name}.", ephemeral=True)
                 return
@@ -401,13 +404,15 @@ class Moderation(commands.Cog):
             await interaction.followup.send(embed=embed, ephemeral=True)
 
         elif action.value == "clear":
-            from utils.db import get_warnings, clear_warnings
-            existing = get_warnings(interaction.guild_id, user.id)
+            from utils.db import clear_warnings
+            existing = await get_warnings_async(interaction.guild_id, user.id)
             if not existing:
                 await interaction.followup.send(f"no warnings found for {user.display_name}.", ephemeral=True)
                 return
             count = len(existing)
-            clear_warnings(interaction.guild_id, user.id)
+            # P1 — run the blocking bulk delete in a thread too
+            import asyncio as _asyncio
+            await _asyncio.to_thread(clear_warnings, interaction.guild_id, user.id)
             await interaction.followup.send(f"cleared {count} warning(s) for {user.display_name}.", ephemeral=True)
 
     @mod.command(name="purge", description="Delete messages")
@@ -739,9 +744,9 @@ class Moderation(commands.Cog):
         self.bot.increment_command('mod_antispam')
         await interaction.response.defer(ephemeral=True)
         try:
-            settings = get_guild_setting(interaction.guild_id, "mod_settings")
+            settings = await get_guild_setting_async(interaction.guild_id, "mod_settings")
             settings["antispam_enabled"] = (enabled.value == "on")
-            set_guild_setting(interaction.guild_id, "mod_settings", settings)
+            await set_guild_setting_async(interaction.guild_id, "mod_settings", settings)
             self._invalidate_settings(interaction.guild_id)
             status = "enabled" if enabled.value == "on" else "disabled"
             await interaction.followup.send(f"✅ antispam is now **{status}** for this server.", ephemeral=True)
@@ -761,7 +766,7 @@ class Moderation(commands.Cog):
         await interaction.response.defer(ephemeral=True)
         target_channel = channel or interaction.channel
         try:
-            settings = get_guild_setting(interaction.guild_id, "mod_settings")
+            settings = await get_guild_setting_async(interaction.guild_id, "mod_settings")
             if not isinstance(settings, dict):
                 settings = {}
             antilink_channels = [str(c) for c in (settings.get("antilink_channels") or [])]
@@ -775,7 +780,7 @@ class Moderation(commands.Cog):
                     antilink_channels.remove(cid)
                 msg = f"✅ antilink **disabled** in {target_channel.mention}. Links are allowed again."
             settings["antilink_channels"] = antilink_channels
-            set_guild_setting(interaction.guild_id, "mod_settings", settings)
+            await set_guild_setting_async(interaction.guild_id, "mod_settings", settings)
             self._invalidate_settings(interaction.guild_id)
             await interaction.followup.send(msg, ephemeral=True)
         except Exception as e:
@@ -853,7 +858,7 @@ class Moderation(commands.Cog):
         self.bot.increment_command('mod_config')
         await interaction.response.defer(ephemeral=True)
         try:
-            settings = get_guild_setting(interaction.guild_id, "mod_settings")
+            settings = await get_guild_setting_async(interaction.guild_id, "mod_settings")
             if not isinstance(settings, dict):
                 settings = {}
         except Exception as e:
@@ -883,7 +888,7 @@ class Moderation(commands.Cog):
             await interaction.followup.send("unknown setting.", ephemeral=True)
             return
         try:
-            set_guild_setting(interaction.guild_id, "mod_settings", settings)
+            await set_guild_setting_async(interaction.guild_id, "mod_settings", settings)
             self._invalidate_settings(interaction.guild_id)
         except Exception as e:
             await interaction.followup.send(f"failed to save: `{e}`", ephemeral=True)
@@ -896,7 +901,7 @@ class Moderation(commands.Cog):
         if not message.guild or message.author.bot:
             return
         try:
-            settings = self._get_settings(message.guild.id)
+            settings = await self._get_settings(message.guild.id)
         except Exception:
             return
         antilink_channels = (settings or {}).get("antilink_channels") if isinstance(settings, dict) else None

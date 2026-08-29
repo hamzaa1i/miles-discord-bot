@@ -27,10 +27,10 @@ class BotStatus(commands.Cog):
         self.bot = bot
         self.custom_status = None
         self.status_list = [
-            (discord.ActivityType.listening, "@cyn"),
+            (discord.ActivityType.listening, "@Aurelia"),
             (discord.ActivityType.playing, "with {users} users"),
             (discord.ActivityType.watching, "{servers} servers"),
-            (discord.ActivityType.competing, "being cyn"),
+            (discord.ActivityType.competing, "being Aurelia"),
             (discord.ActivityType.listening, "your problems"),
             (discord.ActivityType.watching, "you type"),
             (discord.ActivityType.playing, "with fire"),

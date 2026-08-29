@@ -1,10 +1,10 @@
-# cyn — AI Discord Companion
+# Aurelia — Veloura's Custom Discord Bot
 
-A sarcastic AI companion with moderation tools. She has a sharp tongue, dark humor, and takes no nonsense.
+Aurelia is Veloura's custom community bot — soft-spoken, slightly playful, AI-powered, with a full moderation suite. She/her, lowercase always.
 
 ## Features
 
-- **AI Chat** — `@mention` or `/cyn` to talk to cyn naturally
+- **AI Chat** — `@Aurelia` or `/aurelia` to talk to her naturally
 - **Natural Language Moderation** — say "warn @user" via AI and she handles it
 - **Server Moderation** — full `/mod` command suite (kick, ban, timeout, warn, purge, nuke, lock, slowmode)
 - **Weather** — `/weather [city]`

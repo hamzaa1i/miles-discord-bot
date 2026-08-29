@@ -211,6 +211,7 @@ CREATE TABLE server_personality (
 -- GRANT ALL ON public.leveling_settings TO anon;
 -- ALTER TABLE public.leveling_settings DISABLE ROW LEVEL SECURITY;
 """
+import asyncio
 import os
 import json
 import logging
@@ -838,8 +839,11 @@ def save_conversation_message(guild_id: int, user_id: int, role: str,
             ).order("id", desc=True).execute()
             if all_entries.data and len(all_entries.data) > 20:
                 ids_to_delete = [e["id"] for e in all_entries.data[20:]]
-                for eid in ids_to_delete:
-                    _supabase.table("conversation_memory").delete().eq("id", eid).execute()
+                # P1 — single bulk delete instead of the old N+1 loop (one
+                # REST call per row). Same effect, one round-trip.
+                _supabase.table("conversation_memory").delete().in_(
+                    "id", ids_to_delete
+                ).execute()
             return
         except Exception as e:
             error_key = "save_conversation_message"
@@ -1336,3 +1340,59 @@ def remove_tempban(guild_id: int, user_id: int):
                 and tb.get("user_id") == str(user_id))
     ]
     _write_json("data/tempbans.json", data)
+
+
+# ─── Async wrappers (P1 / D4 — non-blocking event loop) ────────
+#
+# The supabase-py client executes synchronous HTTP REST calls. Calling the
+# sync functions above directly inside an async handler freezes the entire
+# event loop — including Discord gateway heartbeats — for every network
+# round-trip. AI-chat memory (get_conversation_history /
+# save_conversation_message) runs on nearly every mention, so this was the
+# highest-frequency blocker.
+#
+# Usage from async code:
+#     from utils.db import get_conversation_history_async
+#     history = await get_conversation_history_async(guild_id, user_id, ...)
+#
+# The sync functions remain unchanged for background tasks / sync contexts.
+
+async def get_guild_setting_async(guild_id: int, table: str) -> dict:
+    """Non-blocking get_guild_setting — runs the blocking REST call in a
+    thread-pool executor via asyncio.to_thread()."""
+    return await asyncio.to_thread(get_guild_setting, guild_id, table)
+
+
+async def set_guild_setting_async(guild_id: int, table: str, settings: dict):
+    """Non-blocking set_guild_setting."""
+    return await asyncio.to_thread(set_guild_setting, guild_id, table, settings)
+
+
+async def get_warnings_async(guild_id: int, user_id: int) -> list:
+    """Non-blocking get_warnings."""
+    return await asyncio.to_thread(get_warnings, guild_id, user_id)
+
+
+async def add_warning_async(guild_id: int, user_id: int, warning: dict) -> int:
+    """Non-blocking add_warning."""
+    return await asyncio.to_thread(add_warning, guild_id, user_id, warning)
+
+
+async def get_conversation_history_async(guild_id: int, user_id: int,
+                                         channel_id: int = 0,
+                                         limit: int = 20) -> list:
+    """Non-blocking get_conversation_history."""
+    return await asyncio.to_thread(
+        get_conversation_history, guild_id, user_id, channel_id, limit
+    )
+
+
+async def save_conversation_message_async(guild_id: int, user_id: int,
+                                          role: str, content: str,
+                                          timestamp: str = None,
+                                          channel_id: int = 0):
+    """Non-blocking save_conversation_message."""
+    return await asyncio.to_thread(
+        save_conversation_message, guild_id, user_id, role, content,
+        timestamp, channel_id
+    )

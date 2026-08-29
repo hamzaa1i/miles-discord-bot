@@ -20,7 +20,7 @@ import re
 import time
 import logging
 
-from utils.db import get_guild_setting, set_guild_setting
+from utils.db import get_guild_setting_async, set_guild_setting_async
 
 logger = logging.getLogger('cyn.prefix')
 
@@ -30,14 +30,16 @@ class Prefix(commands.Cog):
         self.bot = bot
         self._cache: dict[int, tuple[str | None, float]] = {}
 
-    def _get_prefix(self, guild_id: int) -> str | None:
+    async def _get_prefix(self, guild_id: int) -> str | None:
+        """P1 — async: the Supabase REST read runs in a thread so the
+        per-message event loop never blocks."""
         now = time.time()
         if guild_id in self._cache:
             cached_prefix, ts = self._cache[guild_id]
             if now - ts < 60:
                 return cached_prefix
         try:
-            settings = get_guild_setting(guild_id, "prefix_settings")
+            settings = await get_guild_setting_async(guild_id, "prefix_settings")
             prefix = settings.get("prefix") if settings else None
         except Exception:
             prefix = None
@@ -57,7 +59,7 @@ class Prefix(commands.Cog):
         if not message.guild:
             return
 
-        prefix = self._get_prefix(message.guild.id)
+        prefix = await self._get_prefix(message.guild.id)
         if not prefix:
             return
 
@@ -118,7 +120,7 @@ class Prefix(commands.Cog):
 
         if sub == "message":
             # FIX 2 — Capture everything after "welcome message " including newlines
-            prefix = self._get_prefix(message.guild.id)
+            prefix = await self._get_prefix(message.guild.id)
             match = re.match(
                 rf'^{re.escape(prefix)}welcome\s+message\s+',
                 message.content,
@@ -133,10 +135,9 @@ class Prefix(commands.Cog):
                 await message.reply("provide a message. use {user} for username, {server} for server name.")
                 return
 
-            from utils.db import get_guild_setting, set_guild_setting
-            settings = get_guild_setting(message.guild.id, "welcome_settings")
+            settings = await get_guild_setting_async(message.guild.id, "welcome_settings")
             settings["message"] = text
-            set_guild_setting(message.guild.id, "welcome_settings", settings)
+            await set_guild_setting_async(message.guild.id, "welcome_settings", settings)
             await message.reply("welcome message set. variables: {user}, {server}, {membercount}")
             return
 
@@ -145,17 +146,15 @@ class Prefix(commands.Cog):
                 await message.reply("mention a channel: welcome channel #channel")
                 return
             channel = message.channel_mentions[0]
-            from utils.db import get_guild_setting, set_guild_setting
-            settings = get_guild_setting(message.guild.id, "welcome_settings")
+            settings = await get_guild_setting_async(message.guild.id, "welcome_settings")
             settings["channel_id"] = str(channel.id)
             settings["enabled"] = True
-            set_guild_setting(message.guild.id, "welcome_settings", settings)
+            await set_guild_setting_async(message.guild.id, "welcome_settings", settings)
             await message.reply(f"welcome channel set to {channel.mention}.")
             return
 
         if sub == "test":
-            from utils.db import get_guild_setting
-            settings = get_guild_setting(message.guild.id, "welcome_settings")
+            settings = await get_guild_setting_async(message.guild.id, "welcome_settings")
             channel_id = settings.get("channel_id")
             welcome_msg = settings.get("message", "Welcome {user} to {server}!")
             if not channel_id:
@@ -178,7 +177,7 @@ class Prefix(commands.Cog):
         sub = args[0].lower() if args else ""
 
         if sub == "message":
-            prefix = self._get_prefix(message.guild.id)
+            prefix = await self._get_prefix(message.guild.id)
             match = re.match(
                 rf'^{re.escape(prefix)}goodbye\s+message\s+',
                 message.content,
@@ -193,10 +192,9 @@ class Prefix(commands.Cog):
                 await message.reply("provide a message.")
                 return
 
-            from utils.db import get_guild_setting, set_guild_setting
-            settings = get_guild_setting(message.guild.id, "welcome_settings")
+            settings = await get_guild_setting_async(message.guild.id, "welcome_settings")
             settings["goodbye_message"] = text
-            set_guild_setting(message.guild.id, "welcome_settings", settings)
+            await set_guild_setting_async(message.guild.id, "welcome_settings", settings)
             await message.reply("goodbye message set.")
             return
 
@@ -205,11 +203,10 @@ class Prefix(commands.Cog):
                 await message.reply("mention a channel: goodbye channel #channel")
                 return
             channel = message.channel_mentions[0]
-            from utils.db import get_guild_setting, set_guild_setting
-            settings = get_guild_setting(message.guild.id, "welcome_settings")
+            settings = await get_guild_setting_async(message.guild.id, "welcome_settings")
             settings["goodbye_channel_id"] = str(channel.id)
             settings["goodbye_enabled"] = True
-            set_guild_setting(message.guild.id, "welcome_settings", settings)
+            await set_guild_setting_async(message.guild.id, "welcome_settings", settings)
             await message.reply(f"goodbye channel set to {channel.mention}.")
             return
 
@@ -305,7 +302,7 @@ class Prefix(commands.Cog):
 
     async def _handle_simple(self, message, cmd, args, args_str):
         if cmd == "help":
-            prefix = self._get_prefix(message.guild.id) or "@cyn"
+            prefix = await self._get_prefix(message.guild.id) or "@cyn"
             help_text = (
                 f"**cyn commands** (prefix: `{prefix}`)\n"
                 f"also available as slash commands (`/help` for full menu)\n\n"
@@ -380,7 +377,7 @@ class Prefix(commands.Cog):
             owner_id = int(os.getenv("OWNER_ID", "0"))
             if message.author.id != owner_id:
                 # Still allow viewing
-                prefix = self._get_prefix(message.guild.id)
+                prefix = await self._get_prefix(message.guild.id)
                 if prefix:
                     await message.reply(f"current prefix: `{prefix}`")
                 else:
@@ -394,19 +391,20 @@ class Prefix(commands.Cog):
             if len(new_prefix) > 10:
                 await message.reply("prefix too long — max 10 characters.")
                 return
-            set_guild_setting(message.guild.id, "prefix_settings", {"prefix": new_prefix})
+            # P1 — async write keeps the blocking REST call off the event loop
+            await set_guild_setting_async(message.guild.id, "prefix_settings", {"prefix": new_prefix})
             self._invalidate_cache(message.guild.id)
             await message.reply(f"prefix set to `{new_prefix}`. use it like: `{new_prefix}hello`")
             return
 
         if sub == "remove":
-            set_guild_setting(message.guild.id, "prefix_settings", {"prefix": None})
+            await set_guild_setting_async(message.guild.id, "prefix_settings", {"prefix": None})
             self._invalidate_cache(message.guild.id)
             await message.reply("custom prefix removed. use @mention to talk to cyn.")
             return
 
         # Show current
-        prefix = self._get_prefix(message.guild.id)
+        prefix = await self._get_prefix(message.guild.id)
         if prefix:
             await message.reply(f"current prefix: `{prefix}`\nusage: `{prefix}hello`")
         else:
@@ -426,7 +424,7 @@ class Prefix(commands.Cog):
             await interaction.followup.send("prefix too long — max 10 characters.", ephemeral=True)
             return
         try:
-            set_guild_setting(interaction.guild_id, "prefix_settings", {"prefix": prefix})
+            await set_guild_setting_async(interaction.guild_id, "prefix_settings", {"prefix": prefix})
             self._invalidate_cache(interaction.guild_id)
             await interaction.followup.send(
                 f"✅ prefix set to `{prefix}`. use it like: `{prefix}hello`",
@@ -441,7 +439,7 @@ class Prefix(commands.Cog):
         self.bot.increment_command('prefix_remove')
         await interaction.response.defer(ephemeral=True)
         try:
-            set_guild_setting(interaction.guild_id, "prefix_settings", {"prefix": None})
+            await set_guild_setting_async(interaction.guild_id, "prefix_settings", {"prefix": None})
             self._invalidate_cache(interaction.guild_id)
             await interaction.followup.send(
                 "✅ custom prefix removed. use @mention to talk to cyn.",
@@ -454,7 +452,7 @@ class Prefix(commands.Cog):
     async def prefix_list(self, interaction: discord.Interaction):
         self.bot.increment_command('prefix_list')
         await interaction.response.defer(ephemeral=True)
-        prefix = self._get_prefix(interaction.guild_id)
+        prefix = await self._get_prefix(interaction.guild_id)
         if prefix:
             await interaction.followup.send(
                 f"current prefix: `{prefix}`\nusage: `{prefix}hello`",

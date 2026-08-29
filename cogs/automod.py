@@ -118,7 +118,7 @@ class AutoMod(commands.Cog):
             color=color,
             timestamp=datetime.now(timezone.utc)
         )
-        embed.set_footer(text="cyn automod")
+        embed.set_footer(text="aurelia automod")
         try:
             await channel.send(embed=embed)
         except Exception:

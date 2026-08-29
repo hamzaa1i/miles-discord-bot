@@ -129,7 +129,7 @@ class LoggingSystem(commands.Cog):
         embed.add_field(name="Channel", value=message.channel.mention, inline=True)
         if message.content:
             embed.add_field(name="Content", value=message.content[:1024] or "*empty*", inline=False)
-        embed.set_footer(text=f"cyn logs · Message ID: {message.id}")
+        embed.set_footer(text=f"aurelia logs · Message ID: {message.id}")
         try:
             await channel.send(embed=embed)
         except Exception:
@@ -162,7 +162,7 @@ class LoggingSystem(commands.Cog):
         embed.add_field(name="Jump", value=f"[Click]({after.jump_url})", inline=True)
         embed.add_field(name="Before", value=before.content[:1024] or "*empty*", inline=False)
         embed.add_field(name="After", value=after.content[:1024] or "*empty*", inline=False)
-        embed.set_footer(text=f"cyn logs · Message ID: {before.id}")
+        embed.set_footer(text=f"aurelia logs · Message ID: {before.id}")
         try:
             await channel.send(embed=embed)
         except Exception:
@@ -186,7 +186,7 @@ class LoggingSystem(commands.Cog):
         embed.add_field(name="User", value=f"{member.mention} ({member.id})", inline=True)
         embed.add_field(name="Account Age", value=f"{account_age.days} days old", inline=True)
         embed.add_field(name="Member #", value=str(member.guild.member_count), inline=True)
-        embed.set_footer(text=f"cyn logs · ID: {member.id}")
+        embed.set_footer(text=f"aurelia logs · ID: {member.id}")
         try:
             await channel.send(embed=embed)
         except Exception:
@@ -210,7 +210,7 @@ class LoggingSystem(commands.Cog):
         embed.add_field(name="User", value=f"{member.mention} ({member.id})", inline=True)
         if roles:
             embed.add_field(name=f"Roles ({len(roles)})", value=" ".join(roles[:10]), inline=False)
-        embed.set_footer(text=f"cyn logs · ID: {member.id}")
+        embed.set_footer(text=f"aurelia logs · ID: {member.id}")
         try:
             await channel.send(embed=embed)
         except Exception:
@@ -228,7 +228,7 @@ class LoggingSystem(commands.Cog):
         )
         embed.set_author(name=str(user), icon_url=user.avatar.url if user.avatar else None)
         embed.add_field(name="User", value=f"{user.mention} ({user.id})", inline=True)
-        embed.set_footer(text=f"cyn logs · ID: {user.id}")
+        embed.set_footer(text=f"aurelia logs · ID: {user.id}")
         try:
             await channel.send(embed=embed)
         except Exception:
@@ -246,7 +246,7 @@ class LoggingSystem(commands.Cog):
         )
         embed.set_author(name=str(user), icon_url=user.avatar.url if user.avatar else None)
         embed.add_field(name="User", value=f"{user.mention} ({user.id})", inline=True)
-        embed.set_footer(text=f"cyn logs · ID: {user.id}")
+        embed.set_footer(text=f"aurelia logs · ID: {user.id}")
         try:
             await channel.send(embed=embed)
         except Exception:
@@ -269,7 +269,7 @@ class LoggingSystem(commands.Cog):
                 )
                 embed.add_field(name="Before", value=before.nick or "*none*", inline=True)
                 embed.add_field(name="After", value=after.nick or "*none*", inline=True)
-                embed.set_footer(text=f"cyn logs · ID: {after.id}")
+                embed.set_footer(text=f"aurelia logs · ID: {after.id}")
                 try:
                     await channel.send(embed=embed)
                 except Exception:
@@ -294,7 +294,7 @@ class LoggingSystem(commands.Cog):
                     embed.add_field(name="Added", value=" ".join(r.mention for r in added), inline=False)
                 if removed:
                     embed.add_field(name="Removed", value=" ".join(r.mention for r in removed), inline=False)
-                embed.set_footer(text=f"cyn logs · ID: {after.id}")
+                embed.set_footer(text=f"aurelia logs · ID: {after.id}")
                 try:
                     await channel.send(embed=embed)
                 except Exception:
@@ -318,7 +318,7 @@ class LoggingSystem(commands.Cog):
                     name=str(member),
                     icon_url=member.avatar.url if member.avatar else None
                 )
-                embed.set_footer(text=f"cyn logs · ID: {member.id}")
+                embed.set_footer(text=f"aurelia logs · ID: {member.id}")
                 try:
                     await channel.send(embed=embed)
                 except Exception:
@@ -337,7 +337,7 @@ class LoggingSystem(commands.Cog):
                     name=str(member),
                     icon_url=member.avatar.url if member.avatar else None
                 )
-                embed.set_footer(text=f"cyn logs · ID: {member.id}")
+                embed.set_footer(text=f"aurelia logs · ID: {member.id}")
                 try:
                     await channel.send(embed=embed)
                 except Exception:
@@ -417,7 +417,7 @@ class LoggingSystem(commands.Cog):
             status = "✅" if events.get(key, True) else "❌"
             events_text += f"{status} {key.replace('_', ' ').title()}\n"
         embed.add_field(name="Event Toggles", value=events_text, inline=False)
-        embed.set_footer(text="cyn logs")
+        embed.set_footer(text="aurelia logs")
         await interaction.followup.send(embed=embed, ephemeral=True)
 
     @log.command(name="toggle", description="Toggle a specific log event on or off")

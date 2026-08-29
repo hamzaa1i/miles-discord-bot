@@ -22,7 +22,7 @@ from discord.ext import commands
 from discord import app_commands
 from datetime import datetime, timezone
 
-from utils.db import get_guild_setting, set_guild_setting
+from utils.db import get_guild_setting_async, set_guild_setting_async
 
 logger = logging.getLogger('cyn.confess')
 
@@ -35,17 +35,18 @@ class Confess(commands.Cog):
 
     # ─── Config helpers ───────────────────────────────────────────
 
-    def get_config(self, guild_id: int) -> dict:
-        config = get_guild_setting(guild_id, "confess_settings")
+    async def get_config(self, guild_id: int) -> dict:
+        """P1 — async: the Supabase REST read runs in a thread."""
+        config = await get_guild_setting_async(guild_id, "confess_settings")
         if not isinstance(config, dict):
             config = {}
         config.setdefault("channel_id", None)
         config.setdefault("count", 0)
         return config
 
-    def save_config(self, guild_id: int, config: dict) -> None:
+    async def save_config(self, guild_id: int, config: dict) -> None:
         try:
-            set_guild_setting(guild_id, "confess_settings", config)
+            await set_guild_setting_async(guild_id, "confess_settings", config)
         except Exception as e:
             logger.error(f"save_config failed for guild {guild_id}: {e}")
 
@@ -67,9 +68,9 @@ class Confess(commands.Cog):
                 "this command only works in servers.", ephemeral=True
             )
             return
-        config = self.get_config(interaction.guild.id)
+        config = await self.get_config(interaction.guild.id)
         config["channel_id"] = str(channel.id)
-        self.save_config(interaction.guild.id, config)
+        await self.save_config(interaction.guild.id, config)
         logger.info(
             f"confess channel set to #{channel.name} ({channel.id}) "
             f"in guild {interaction.guild.id}"
@@ -81,6 +82,9 @@ class Confess(commands.Cog):
 
     @confess.command(name="text", description="Submit an anonymous confession")
     @app_commands.describe(text="Your anonymous confession (max ~1900 chars)")
+    # S3 — 5-minute cooldown per user per guild to prevent confession spam /
+    # brigading of the configured channel.
+    @app_commands.checks.cooldown(1, 300.0, key=lambda i: (i.guild_id, i.user.id))
     async def confess_text(self, interaction: discord.Interaction, text: str):
         self.bot.increment_command('confess_text')
         await interaction.response.defer(ephemeral=True)
@@ -94,7 +98,7 @@ class Confess(commands.Cog):
                 pass
             return
 
-        config = self.get_config(interaction.guild.id)
+        config = await self.get_config(interaction.guild.id)
         channel_id = config.get("channel_id")
         if not channel_id:
             try:
@@ -160,7 +164,7 @@ class Confess(commands.Cog):
             return
 
         # Persist the incremented counter
-        self.save_config(interaction.guild.id, config)
+        await self.save_config(interaction.guild.id, config)
 
         try:
             await interaction.followup.send(

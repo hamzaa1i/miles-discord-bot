@@ -46,9 +46,9 @@ bot = None  # set after bot is created
 @app.route('/')
 def home():
     return f"""<!doctype html>
-<html><head><title>cyn</title></head>
+<html><head><title>Aurelia</title></head>
 <body style="font-family: sans-serif; text-align: center; padding: 60px; background:#0f0f1a; color:#e0e0e0;">
-  <h1 style="font-size: 48px; margin: 0;">cyn is online ✅</h1>
+  <h1 style="font-size: 48px; margin: 0;">Aurelia is online ✦</h1>
   <p style="color:#888;">uptime since {start_time.isoformat()}</p>
   <p style="color:#666;">{datetime.utcnow().isoformat()} UTC</p>
 </body></html>"""
@@ -288,6 +288,30 @@ class CynBot(commands.Bot):
         # FIX 5 — make absolutely sure data files exist on every ready
         ensure_data_files()
 
+        # PHASE 2 (B1) — One-time legacy warnings migration.
+        # If data/moderation.json still exists AND contains actual warnings,
+        # import them into the unified utils.db store, then rename the file
+        # so this never runs again. (ensure_data_files()/log_action() may
+        # recreate an empty moderation.json afterwards — that must NOT
+        # re-trigger this.) Migration runs in a thread (blocking Supabase
+        # REST calls) and never blocks startup on failure.
+        try:
+            legacy_path = os.path.join("data", "moderation.json")
+            if os.path.exists(legacy_path):
+                from scripts.migrate_legacy_warnings import (
+                    migrate_legacy_warnings, legacy_warnings_exist,
+                )
+                if legacy_warnings_exist():
+                    result = await asyncio.to_thread(migrate_legacy_warnings)
+                    logger.info(
+                        f"[MIGRATE] legacy warnings: {result['imported']} imported, "
+                        f"{result['skipped']} duplicates skipped"
+                    )
+                    os.rename(legacy_path, os.path.join("data", "moderation_migrated.json"))
+                    logger.info("[MIGRATE] data/moderation.json → data/moderation_migrated.json")
+        except Exception as e:
+            logger.error(f"[MIGRATE] legacy warnings migration failed: {e}")
+
         # Fetch owner user object
         if OWNER_ID:
             try:
@@ -429,11 +453,21 @@ async def on_interaction(interaction: discord.Interaction):
         cmd_name = interaction.data.get('name', 'unknown') if interaction.data else 'unknown'
         options = interaction.data.get('options', []) if interaction.data else []
 
+        # S4 — Privacy: /confess submissions must stay anonymous. Never log
+        # the invoking user's ID or any option values (the confession text)
+        # for confess commands — render them as [redacted].
+        is_private_cmd = cmd_name.lower() in ("confess",)
+        if is_private_cmd:
+            user = f"{interaction.user.display_name} ([redacted])"
+
         # Format options/args
         args_str = ""
         if options:
             args_parts = []
             for opt in options:
+                if is_private_cmd:
+                    args_parts.append(f"{opt['name']}=[redacted]")
+                    continue
                 if 'options' in opt:
                     # subcommand group: /parent child arg=val
                     for sub in opt['options']:
@@ -561,7 +595,7 @@ async def botinfo(ctx):
     import discord as _discord
     owner_str = str(bot.owner_user) if bot.owner_user else "volc"
 
-    embed = discord.Embed(title="cyn", color=0x2b2d31)
+    embed = discord.Embed(title="Aurelia", color=0x2b2d31)
     embed.set_thumbnail(url=bot.user.avatar.url if bot.user.avatar else None)
     embed.add_field(name="Owner", value=owner_str, inline=True)
     embed.add_field(name="Servers", value=f"{len(bot.guilds):,}", inline=True)
@@ -572,7 +606,7 @@ async def botinfo(ctx):
     embed.add_field(name="discord.py", value=_discord.__version__, inline=True)
     embed.add_field(name="Python", value=f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}", inline=True)
     embed.add_field(name="Uptime", value=uptime_str, inline=True)
-    embed.set_footer(text="cyn — built by volc")
+    embed.set_footer(text="Aurelia — built by volc")
     await ctx.send(embed=embed)
 
 

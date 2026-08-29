@@ -265,6 +265,19 @@ class Polls(commands.Cog):
                 "that poll already ended.", ephemeral=True
             )
             return
+        # S1 — only the poll's creator, or a member with manage_messages /
+        # administrator, may end it early.
+        author_id = str(pdata.get('author_id', ''))
+        perms = interaction.user.guild_permissions
+        is_creator = str(interaction.user.id) == author_id
+        is_privileged = perms and (perms.manage_messages or perms.administrator)
+        if not (is_creator or is_privileged):
+            await interaction.response.send_message(
+                "only the poll creator or someone with manage_messages "
+                "permission can end this poll.",
+                ephemeral=True,
+            )
+            return
         await self._end_poll(message_id, force=True)
         await interaction.response.send_message("✅ poll ended.")
 
