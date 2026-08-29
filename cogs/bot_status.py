@@ -32,19 +32,20 @@ class BotStatus(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.custom_status = None
-        # CHANGE 2 — Activity-type text is baked into each name so it shows
-        # in the member list even when Discord hides the type prefix.
+        # CHANGE 2 — Activity-type text is baked into each name (lowercase
+        # veloura aesthetic) so it shows in the member list even when Discord
+        # hides the type prefix.
         self.status_list = [
-            (discord.ActivityType.listening, "Listening to @Aurelia"),
-            (discord.ActivityType.playing, "Playing with {users} users"),
-            (discord.ActivityType.watching, "Watching {servers} servers"),
-            (discord.ActivityType.competing, "Competing in being Aurelia"),
-            (discord.ActivityType.listening, "Listening to your problems"),
-            (discord.ActivityType.watching, "Watching you type"),
-            (discord.ActivityType.playing, "Playing with fire"),
-            (discord.ActivityType.listening, "Listening to the void"),
-            (discord.ActivityType.competing, "Competing with herself"),
-            (discord.ActivityType.watching, "Watching the chaos unfold"),
+            (discord.ActivityType.watching, "watching over veloura ༉‧₊˚. ღ"),
+            (discord.ActivityType.listening, "listening to veloura after dark"),
+            (discord.ActivityType.playing, "playing with {users} members ♡"),
+            (discord.ActivityType.watching, "watching the community grow"),
+            (discord.ActivityType.listening, "listening to your conversations ୨୧"),
+            (discord.ActivityType.playing, "playing somewhere in veloura"),
+            (discord.ActivityType.watching, "watching the stars align ✦"),
+            (discord.ActivityType.listening, "listening to the midnight ambience"),
+            (discord.ActivityType.playing, "playing around in veloura ༉‧₊˚"),
+            (discord.ActivityType.watching, "watching {users} souls wander around"),
         ]
         self.status_index = 0
         self._load_custom_status()
