@@ -12,26 +12,47 @@ INTENT_SYSTEM_PROMPT = (
     "Return ONLY valid JSON, nothing else.\n\n"
     "Format: {\"intent\": \"command_name\", \"params\": {}}\n\n"
     "If no command matches, return: {\"intent\": \"chat\", \"params\": {}}\n\n"
-    "Possible intents and their params:\n"
-    "- ban: {user_id, reason} — REQUIRES a @mention of the target in the message\n"
-    "- kick: {user_id, reason} — REQUIRES a @mention of the target in the message\n"
-    "- mute: {user_id, duration_seconds, reason} — REQUIRES a @mention of the target in the message\n"
-    "- timeout: same as mute (alias)\n"
-    "- unmute: {user_id} — remove timeout from a user. REQUIRES a @mention.\n"
-    "- purge: {amount}\n"
-    "- warn: {user_id, reason} — REQUIRES a @mention of the target in the message\n"
-    "- warn_clear: {user_id} — clear all warnings for a user. REQUIRES a @mention.\n"
-    "- warn_list: {user_id} — list warnings for a user. REQUIRES a @mention.\n"
+    "Possible intents and their params:\n\n"
+    "=== MODERATION INTENTS (highest priority) ===\n"
+    "- mute: {user_id, duration_seconds, reason} — user wants to mute/timeout someone "
+    "in the server.\n"
+    "  Examples: 'mute @user', 'mute @user for 1m', 'timeout @user 5m', 'mute them', "
+    "'put @user on timeout for 10 minutes'\n"
+    "  REQUIRES an @mention of the target user.\n"
+    "  Params: user_id (from the @mention), duration_seconds (if provided, converted "
+    "to seconds: '1m'→60, '5m'→300, '10 minutes'→600, '2h'→7200, '1d'→86400), "
+    "reason (if provided)\n"
+    "- timeout: same as mute — user wants to timeout someone. Treat 'mute' and "
+    "'timeout' as synonyms.\n"
+    "- unmute: {user_id} — user wants to unmute/untimeout someone.\n"
+    "  Examples: 'unmute @user', 'remove timeout from @user', 'untimeout @user'\n"
+    "  REQUIRES an @mention.\n"
+    "- ban: {user_id, reason} — user wants to ban someone.\n"
+    "  Examples: 'ban @user', 'ban @user for spamming', 'ban them'\n"
+    "  REQUIRES an @mention.\n"
+    "- kick: {user_id, reason} — user wants to kick someone.\n"
+    "  Examples: 'kick @user', 'kick @user for being toxic'\n"
+    "  REQUIRES an @mention.\n"
+    "- warn: {user_id, reason} — user wants to warn someone.\n"
+    "  Examples: 'warn @user', 'warn @user for spam', 'give @user a warning'\n"
+    "  REQUIRES an @mention.\n"
+    "- warn_clear: {user_id} — clear all warnings for a user. REQUIRES an @mention.\n"
+    "- warn_list: {user_id} — list warnings for a user. REQUIRES an @mention.\n"
+    "- purge: {amount} — user wants to delete messages.\n"
+    "  Examples: 'purge 10', 'delete 50 messages', 'clear chat'\n"
+    "- lock: {} — user wants to lock a channel.\n"
+    "  Examples: 'lock', 'lock this channel', 'lock the channel'\n"
+    "- unlock: {} — user wants to unlock a channel.\n"
+    "  Examples: 'unlock', 'unlock this channel'\n\n"
+    "=== OTHER INTENTS ===\n"
     "- delete_message: {message_id} — delete a specific message by ID, or the "
     "message they are replying to. Look for 'delete message: 1234567890' or "
     "'delete this message'. If no ID visible, return {\"message_id\": null}.\n"
     "- slowmode: {seconds}\n"
-    "- lock: {}\n"
-    "- unlock: {}\n"
     "- hide: {}\n"
     "- show: {}\n"
     "- nuke: {}\n"
-    "- nick: {user_id, nickname} — change a user's nickname. REQUIRES a @mention.\n"
+    "- nick: {user_id, nickname} — change a user's nickname. REQUIRES an @mention.\n"
     "- role_add: {user_id, role}\n"
     "- role_remove: {user_id, role}\n"
     "- remind: {duration_seconds, reminder_text}\n"
@@ -59,10 +80,13 @@ INTENT_SYSTEM_PROMPT = (
     "- dare: {} — user wants a dare challenge\n"
     "- weather: {city}\n"
     "- chat: {} (default fallback)\n\n"
-    "IMPORTANT: Moderation intents (ban, kick, warn, mute) ONLY apply when there "
-    "is a @mention pattern (like <@123456> or @username format) visible in the "
-    "message. If a user says 'warn diva' with no @mention, return 'chat' intent, "
-    "NOT 'warn' — the bot cannot reliably identify who 'diva' is without a mention.\n\n"
+    "IMPORTANT: If a message contains a moderation keyword (mute, timeout, ban, kick, "
+    "warn, purge, lock, unlock, unmute) AND an @mention, it is ALWAYS a moderation "
+    "intent, never chat. Only classify as 'chat' if no moderation keyword is present "
+    "or if the user is asking a question ABOUT moderation (like 'can you mute someone?' "
+    "or 'what does mute do?'). If a moderation keyword appears with NO @mention of a "
+    "target (e.g. 'warn diva'), return 'chat' — the bot cannot reliably identify who "
+    "'diva' is without a mention.\n\n"
     "NOTE: 'poll' intent has been removed. If a user talks about polls, voting, "
     "or poll results, return 'chat' — the AI handles it conversationally."
 )
@@ -96,6 +120,42 @@ def _extract_user_id(raw):
         return None
 
 
+_DURATION_UNITS = {
+    's': 1, 'sec': 1, 'secs': 1, 'second': 1, 'seconds': 1,
+    'm': 60, 'min': 60, 'mins': 60, 'minute': 60, 'minutes': 60,
+    'h': 3600, 'hr': 3600, 'hrs': 3600, 'hour': 3600, 'hours': 3600,
+    'd': 86400, 'day': 86400, 'days': 86400,
+}
+
+
+def _parse_duration_to_seconds(raw):
+    """FIX (mute duration) — models sometimes return duration as a string like
+    '1m', '5 min', '2h', '1d', '90s', or '10 minutes' instead of raw seconds.
+    Convert any of those into seconds. Plain ints pass through unchanged.
+    Returns None if nothing parseable is found."""
+    if raw is None or isinstance(raw, bool):
+        return None
+    if isinstance(raw, (int, float)):
+        return int(raw)
+    s = str(raw).strip().lower()
+    if not s:
+        return None
+    import re as _re
+    total = 0
+    matched = False
+    for num, unit in _re.findall(
+            r'(\d+)\s*(s|secs?|seconds?|m|mins?|minutes?|h|hrs?|hours?|d|days?)\b',
+            s):
+        total += int(num) * _DURATION_UNITS[unit]
+        matched = True
+    if matched and total > 0:
+        return total
+    try:
+        return int(s)
+    except ValueError:
+        return None
+
+
 def normalize_params(params: dict) -> dict:
     if not isinstance(params, dict):
         return {}
@@ -103,7 +163,12 @@ def normalize_params(params: dict) -> dict:
     for k, v in params.items():
         if k in ('user_id', 'target_user_id', 'user_id1', 'user_id2'):
             cleaned[k] = _extract_user_id(v)
-        elif k in ('amount', 'sides', 'duration_seconds', 'seconds', 'message_id'):
+        elif k in ('duration', 'duration_seconds'):
+            # FIX (mute duration) — normalize the key to 'duration_seconds' so
+            # the executor always reads one canonical key, and convert
+            # '1m'/'10 minutes' style strings into seconds.
+            cleaned['duration_seconds'] = _parse_duration_to_seconds(v)
+        elif k in ('amount', 'sides', 'seconds', 'message_id'):
             if v is None:
                 cleaned[k] = None
             else:

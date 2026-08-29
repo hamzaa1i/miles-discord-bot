@@ -44,7 +44,8 @@ CREATE TABLE IF NOT EXISTS welcome_settings (
   welcomer_reward INT DEFAULT 0,
   embed_mode TEXT DEFAULT 'embed',
   dm_message TEXT,
-  welcome_image TEXT
+  welcome_image TEXT,
+  welcome_color TEXT DEFAULT '#FFC0CB'
 );
 
 CREATE TABLE log_settings (
@@ -155,6 +156,8 @@ CREATE TABLE server_personality (
 --
 -- ALTER TABLE welcome_settings ADD COLUMN IF NOT EXISTS dm_message TEXT;
 -- ALTER TABLE welcome_settings ADD COLUMN IF NOT EXISTS embed_mode TEXT DEFAULT 'embed';
+-- ALTER TABLE welcome_settings ADD COLUMN IF NOT EXISTS welcome_image TEXT;
+-- ALTER TABLE welcome_settings ADD COLUMN IF NOT EXISTS welcome_color TEXT DEFAULT '#FFC0CB';
 --
 -- CREATE TABLE IF NOT EXISTS user_levels (
 --   guild_id TEXT NOT NULL,
@@ -294,7 +297,7 @@ _TABLE_COLUMNS = {
         "guild_id", "channel_id", "message", "enabled",
         "goodbye_channel_id", "goodbye_message", "goodbye_enabled",
         "autorole_id", "welcome_reward", "welcomer_reward",
-        "embed_mode", "dm_message", "welcome_image",
+        "embed_mode", "dm_message", "welcome_image", "welcome_color",
     },
     "log_settings": {
         "guild_id", "channel_id", "enabled",

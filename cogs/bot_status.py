@@ -8,6 +8,12 @@ CHANGE 1 — Fixed bot status visibility:
   Changed rotation from 5 min to 15 min for more reliable member list updates.
   Added _apply_current_status() helper to deduplicate status logic.
 
+CHANGE 2 — Discord now often hides the activity-type prefix ("Listening to",
+  "Playing", "Watching") in the member list and only shows it in the full
+  profile popup. To work around this, the activity type text is PREPENDED
+  manually to each status name, so users always see e.g. "Listening to
+  @Aurelia" in the member list regardless of Discord's display behavior.
+
 Commands:
   /status set [type] [text]  — set a custom pinned status (stops rotation)
   /status reset              — clear custom status, resume rotation
@@ -26,17 +32,19 @@ class BotStatus(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.custom_status = None
+        # CHANGE 2 — Activity-type text is baked into each name so it shows
+        # in the member list even when Discord hides the type prefix.
         self.status_list = [
-            (discord.ActivityType.listening, "@Aurelia"),
-            (discord.ActivityType.playing, "with {users} users"),
-            (discord.ActivityType.watching, "{servers} servers"),
-            (discord.ActivityType.competing, "being Aurelia"),
-            (discord.ActivityType.listening, "your problems"),
-            (discord.ActivityType.watching, "you type"),
-            (discord.ActivityType.playing, "with fire"),
-            (discord.ActivityType.listening, "the void"),
-            (discord.ActivityType.competing, "with herself"),
-            (discord.ActivityType.watching, "the chaos unfold"),
+            (discord.ActivityType.listening, "Listening to @Aurelia"),
+            (discord.ActivityType.playing, "Playing with {users} users"),
+            (discord.ActivityType.watching, "Watching {servers} servers"),
+            (discord.ActivityType.competing, "Competing in being Aurelia"),
+            (discord.ActivityType.listening, "Listening to your problems"),
+            (discord.ActivityType.watching, "Watching you type"),
+            (discord.ActivityType.playing, "Playing with fire"),
+            (discord.ActivityType.listening, "Listening to the void"),
+            (discord.ActivityType.competing, "Competing with herself"),
+            (discord.ActivityType.watching, "Watching the chaos unfold"),
         ]
         self.status_index = 0
         self._load_custom_status()

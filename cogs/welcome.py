@@ -16,6 +16,7 @@ FIX 1 — Config keys map to Supabase columns:
   welcome_dm       → dm_message
   embed_mode       → embed_mode
   welcome_image    → welcome_image
+  welcome_color    → welcome_color (hex string, default #FFC0CB)
 
 FIX 2 — All template rendering uses _replace_variables() (safe .replace()),
   never .format(), so user templates with unbalanced braces don't crash.
@@ -27,8 +28,12 @@ FIX 3 — Mimu-style advanced welcome:
     as normal text + second part as embed
   - Embed modes: "embed" (default), "text", "hybrid"
   - welcome_image config: set a banner image URL for the embed
+  - welcome_color config: custom embed color (hex like #FFC0CB);
+    applied to the welcome embed in ALL embed modes (incl. hybrid),
+    goodbye keeps its own soft pink
   - Member count in footer, user avatar as thumbnail
   - Literal \\n converted to real newlines
+  - /welcome show carries the full Mimu-style tag reference + formatting tips
 """
 import logging
 import discord
@@ -46,6 +51,10 @@ COLOR_PINK = 0xFFC0CB
 COLOR_GOODBYE = 0xFFB6C1
 COLOR_CONFIG = 0x1a1a2e
 FOOTER = "✩ ━━ aurelia ༉‧₊˚. ღ"
+
+# Default welcome embed color (soft pink) — Mimu-style customizable via
+# /welcome config setting:welcome_color value:#RRGGBB
+DEFAULT_WELCOME_COLOR = "#FFC0CB"
 
 
 class Welcome(commands.Cog):
@@ -73,6 +82,7 @@ class Welcome(commands.Cog):
                 'embed_mode': 'embed',
                 'dm_message': '',
                 'welcome_image': None,
+                'welcome_color': DEFAULT_WELCOME_COLOR,
             }
         config.setdefault('enabled', False)
         config.setdefault('channel_id', None)
@@ -86,6 +96,7 @@ class Welcome(commands.Cog):
         config.setdefault('embed_mode', 'embed')
         config.setdefault('dm_message', '')
         config.setdefault('welcome_image', None)
+        config.setdefault('welcome_color', DEFAULT_WELCOME_COLOR)
         return config
 
     def wants_dms(self, user_id: int) -> bool:
@@ -147,6 +158,32 @@ class Welcome(commands.Cog):
         text = text.replace("{membercount}", str(guild.member_count))
         return text
 
+    # ─── FIX 3 (Mimu-style welcome_color) ────────────────────────
+
+    @staticmethod
+    def _parse_hex_color(value) -> Optional[int]:
+        """Parse '#FFC0CB', '0xFFC0CB', 'FFC0CB', or short 'FCC' hex into an int.
+        Returns None if the value isn't a valid color."""
+        if value is None:
+            return None
+        s = str(value).strip().lstrip('#')
+        if s.lower().startswith('0x'):
+            s = s[2:]
+        if len(s) == 3:  # expand short hex like 'FCC' → 'FFCCDD'-style
+            s = ''.join(ch * 2 for ch in s)
+        if len(s) != 6:
+            return None
+        try:
+            return int(s, 16)
+        except ValueError:
+            return None
+
+    def _get_welcome_color(self, config) -> int:
+        """Resolve the configured welcome embed color to an int.
+        Falls back to soft pink (0xFFC0CB) when unset or invalid."""
+        parsed = self._parse_hex_color(config.get('welcome_color'))
+        return parsed if parsed is not None else COLOR_PINK
+
     def _build_welcome_embed(self, text: str, member, guild, image_url=None,
                              color=COLOR_PINK) -> discord.Embed:
         """FIX 3 — Build a Veloura-aesthetic embed for welcome/goodbye."""
@@ -165,13 +202,17 @@ class Welcome(commands.Cog):
           "embed"  — entire message as embed description (default)
           "text"   — plain text, no embed
           "hybrid" — split at "---", first part as text + second as embed
+
+        FIX 3 (welcome_color) — welcome embeds use the guild's configured
+        color in every embed mode (including hybrid); goodbye keeps its own
+        soft pink. Member avatar is the thumbnail, member count the footer.
         """
         if is_goodbye:
             template = config.get('goodbye_message', "Goodbye {user}, we'll miss you.")
             color = COLOR_GOODBYE
         else:
             template = config.get('message', 'Welcome {user} to {server}!')
-            color = COLOR_PINK
+            color = self._get_welcome_color(config)
 
         text = self._replace_variables(template, member, guild)
 
@@ -441,7 +482,7 @@ class Welcome(commands.Cog):
     @app_commands.checks.has_permissions(manage_guild=True)
     @app_commands.describe(
         setting="Which setting to view or change",
-        value="Toggles: on/off • embed_mode: embed/text/hybrid • image URL for welcome_image",
+        value="Toggles: on/off • embed_mode: embed/text/hybrid • image URL for welcome_image • hex color for welcome_color",
         channel="Required only for welcome_channel / goodbye_channel",
     )
     @app_commands.choices(setting=[
@@ -454,6 +495,7 @@ class Welcome(commands.Cog):
         app_commands.Choice(name="Goodbye Toggle", value="goodbye_toggle"),
         app_commands.Choice(name="Embed Mode", value="embed_mode"),
         app_commands.Choice(name="Welcome Image", value="welcome_image"),
+        app_commands.Choice(name="Welcome Color", value="welcome_color"),
     ])
     async def welcome_config(self, interaction: discord.Interaction, setting: app_commands.Choice[str], value: Optional[str] = None, channel: Optional[discord.TextChannel] = None):
         config = self.get_config(interaction.guild.id)
@@ -472,6 +514,7 @@ class Welcome(commands.Cog):
             "welcome_dm": "dm_message",
             "embed_mode": "embed_mode",
             "welcome_image": "welcome_image",
+            "welcome_color": "welcome_color",
         }
         column_name = SETTING_TO_COLUMN.get(key, key)
 
@@ -547,6 +590,35 @@ class Welcome(commands.Cog):
             config['welcome_image'] = value[:500]
             await _save_and_verify(config, column_name, value[:80])
             return await interaction.response.send_message(f"✅ Welcome image set.\nURL: {value[:200]}")
+
+        # Welcome embed color (hex)
+        if key == "welcome_color":
+            if value is None:
+                return await self._err(
+                    interaction,
+                    "❌ Provide `value` (hex color like `#FFC0CB`) or `reset` for the default pink."
+                )
+            if value.strip().lower() in ("reset", "default", "off"):
+                config['welcome_color'] = DEFAULT_WELCOME_COLOR
+                await _save_and_verify(config, column_name, f"{DEFAULT_WELCOME_COLOR} (default)")
+                return await interaction.response.send_message(
+                    f"✅ Welcome color reset to default **{DEFAULT_WELCOME_COLOR}**."
+                )
+            color_int = self._parse_hex_color(value)
+            if color_int is None:
+                return await self._err(
+                    interaction,
+                    "❌ Invalid color. Use hex like `#FFC0CB`, `#5865F2`, or `#1A1A2E`."
+                )
+            normalized = "#" + value.strip().lstrip('#').upper()
+            config['welcome_color'] = normalized
+            await _save_and_verify(config, column_name, normalized)
+            preview = discord.Embed(
+                description=f"Welcome embed color set to **{normalized}**",
+                color=color_int
+            )
+            preview.set_footer(text=FOOTER)
+            return await interaction.response.send_message(embed=preview)
 
         # Text-based settings (welcome_message / goodbye_message / welcome_dm)
         text_cfg = {
@@ -658,15 +730,29 @@ class Welcome(commands.Cog):
         embed.add_field(name="🎉 Welcome", inline=False, value=f"**Enabled:** `{config.get('enabled', False)}`\n**Channel:** {fmt('channel', config.get('channel_id'))}\n**Message:** {fmt_msg(config.get('message'), default_welcome)}")
         embed.add_field(name="👋 Goodbye", inline=False, value=f"**Enabled:** `{config.get('goodbye_enabled', False)}`\n**Channel:** {fmt('channel', config.get('goodbye_channel_id'))}\n**Message:** {fmt_msg(config.get('goodbye_message'), default_goodbye)}")
         embed.add_field(name="✉️ Welcome DM", inline=False, value=f"**Enabled:** `{dm_enabled}`\n**Message:** {fmt_msg(dm_msg, '(disabled)') if dm_msg else '*(disabled)*'}")
-        embed.add_field(name="⚙️ Other", inline=False, value=f"**Embed Mode:** `{config.get('embed_mode', 'embed')}`\n**Welcome Image:** `{image_url[:80] + '...' if image_url and len(image_url) > 80 else image_url or 'not set'}`\n**Welcome Reward:** `${config.get('welcome_reward', 500):,}`\n**Welcomer Reward:** `${config.get('welcomer_reward', 1000):,}`\n**Autorole:** {fmt('role', config.get('autorole_id'))}")
-        embed.add_field(name="📝 Available Tags", inline=False, value=(
+        embed.add_field(name="⚙️ Other", inline=False, value=f"**Embed Mode:** `{config.get('embed_mode', 'embed')}`\n**Welcome Image:** `{image_url[:80] + '...' if image_url and len(image_url) > 80 else image_url or 'not set'}`\n**Welcome Color:** `{config.get('welcome_color', DEFAULT_WELCOME_COLOR)}`\n**Welcome Reward:** `${config.get('welcome_reward', 500):,}`\n**Welcomer Reward:** `${config.get('welcomer_reward', 1000):,}`\n**Autorole:** {fmt('role', config.get('autorole_id'))}")
+        # FIX 3 — comprehensive Mimu-style tag reference + formatting tips
+        embed.add_field(name="📝 Tag Reference", inline=False, value=(
             "```\n"
-            "Tags: {user} {user.name} {user.id} {user.avatar}\n"
-            "{server} {server.id} {membercount} {server.icon}\n"
-            "{duration} (goodbye only)\n\n"
-            "Embed modes: text, embed, hybrid\n"
-            "Use --- to separate normal text from embed content (hybrid mode)\n"
-            "Use \\n for line breaks\n"
+            "Available tags:\n"
+            "{user} — mention the new member\n"
+            "{user.name} — member's username\n"
+            "{user.id} — member's Discord ID\n"
+            "{user.avatar} — member's avatar URL\n"
+            "{server} — server name\n"
+            "{server.id} — server ID\n"
+            "{membercount} — total member count\n"
+            "{server.icon} — server icon URL\n"
+            "{duration} — how long they stayed (goodbye only)\n"
+            "\n"
+            "Formatting tips:\n"
+            "• Use \\n for line breaks in your message\n"
+            "• Use --- to separate normal text from embed (hybrid mode)\n"
+            "• Channel mentions like <#channelid> render as clickable links in embeds\n"
+            "• Use [text](https://discord.com/channels/GUILD/CHANNEL) for named channel links in embeds\n"
+            "• Set embed_mode to \"hybrid\" for Mimu-style mixed content+embed\n"
+            "• Set welcome_image to a URL for a banner image in the embed\n"
+            "• Set welcome_color to a hex like #FFC0CB for a custom embed color\n"
             "```"
         ))
         await interaction.response.send_message(embed=embed)
