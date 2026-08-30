@@ -194,6 +194,56 @@ _COT_STARTER_RE = re.compile(
     flags=re.IGNORECASE,
 )
 
+# Edge-case guard (FIX 1 follow-up): starters that COULD legitimately open
+# a casual reply ("let me think about that ♡", "let me choose one ♡") vs.
+# the hard analysis starters ("we need to ...", "the user says ...",
+# "here is the response ...") that essentially never do. Used ONLY for
+# the single-LINE no-answer case below — everywhere else both classes are
+# treated identically, so legit replies are unaffected.
+_SOFT_COT_STARTERS = (
+    "let's choose",
+    "let me choose",
+    "let's pick",
+    "let me think",
+)
+
+_SOFT_STARTER_RE = re.compile(
+    r"^(?:" + "|".join(re.escape(s) for s in _SOFT_COT_STARTERS) + r")\b",
+    flags=re.IGNORECASE,
+)
+
+
+def _looks_like_pure_reasoning(text: str) -> bool:
+    """FIX 1 follow-up — is this single line analysis, not a reply?
+
+    Pure-reasoning one-liners carry at least two of three signals:
+      * an option-list / contract colon  (": " — "we need to output two
+        lines: first the choice ...")
+      * multi-sentence structure          (". " — "... the reason. Let me
+        think about which option is best.")
+      * unusual length for a casual reply (> 100 chars)
+    Requiring TWO signals keeps ordinary casual sentences that happen to
+    start with "we need to talk about what happened. i'm not mad" (one
+    signal) intact.
+    """
+    signals = 0
+    if ": " in text:
+        signals += 1
+    if ". " in text:
+        signals += 1
+    if len(text) > 100:
+        signals += 1
+    # A reply that references the instruction context ("the developer
+    # says ...", "we have a conversation ...") is meta-analysis, never a
+    # casual answer — aurelia is explicitly instructed never to mention
+    # "the developer". One reference alone is not enough (users can ask
+    # "what did the developer tell you?"), but paired with any other
+    # signal it is conclusive.
+    lowered = text.lower()
+    if "the developer says" in lowered or "we have a conversation" in lowered:
+        signals += 1
+    return signals >= 2
+
 
 def _strip_cot_preambles(content: str) -> str:
     """FIX 1 (live P0) — remove untagged reasoning preambles from output.
@@ -243,6 +293,19 @@ def _strip_cot_preambles(content: str) -> str:
         lines = [l for l in (s.strip() for s in content.splitlines()) if l]
         if len(lines) > 1:
             content = lines[-1]
+        elif (
+            not _SOFT_STARTER_RE.match(content)
+            and _looks_like_pure_reasoning(content)
+        ):
+            # FIX 1 follow-up — single LINE, hard analysis starter, and
+            # reasoning-shaped (contract colon, multi-sentence, or long):
+            # pure reasoning with NO answer at all ("We need to output two
+            # lines: first the choice then the reason. Let me think about
+            # which option is best here."). Discard so the caller-side
+            # empty-content fallback + doubled-token retry kick in, exactly
+            # as documented. Soft starters ("let me think about that ♡")
+            # and ordinary casual sentences are never touched.
+            return ""
 
     return content.strip()
 
