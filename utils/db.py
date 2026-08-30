@@ -209,10 +209,19 @@ CREATE TABLE server_personality (
 --   channel_id TEXT,
 --   rate FLOAT DEFAULT 1.0,
 --   rewards JSONB DEFAULT '{}'::jsonb,
+--   level_up_message TEXT DEFAULT '🎉 {user} just reached level {level}! ✦',
+--   level_up_channel_mode TEXT DEFAULT 'active',
 --   updated_at TEXT
 -- );
 -- GRANT ALL ON public.leveling_settings TO anon;
 -- ALTER TABLE public.leveling_settings DISABLE ROW LEVEL SECURITY;
+--
+-- FIX 2 — existing leveling_settings tables only need the two new columns:
+--
+-- ALTER TABLE public.leveling_settings
+--   ADD COLUMN IF NOT EXISTS level_up_message TEXT DEFAULT '🎉 {user} just reached level {level}! ✦';
+-- ALTER TABLE public.leveling_settings
+--   ADD COLUMN IF NOT EXISTS level_up_channel_mode TEXT DEFAULT 'active';
 --
 -- PHASE 4 — new feature tables (AI memory, AI automod, starboard,
 -- giveaways, custom commands, proactive presence, onboarding).
@@ -424,6 +433,8 @@ _TABLE_COLUMNS = {
     },
     "leveling_settings": {
         "guild_id", "enabled", "channel_id", "rate", "rewards",
+        # FIX 2 — customizable level-up messages
+        "level_up_message", "level_up_channel_mode",
     },
     "bump_reminder_state": {
         "guild_id", "channel_id", "last_bump_message_id", "last_bump_at",

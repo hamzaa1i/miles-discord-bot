@@ -8,7 +8,7 @@ from discord.ext import commands
 from discord import app_commands
 from utils import db as _db
 from utils.db import get_guild_setting, set_guild_setting
-from utils.veloura_embeds import veloura_embed, level_up_embed, COLOR_PINK, COLOR_LAVENDER
+from utils.veloura_embeds import veloura_embed, COLOR_PINK, COLOR_LAVENDER
 
 logger = logging.getLogger('cyn.leveling')
 TBL, JSON_PATH = "leveling_settings", "data/user_levels.json"
@@ -16,6 +16,13 @@ XP_MIN, XP_MAX, CD = 15, 25, 60
 # FIX 5 — Cache TTL for leveling settings (seconds). Reduces Supabase
 # queries from every-message to once-per-minute-per-guild.
 CONFIG_CACHE_TTL = 60
+
+# FIX 2 — default level-up message template + valid channel modes.
+# Template variables (safe .replace, never .format, so unbalanced braces
+# in user templates can't crash):
+#   {user}  {user.name}  {level}  {next_level}  {xp}  {server}  {membercount}
+DEFAULT_LEVEL_UP_MESSAGE = "🎉 {user} just reached level {level}! ✦"
+LEVEL_UP_CHANNEL_MODES = ("active", "configured", "dm", "none")
 
 
 class Leveling(commands.Cog):
@@ -52,6 +59,9 @@ class Leveling(commands.Cog):
                 config.setdefault("channel_id", None)
                 config.setdefault("rate", 1.0)
                 config.setdefault("rewards", {})
+                # FIX 2 — level-up message defaults
+                config.setdefault("level_up_message", DEFAULT_LEVEL_UP_MESSAGE)
+                config.setdefault("level_up_channel_mode", "active")
                 return config
         config = get_guild_setting(guild_id, TBL)
         if not isinstance(config, dict):
@@ -60,6 +70,9 @@ class Leveling(commands.Cog):
         config.setdefault("channel_id", None)
         config.setdefault("rate", 1.0)
         config.setdefault("rewards", {})
+        # FIX 2 — level-up message defaults
+        config.setdefault("level_up_message", DEFAULT_LEVEL_UP_MESSAGE)
+        config.setdefault("level_up_channel_mode", "active")
         self._config_cache[guild_id] = (config, now)
         return config
 
@@ -127,27 +140,87 @@ class Leveling(commands.Cog):
         return next(((i, n) for i, r in enumerate(rows, 1)
                      if r.get("user_id") == target), (n + 1, n))
 
-    async def announce_levelup(self, guild: discord.Guild, member: discord.Member, level: int):
+    def render_level_up_message(self, template: str, member, guild,
+                                 level: int, total_xp: int) -> str:
+        """FIX 2 — render the level-up template with all variables.
+
+        Uses chained .replace() (never .format()) so a user template with
+        unbalanced braces can't raise. {xp} is thousands-separated."""
+        text = str(template or DEFAULT_LEVEL_UP_MESSAGE)
+        # {user.name} must be replaced before {user} (prefix collision)
+        text = text.replace("{user.name}", member.display_name)
+        text = text.replace("{user}", member.mention)
+        text = text.replace("{level}", str(level))
+        text = text.replace("{next_level}", str(level + 1))
+        try:
+            text = text.replace("{xp}", f"{int(total_xp):,}")
+        except (TypeError, ValueError):
+            text = text.replace("{xp}", str(total_xp))
+        text = text.replace("{server}", guild.name if guild else "the server")
+        text = text.replace("{membercount}", str(guild.member_count or 0) if guild else "0")
+        return text[:2000]
+
+    async def announce_levelup(self, guild: discord.Guild, member: discord.Member,
+                               level: int, message: discord.Message = None,
+                               total_xp: int = 0):
+        """FIX 2 — customizable level-up announcements.
+
+        Rewritten from the old hardcoded announce-channel embed:
+          * message text  — level_up_message template (rendered with
+                            {user} {user.name} {level} {next_level} {xp}
+                            {server} {membercount})
+          * where it goes — level_up_channel_mode:
+              "active"     → the channel where the member leveled up (default)
+              "configured" → the channel set via /leveling config channel
+              "dm"         → a DM to the member (silently skipped if closed)
+              "none"       → no announcement at all
+        Role rewards are still handed out regardless of the mode."""
         config = self.get_config(guild.id)
+
+        # ---- role rewards (unchanged behavior) ----
         rewards = config.get("rewards", {}) or {}
-        role_name = None
         rid = rewards.get(str(level))
         if rid:
             try:
                 role = guild.get_role(int(rid))
                 if role and role not in member.roles:
                     await member.add_roles(role, reason="Level reward")
-                    role_name = role.name
             except (TypeError, ValueError, discord.Forbidden):
                 pass
-        embed = level_up_embed(member, level, role_name)
-        cid = config.get("channel_id")
-        ch = guild.get_channel(int(cid)) if cid else None
-        if ch:
-            try:
-                await ch.send(content=member.mention, embed=embed)
-            except discord.Forbidden:
-                pass
+
+        mode = str(config.get("level_up_channel_mode") or "active").lower()
+        if mode not in LEVEL_UP_CHANNEL_MODES:
+            mode = "active"
+        template = config.get("level_up_message") or DEFAULT_LEVEL_UP_MESSAGE
+        text = self.render_level_up_message(template, member, guild, level, total_xp)
+
+        try:
+            if mode == "none":
+                return  # announcements disabled
+            if mode == "dm":
+                await member.send(text)
+                return
+            if mode == "configured":
+                cid = config.get("channel_id")
+                ch = guild.get_channel(int(cid)) if cid else None
+                if ch:
+                    await ch.send(text)
+                elif message is not None:
+                    # configured channel vanished — fall back to active
+                    await message.channel.send(text)
+                return
+            # default: "active" — the channel that triggered the level-up
+            if message is not None:
+                await message.channel.send(text)
+            else:
+                cid = config.get("channel_id")
+                ch = guild.get_channel(int(cid)) if cid else None
+                if ch:
+                    await ch.send(text)
+        except discord.Forbidden:
+            pass  # missing perms / DMs closed — skip silently
+        except discord.HTTPException:
+            pass
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
@@ -169,7 +242,10 @@ class Leveling(commands.Cog):
         new_level, _, _ = self.get_level_from_xp(new_total)
         self.set_user_level(gid, uid, new_total, new_level)
         if new_level > old_level:
-            await self.announce_levelup(message.guild, message.author, new_level)
+            await self.announce_levelup(
+                message.guild, message.author, new_level,
+                message=message, total_xp=new_total
+            )
 
     @app_commands.command(name="level", description="Show your level card (or someone else's)")
     @app_commands.describe(user="Whose level to check (defaults to you)")
@@ -247,7 +323,9 @@ class Leveling(commands.Cog):
     @app_commands.checks.has_permissions(manage_guild=True)
     @app_commands.describe(
         setting="What to configure",
-        value="Level number (reward / reward_remove) or multiplier (rate)",
+        value="Level number (reward / reward_remove), multiplier (rate), "
+              "level-up message text (level_message), channel mode "
+              "(level_channel: active/configured/dm/none), or on/off (toggle)",
         role="Role to assign at the level (only for 'reward')",
         channel="Level-up announcement channel (only for 'channel')",
     )
@@ -256,6 +334,10 @@ class Leveling(commands.Cog):
         app_commands.Choice(name="Set Role Reward", value="reward"),
         app_commands.Choice(name="Remove Role Reward", value="reward_remove"),
         app_commands.Choice(name="XP Multiplier", value="rate"),
+        app_commands.Choice(name="Level-up Message", value="level_message"),
+        app_commands.Choice(name="Level-up Channel Mode", value="level_channel"),
+        app_commands.Choice(name="Enable / Disable", value="toggle"),
+        app_commands.Choice(name="Show Settings", value="show"),
     ])
     async def leveling_config(self, interaction: discord.Interaction,
                               setting: app_commands.Choice[str], value: str = None,
@@ -309,6 +391,108 @@ class Leveling(commands.Cog):
             rate = max(0.1, min(10.0, rate))
             config["rate"] = rate
             return await save_ok(f"xp multiplier set to **{rate}x**.")
+
+        # ── FIX 2 — customizable level-up messages ──────────────────
+        if key == "level_message":
+            if value is None or not value.strip():
+                return await err(
+                    "❌ provide the template as `value`. variables: `{user}` "
+                    "`{user.name}` `{level}` `{next_level}` `{xp}` `{server}` "
+                    "`{membercount}` — or `reset` for the default."
+                )
+            if value.strip().lower() in ("reset", "default"):
+                config["level_up_message"] = DEFAULT_LEVEL_UP_MESSAGE
+                return await save_ok(
+                    f"level-up message reset to default:\n> {DEFAULT_LEVEL_UP_MESSAGE}"
+                )
+            config["level_up_message"] = value[:500]
+            preview = self.render_level_up_message(
+                value, interaction.user, interaction.guild, 5, 1234)
+            return await save_ok(
+                f"level-up message set. preview:\n> {preview[:300]}"
+            )
+
+        if key == "level_channel":
+            if value is None or not value.strip():
+                return await err(
+                    "❌ provide the mode as `value`: `active` (where they "
+                    "leveled up, default), `configured` (the announce "
+                    "channel), `dm`, or `none` (disable)."
+                )
+            mode = value.strip().lower()
+            if mode not in LEVEL_UP_CHANNEL_MODES:
+                return await err(
+                    "❌ mode must be `active`, `configured`, `dm`, or `none`."
+                )
+            config["level_up_channel_mode"] = mode
+            desc = {
+                "active": "posted in the channel where the member leveled up",
+                "configured": "posted in the configured level-up channel",
+                "dm": "sent as a DM to the member",
+                "none": "level-up announcements disabled",
+            }[mode]
+            warn = ("\n⚠️ no level-up channel set — also run "
+                    "`/leveling config setting:channel`."
+                    if mode == "configured" and not config.get("channel_id") else "")
+            return await save_ok(f"level-up messages: {desc}.{warn}")
+
+        if key == "toggle":
+            if value is None or not value.strip():
+                return await err("❌ provide `on` or `off` as `value`.")
+            state = value.strip().lower()
+            if state in ("on", "enable", "enabled", "true", "yes"):
+                config["enabled"] = True
+                return await save_ok("leveling **enabled**.")
+            if state in ("off", "disable", "disabled", "false", "no"):
+                config["enabled"] = False
+                return await save_ok("leveling **disabled**.")
+            return await err("❌ `value` must be `on` or `off`.")
+
+        # FIX 2.4 — config overview (was nothing: /leveling config had no
+        # way to see current settings at all)
+        if key == "show":
+            mode = str(config.get("level_up_channel_mode") or "active")
+            template = config.get("level_up_message") or DEFAULT_LEVEL_UP_MESSAGE
+            cid = config.get("channel_id")
+            ch = interaction.guild.get_channel(int(cid)) if cid else None
+            rewards = config.get("rewards", {}) or {}
+            embed = veloura_embed("leveling config", "current settings", COLOR_LAVENDER)
+            embed.add_field(
+                name="status",
+                value=(
+                    f"**enabled:** `{config.get('enabled', True)}`\n"
+                    f"**xp multiplier:** `{config.get('rate', 1.0)}x`\n"
+                    f"**level-up channel:** {ch.mention if ch else '*not set*'}"
+                ),
+                inline=False,
+            )
+            embed.add_field(
+                name="level-up message",
+                value=f"```\n{template[:400]}\n```",
+                inline=False,
+            )
+            embed.add_field(
+                name="level-up channel mode",
+                value=f"`{mode}` — " + {
+                    "active": "posted where the member leveled up",
+                    "configured": "posted in the configured level-up channel",
+                    "dm": "DM'd to the member",
+                    "none": "announcements disabled",
+                }.get(mode, "posted where the member leveled up"),
+                inline=False,
+            )
+            if rewards:
+                lines = []
+                for lvl_str in sorted(rewards, key=lambda x: int(x) if x.isdigit() else 0):
+                    r = interaction.guild.get_role(int(rewards[lvl_str])) \
+                        if str(rewards[lvl_str]).isdigit() else None
+                    lines.append(f"level {lvl_str} → {r.mention if r else f'`{rewards[lvl_str]}`'}")
+                embed.add_field(name="role rewards", value="\n".join(lines)[:1024], inline=False)
+            embed.set_footer(
+                text="variables: {user} {user.name} {level} {next_level} {xp} {server} {membercount}"
+            )
+            await interaction.response.send_message(embed=embed)
+            return
 
 
 async def setup(bot):

@@ -8,7 +8,7 @@ import json as _json
 import logging
 import time
 from datetime import datetime, timedelta
-from utils.intent_parser import parse_intent
+from utils.intent_parser import parse_intent, parse_fast_intent
 from utils.ai_handler import call_ai, call_ai_fast
 from utils.database import Database
 
@@ -737,7 +737,14 @@ class AIChat(commands.Cog):
                 except (TypeError, ValueError):
                     return None
             if message.mentions:
-                return message.mentions[0]
+                # FIX 1 — the bot itself is almost always mentions[0] (the
+                # user had to @mention aurelia to trigger this), so pick
+                # the first HUMAN mention. Previously "@aurelia whois @diva"
+                # resolved to the bot and showed aurelia's own profile.
+                humans = [m for m in message.mentions
+                          if m.id != self.bot.user.id]
+                if humans:
+                    return humans[0]
             return None
 
         try:
@@ -1345,6 +1352,71 @@ class AIChat(commands.Cog):
                 await self._safe_reply(message, embed=embed)
                 return True
 
+            if intent == 'snipe':
+                # FIX 1 — "@aurelia snipe" used to fall through to AI chat
+                # ("sniper's a solid pick") because is_obvious_chat()
+                # short-circuited it before intent parsing. Reads the same
+                # per-channel cache as /snipe in cogs/utility.py.
+                try:
+                    from cogs.utility import (
+                        snipe_cache as _snipe_cache,
+                        _prune_snipe_cache as _prune_snipe,
+                        SNIPE_TTL_SECONDS as _snipe_ttl,
+                        SNAPE_MAX as _snipe_max,
+                    )
+                except Exception:
+                    await self._safe_reply(message, "snipe system not loaded.")
+                    return True
+                cache = _snipe_cache.get(channel.id, [])
+                _prune_snipe(cache)
+                if not cache:
+                    await self._safe_reply(
+                        message,
+                        f"no recently deleted messages here (snipes expire "
+                        f"after {_snipe_ttl // 60} minutes)."
+                    )
+                    return True
+                idx = params.get('index') or 1
+                try:
+                    idx = int(idx)
+                except (TypeError, ValueError):
+                    idx = 1
+                if idx < 1 or idx > len(cache):
+                    await self._safe_reply(
+                        message,
+                        f"index out of range. only {len(cache)} snipe(s) "
+                        f"cached (max {_snipe_max}, newest first)."
+                    )
+                    return True
+                entry = cache[idx - 1]
+                deleted_at = entry.get('deleted_at')
+                from utils.constants import COLOR_ERROR as _SNIPE_COLOR
+                embed = discord.Embed(
+                    description=(entry.get('content') or '')[:2048] or "*empty*",
+                    color=_SNIPE_COLOR,
+                    timestamp=deleted_at or discord.utils.utcnow(),
+                )
+                embed.set_author(
+                    name=entry.get('author_name', 'unknown'),
+                    icon_url=entry.get('author_avatar'),
+                )
+                if deleted_at:
+                    embed.set_footer(
+                        text=f"deleted {deleted_at.strftime('%H:%M:%S')} UTC "
+                             f"· snipe {idx} of {len(cache)}"
+                    )
+                else:
+                    embed.set_footer(text=f"snipe {idx} of {len(cache)}")
+                attachments = entry.get('attachments') or []
+                if attachments:
+                    embed.add_field(
+                        name="Attachments",
+                        value="\n".join(attachments)[:1024],
+                        inline=False,
+                    )
+                await self._safe_reply(message, embed=embed)
+                return True
+
             if intent == 'poll':
                 question = params.get('question', '')
                 if not question:
@@ -1642,16 +1714,25 @@ class AIChat(commands.Cog):
         # Previously "< 15 chars → chat" short-circuited first, so short
         # commands like "ban @user", "kick him", "lock", "purge 10"
         # skipped the intent parser entirely.
-        # Contains command keywords — needs intent parsing
-        # (dead economy keywords removed: balance, daily, work, fish, beg,
-        #  crime, rob, bank, shop, buy, pay, earn, inventory, richest)
+        #
+        # FIX 1 (utility intents bypassed by AI chat) — the list now covers
+        # EVERY intent keyword, not just moderation. "@aurelia snipe"
+        # (5 chars, previously no keyword) used to be classified as
+        # obvious chat and answered by the chat model ("sniper's a solid
+        # pick"). Even if the regex fast-path somehow misses, these words
+        # must never be treated as obvious casual chat — they fall through
+        # to the full LLM intent parser instead.
         command_keywords = [
-            "ban", "kick", "warn", "mute", "timeout", "purge",
-            "weather", "remind",
-            "delete message", "lock", "unlock", "slowmode",
-            "deposit", "withdraw", "hunt",
-            "mine", "serverinfo", "whois",
-            "avatar", "poll", "joke", "meme", "flip", "roll"
+            # moderation
+            "ban", "kick", "warn", "warning", "mute", "unmute",
+            "timeout", "untimeout", "purge", "clear", "lock", "unlock",
+            "slowmode", "slow", "lockdown",
+            # utility
+            "snipe", "weather", "flip", "roll", "joke", "fact",
+            "avatar", "pfp", "whois", "userinfo", "info", "delete",
+            "remind", "reminder", "serverinfo", "meme",
+            # leveling / misc command-like words
+            "level", "rank", "xp", "balance", "daily",
         ]
         for keyword in command_keywords:
             if keyword in content_lower:
@@ -1803,41 +1884,31 @@ class AIChat(commands.Cog):
                             extra_context = f"\n\nNOTE: user asked about #{ch_name} but that channel doesn't exist in this server."
                         break
 
-            # FIX 2 — Load conversation history BEFORE fast-path check.
-            # P1 — async wrapper keeps the Supabase REST call off the loop.
-            from utils.db import get_conversation_history_async
-            guild_id_val = message.guild.id if message.guild else 0
-            ch_id_val = message.channel.id if message.channel else 0
-            db_history_check = []
-            if guild_id_val:
-                try:
-                    db_history_check = await get_conversation_history_async(
-                        guild_id_val, message.author.id,
-                        channel_id=ch_id_val, limit=8
-                    )
-                except Exception as e:
-                    logger.error(f"[ON_MESSAGE] get_conversation_history failed: {type(e).__name__}: {e}")
-                    # Continue with empty history — don't let DB failure block the response
-
-            # FIX 2 — deterministic (regex) moderation intent detection runs
-            # BEFORE both the fast-path and the AI intent parser, so mod
-            # commands like "mute @user for 1m" never depend on the model
-            # classifying them correctly.
-            from utils.intent_parser import deterministic_mod_intent
-            det_intent = deterministic_mod_intent(
-                content,
-                len(message.mentions) if message.mentions else 0
-            )
-            if det_intent:
-                intent_data = det_intent
+            # FIX 1 (utility intents bypassed by AI chat) — the flow is now:
+            #   1. parse_fast_intent() — deterministic regex ONLY (0ms, no
+            #      API cost). Handles moderation AND utility commands
+            #      (snipe / flip / roll / joke / weather / whois / avatar…).
+            #   2. No fast match + obviously casual chat → AI chat directly.
+            #   3. No fast match + ambiguous → full LLM intent parser.
+            #
+            # Previously is_obvious_chat() ran BEFORE any intent parsing and
+            # short-circuited short utility messages ("snipe", "flip",
+            # "roll 6") straight to the chat model because its keyword list
+            # only knew moderation words. The old pre-parse conversation
+            # history load went with it — get_ai_response loads history
+            # itself, so the extra per-mention DB read was pure waste.
+            fast_result = parse_fast_intent(content, message)
+            if fast_result and fast_result.get("intent") != "chat":
+                intent_data = fast_result
                 logger.info(
-                    f"[DETERMINISTIC] {det_intent['intent']} detected for "
+                    f"[FAST-INTENT] {fast_result['intent']} matched for "
                     f"{message.author.display_name}"
                 )
-            # FIX 2 — Fast-path ONLY if no history exists
-            elif not db_history_check and self.is_obvious_chat(content):
+            # No fast match — is this obviously casual chat?
+            elif self.is_obvious_chat(content):
                 intent_data = {"intent": "chat", "params": {}}
-                logger.debug(f"[FAST-PATH] {message.author.display_name} → skipped intent parser (no history)")
+                logger.debug(f"[FAST-PATH] {message.author.display_name} → skipped intent parser")
+            # Ambiguous — use the LLM intent parser
             else:
                 try:
                     intent_data = await parse_intent(content, self)
@@ -1991,10 +2062,17 @@ class AIChat(commands.Cog):
         await interaction.response.defer()
 
         try:
-            intent_data = await asyncio.wait_for(
-                parse_intent(message, self),
-                timeout=15.0,
-            )
+            # FIX 1 — deterministic fast-path before the LLM parser (same
+            # tiered flow as the @mention handler) so "/aurelia snipe"
+            # runs the snipe command instead of being classified as chat.
+            fast_result = parse_fast_intent(message, None)
+            if fast_result and fast_result.get("intent") != "chat":
+                intent_data = fast_result
+            else:
+                intent_data = await asyncio.wait_for(
+                    parse_intent(message, self),
+                    timeout=15.0,
+                )
         except asyncio.TimeoutError:
             intent_data = {"intent": "chat", "params": {}}
         except Exception:
@@ -2147,17 +2225,14 @@ class AIChat(commands.Cog):
             # Smart model routing
             from utils.ai_handler import pick_model
 
-            # FIX 2 — deterministic (regex) moderation intent detection runs
-            # BEFORE both the fast-path and the AI intent parser.
-            from utils.intent_parser import deterministic_mod_intent
-            det_intent = deterministic_mod_intent(
-                content,
-                len(message.mentions) if message.mentions else 0
-            )
-            if det_intent:
-                intent_data = det_intent
+            # FIX 1 — same tiered flow as the @mention handler:
+            # deterministic fast-path first (regex only, no API cost),
+            # then the casual-chat shortcut, then the LLM intent parser.
+            fast_result = parse_fast_intent(content, message)
+            if fast_result and fast_result.get("intent") != "chat":
+                intent_data = fast_result
                 logger.info(
-                    f"[DETERMINISTIC] {det_intent['intent']} detected for "
+                    f"[FAST-INTENT] {fast_result['intent']} matched for "
                     f"{message.author.display_name}"
                 )
             # Fast-path check

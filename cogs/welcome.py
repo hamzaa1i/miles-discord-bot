@@ -1,14 +1,19 @@
 """cogs/welcome.py — welcome & goodbye system (Mimu-style).
 
-Commands:
-- /welcome set channel|message|embed|color|image|title|thumbnail|footer|dm
-- /welcome toggle <on|off>
-- /welcome goodbye channel|message|toggle
+Commands (FIX 3 — consolidated):
+- /welcome config <setting> <value> [channel]  — ALL 13 config options in
+  one command: channel, message, embed_mode, color, image, title,
+  thumbnail, footer, dm, toggle, goodbye_channel, goodbye_message,
+  goodbye_toggle
 - /welcome test [type]   — preview welcome/goodbye/DM
 - /welcome show          — rich overview of the current config
 - /welcome tags          — every available tag + formatting tips
 - /welcome reset         — factory reset (with confirmation button)
 - /toggledms             — toggle DMs from aurelia
+
+(The old /welcome set …, /welcome toggle, and /welcome goodbye …
+subcommands — 17 subcommands total — were folded into /welcome config,
+leaving 5 subcommands.)
 
 FIX 1 — Config keys map to Supabase columns:
   welcome_channel  → channel_id
@@ -40,6 +45,7 @@ FIX 3 — Mimu-style advanced welcome:
   - /welcome show carries the full Mimu-style tag reference + formatting tips
 """
 import logging
+import re
 import discord
 from discord.ext import commands
 from discord import app_commands
@@ -542,20 +548,19 @@ class Welcome(commands.Cog):
         await interaction.response.send_message(
             embed=discord.Embed(description=f"DMs from aurelia are now **{status}**. {detail}.", color=COLOR_CONFIG), ephemeral=True)
 
-    # ==================== WELCOME GROUP (PART 2 rework) ====================
-    # The old single "/welcome config [setting] [value] [channel]" flow was
-    # clunky: the channel and value options showed for EVERY setting, no
-    # matter which one you picked. The rework gives every setting its own
-    # focused subcommand with exactly the parameters it needs:
+    # ==================== WELCOME GROUP (FIX 3 consolidation) ====================
+    # The PART 2 rework split configuration across 17 subcommands
+    # (/welcome set channel|message|embed|color|image|title|thumbnail|footer|dm,
+    # /welcome toggle, /welcome goodbye channel|message|toggle, plus
+    # test/show/tags/reset). That inflated the command count and cluttered
+    # autocomplete. FIX 3 folds the 13 config subcommands into ONE command:
     #
-    #   /welcome set channel|message|embed|color|image|title|thumbnail|footer|dm
-    #   /welcome toggle on|off
-    #   /welcome goodbye channel|message|toggle
-    #   /welcome test [welcome|goodbye|dm]
-    #   /welcome show · /welcome tags · /welcome reset
+    #   /welcome config <setting> <value> [channel]  — 13 settings via choice
+    #   /welcome test    — preview welcome/goodbye/DM
+    #   /welcome show    — rich overview card
+    #   /welcome tags    — variable reference
+    #   /welcome reset   — factory reset (confirmation button)
     welcome = app_commands.Group(name="welcome", description="Configure welcome & goodbye messages")
-    welcome_set = app_commands.Group(name="set", description="Set a welcome option", parent=welcome)
-    welcome_goodbye = app_commands.Group(name="goodbye", description="Configure goodbye messages", parent=welcome)
 
     async def _err(self, itx: discord.Interaction, msg: str):
         await itx.response.send_message(msg, ephemeral=True)
@@ -567,274 +572,336 @@ class Welcome(commands.Cog):
             f"'{col_name}'='{str(col_value)[:80]}'"
         )
 
-    # ---- /welcome set ... ─────────────────────────────────────────
+    def _resolve_channel_arg(self, guild, value, channel):
+        """FIX 3 — resolve the target channel for the config command: the
+        dedicated `channel` option wins; otherwise parse a <#id> mention or
+        a raw numeric ID out of `value`. Returns a channel or None."""
+        if channel is not None:
+            return channel
+        if value:
+            v = value.strip()
+            cid = None
+            m = re.match(r'^<#(\d+)>$', v)
+            if m:
+                cid = int(m.group(1))
+            elif v.isdigit() and len(v) >= 15:
+                cid = int(v)
+            if cid is not None and guild is not None:
+                return guild.get_channel(cid)
+        return None
 
-    @welcome_set.command(name="channel", description="Set the welcome channel (auto-enables welcome)")
-    @app_commands.checks.has_permissions(manage_guild=True)
-    @app_commands.describe(channel="Channel where welcome messages are posted")
-    async def welcome_set_channel(self, interaction: discord.Interaction,
-                                  channel: discord.TextChannel):
-        self.bot.increment_command('welcome_set_channel')
-        config = self.get_config(interaction.guild.id)
-        config['channel_id'] = str(channel.id)
-        config['enabled'] = True  # auto-enable welcome
-        self._save_config(interaction.guild.id, config, 'channel_id', channel.id)
-        await interaction.response.send_message(
-            f"✅ welcome channel set to {channel.mention} — welcome messages **enabled**."
-        )
+    # ---- /welcome config — single-command configuration ──────────
 
-    @welcome_set.command(name="message", description="Set the welcome message text")
+    @welcome.command(name="config", description="Configure any welcome or goodbye setting")
     @app_commands.checks.has_permissions(manage_guild=True)
-    @app_commands.describe(message="Tags: {user} {server} {membercount} — \n for line breaks, --- for hybrid split")
-    async def welcome_set_message(self, interaction: discord.Interaction,
-                                  message: str):
-        self.bot.increment_command('welcome_set_message')
-        config = self.get_config(interaction.guild.id)
-        config['message'] = message
-        self._save_config(interaction.guild.id, config, 'message', message[:80])
-        await interaction.response.send_message(
-            "✅ welcome message set.\n"
-            "variables: `{user}` `{server}` `{membercount}` `{user.name}` "
-            "`{user.id}` `{user.avatar}` `{server.icon}` — full list in `/welcome tags`"
-        )
-
-    @welcome_set.command(name="embed", description="Set how the welcome message renders")
-    @app_commands.checks.has_permissions(manage_guild=True)
-    @app_commands.describe(mode="text = plain message, embed = inside an embed, hybrid = both split by ---")
-    @app_commands.choices(mode=[
-        app_commands.Choice(name="text", value="text"),
-        app_commands.Choice(name="embed", value="embed"),
-        app_commands.Choice(name="hybrid", value="hybrid"),
+    @app_commands.describe(
+        setting="Which setting to change",
+        value="The new value — text, mode, hex color, URL, or on/off",
+        channel="Target channel (only for the channel settings)",
+    )
+    @app_commands.choices(setting=[
+        app_commands.Choice(name="Welcome Channel", value="channel"),
+        app_commands.Choice(name="Welcome Message", value="message"),
+        app_commands.Choice(name="Embed Mode (text/embed/hybrid)", value="embed_mode"),
+        app_commands.Choice(name="Embed Color", value="color"),
+        app_commands.Choice(name="Banner Image", value="image"),
+        app_commands.Choice(name="Embed Title", value="title"),
+        app_commands.Choice(name="Thumbnail (avatar/server/none/url)", value="thumbnail"),
+        app_commands.Choice(name="Footer Text", value="footer"),
+        app_commands.Choice(name="Welcome DM", value="dm"),
+        app_commands.Choice(name="Welcome On/Off", value="toggle"),
+        app_commands.Choice(name="Goodbye Channel", value="goodbye_channel"),
+        app_commands.Choice(name="Goodbye Message", value="goodbye_message"),
+        app_commands.Choice(name="Goodbye On/Off", value="goodbye_toggle"),
     ])
-    async def welcome_set_embed(self, interaction: discord.Interaction,
-                                mode: app_commands.Choice[str]):
-        self.bot.increment_command('welcome_set_embed')
-        config = self.get_config(interaction.guild.id)
-        config['embed_mode'] = mode.value
-        self._save_config(interaction.guild.id, config, 'embed_mode', mode.value)
-        extra = (
-            "\nin hybrid mode, everything **before** `---` is sent as plain "
-            "text and everything **after** it becomes the embed description."
-            if mode.value == "hybrid" else ""
-        )
+    async def welcome_config(self, interaction: discord.Interaction,
+                             setting: app_commands.Choice[str],
+                             value: Optional[str] = None,
+                             channel: Optional[discord.TextChannel] = None):
+        self.bot.increment_command('welcome_config')
+        if not interaction.guild:
+            return await self._err(interaction, "this command only works in servers.")
+        # FIX 3 — dict dispatch: each setting's logic lives in its own
+        # handler method (carried over from the old subcommands).
+        handlers = {
+            "channel": self._set_channel,
+            "message": self._set_message,
+            "embed_mode": self._set_embed_mode,
+            "color": self._set_color,
+            "image": self._set_image,
+            "title": self._set_title,
+            "thumbnail": self._set_thumbnail,
+            "footer": self._set_footer,
+            "dm": self._set_dm,
+            "toggle": self._set_toggle,
+            "goodbye_channel": self._set_goodbye_channel,
+            "goodbye_message": self._set_goodbye_message,
+            "goodbye_toggle": self._set_goodbye_toggle,
+        }
+        handler = handlers.get(setting.value)
+        if handler is None:
+            return await self._err(interaction, "❌ unknown setting.")
+        await handler(interaction, value, channel)
+
+    # ---- setting handlers (ported from the old /welcome set … subcommands) ----
+
+    async def _set_channel(self, interaction, value, channel):
+        gid = interaction.guild.id
+        ch = self._resolve_channel_arg(interaction.guild, value, channel)
+        if ch is None:
+            return await self._err(
+                interaction,
+                "❌ mention a channel (use the `channel` option) or pass its "
+                "ID / mention as `value`."
+            )
+        config = self.get_config(gid)
+        config['channel_id'] = str(ch.id)
+        config['enabled'] = True  # auto-enable welcome
+        self._save_config(gid, config, 'channel_id', ch.id)
         await interaction.response.send_message(
-            f"✅ embed mode set to **{mode.value}**.{extra}"
+            f"✅ welcome channel set to {ch.mention} — welcome messages **enabled**."
         )
 
-    @welcome_set.command(name="color", description="Set the welcome embed color")
-    @app_commands.checks.has_permissions(manage_guild=True)
-    @app_commands.describe(color="Hex color like #FFC0CB, or 'reset' for the default pink")
-    async def welcome_set_color(self, interaction: discord.Interaction,
-                                color: str):
-        self.bot.increment_command('welcome_set_color')
-        config = self.get_config(interaction.guild.id)
-        if color.strip().lower() in ("reset", "default", "off"):
+    async def _set_message(self, interaction, value, channel):
+        if not value or not value.strip():
+            return await self._err(
+                interaction,
+                "❌ provide the message as `value` — tags: `{user}` `{server}` "
+                "`{membercount}` (full list in `/welcome tags`)."
+            )
+        gid = interaction.guild.id
+        config = self.get_config(gid)
+        config['message'] = value
+        self._save_config(gid, config, 'message', value[:80])
+        await interaction.response.send_message("✅ welcome message updated.")
+
+    async def _set_embed_mode(self, interaction, value, channel):
+        if not value or not value.strip():
+            return await self._err(
+                interaction,
+                "❌ provide the mode as `value`: `text`, `embed`, or `hybrid`."
+            )
+        mode = value.strip().lower()
+        if mode not in ("text", "embed", "hybrid"):
+            return await self._err(
+                interaction, "❌ mode must be `text`, `embed`, or `hybrid`."
+            )
+        gid = interaction.guild.id
+        config = self.get_config(gid)
+        config['embed_mode'] = mode
+        self._save_config(gid, config, 'embed_mode', mode)
+        extra = (
+            " — everything before `---` is sent as plain text, everything "
+            "after it becomes the embed."
+            if mode == "hybrid" else ""
+        )
+        await interaction.response.send_message(f"✅ embed mode set to **{mode}**{extra}")
+
+    async def _set_color(self, interaction, value, channel):
+        if not value or not value.strip():
+            return await self._err(
+                interaction,
+                "❌ provide a hex color as `value` (e.g. `#FFC0CB`) or `reset`."
+            )
+        gid = interaction.guild.id
+        config = self.get_config(gid)
+        if value.strip().lower() in ("reset", "default", "off"):
             config['welcome_color'] = DEFAULT_WELCOME_COLOR
-            self._save_config(interaction.guild.id, config, 'welcome_color', DEFAULT_WELCOME_COLOR)
-            await interaction.response.send_message(
+            self._save_config(gid, config, 'welcome_color', DEFAULT_WELCOME_COLOR)
+            return await interaction.response.send_message(
                 f"✅ welcome color reset to default **{DEFAULT_WELCOME_COLOR}**."
             )
-            return
-        color_int = self._parse_hex_color(color)
+        color_int = self._parse_hex_color(value)
         if color_int is None:
             return await self._err(
                 interaction,
                 "❌ invalid color. use hex like `#FFC0CB`, `#5865F2`, or `reset`."
             )
-        normalized = "#" + color.strip().lstrip('#').upper()
+        normalized = "#" + value.strip().lstrip('#').upper()
         config['welcome_color'] = normalized
-        self._save_config(interaction.guild.id, config, 'welcome_color', normalized)
+        self._save_config(gid, config, 'welcome_color', normalized)
         preview = discord.Embed(
-            description=f"welcome embed color set to **{normalized}**",
+            description=f"✅ welcome color set to **{normalized}**",
             color=color_int,
         )
         preview.set_footer(text=FOOTER)
         await interaction.response.send_message(embed=preview)
 
-    @welcome_set.command(name="image", description="Set the welcome banner image")
-    @app_commands.checks.has_permissions(manage_guild=True)
-    @app_commands.describe(image="Image URL shown at the bottom of the embed, or 'reset' to remove")
-    async def welcome_set_image(self, interaction: discord.Interaction,
-                                image: str):
-        self.bot.increment_command('welcome_set_image')
-        config = self.get_config(interaction.guild.id)
-        if image.strip().lower() in ("reset", "off", "none"):
+    async def _set_image(self, interaction, value, channel):
+        if not value or not value.strip():
+            return await self._err(
+                interaction,
+                "❌ provide an image URL as `value`, or `reset` to remove the banner."
+            )
+        gid = interaction.guild.id
+        config = self.get_config(gid)
+        if value.strip().lower() in ("reset", "off", "none"):
             config['welcome_image'] = None
-            self._save_config(interaction.guild.id, config, 'welcome_image', '(removed)')
-            await interaction.response.send_message("✅ welcome image removed.")
-            return
-        if not image.startswith(("http://", "https://")):
+            self._save_config(gid, config, 'welcome_image', '(removed)')
+            return await interaction.response.send_message("✅ welcome image removed.")
+        if not value.startswith(("http://", "https://")):
             return await self._err(
                 interaction, "❌ image URL must start with `http://` or `https://`."
             )
-        config['welcome_image'] = image[:500]
-        self._save_config(interaction.guild.id, config, 'welcome_image', image[:80])
-        await interaction.response.send_message("✅ welcome image set.")
+        config['welcome_image'] = value[:500]
+        self._save_config(gid, config, 'welcome_image', value[:80])
+        await interaction.response.send_message("✅ welcome image updated.")
 
-    @welcome_set.command(name="title", description="Set the welcome embed title")
-    @app_commands.checks.has_permissions(manage_guild=True)
-    @app_commands.describe(title="Title text (supports tags), or 'reset' to remove the title")
-    async def welcome_set_title(self, interaction: discord.Interaction,
-                                title: str):
-        self.bot.increment_command('welcome_set_title')
-        config = self.get_config(interaction.guild.id)
-        if title.strip().lower() in ("reset", "off", "none"):
+    async def _set_title(self, interaction, value, channel):
+        if not value or not value.strip():
+            return await self._err(
+                interaction,
+                "❌ provide the title as `value` (tags supported), or `reset` to remove it."
+            )
+        gid = interaction.guild.id
+        config = self.get_config(gid)
+        if value.strip().lower() in ("reset", "off", "none"):
             config['welcome_title'] = ''
-            self._save_config(interaction.guild.id, config, 'welcome_title', '(removed)')
-            await interaction.response.send_message("✅ welcome title removed.")
-            return
-        config['welcome_title'] = title[:256]
-        self._save_config(interaction.guild.id, config, 'welcome_title', title[:80])
+            self._save_config(gid, config, 'welcome_title', '(removed)')
+            return await interaction.response.send_message("✅ welcome title removed.")
+        config['welcome_title'] = value[:256]
+        self._save_config(gid, config, 'welcome_title', value[:80])
         await interaction.response.send_message(
-            f"✅ welcome title set to **{title[:100]}**."
+            f"✅ welcome title set to **{value[:100]}**."
         )
 
-    @welcome_set.command(name="thumbnail", description="Set the welcome embed thumbnail")
-    @app_commands.checks.has_permissions(manage_guild=True)
-    @app_commands.describe(
-        mode="Thumbnail source",
-        url="Custom image URL (only used with the 'custom url' mode)",
-    )
-    @app_commands.choices(mode=[
-        app_commands.Choice(name="avatar (new member)", value="avatar"),
-        app_commands.Choice(name="server icon", value="server"),
-        app_commands.Choice(name="none", value="none"),
-        app_commands.Choice(name="custom url", value="url"),
-    ])
-    async def welcome_set_thumbnail(self, interaction: discord.Interaction,
-                                    mode: app_commands.Choice[str],
-                                    url: Optional[str] = None):
-        self.bot.increment_command('welcome_set_thumbnail')
-        config = self.get_config(interaction.guild.id)
-        if mode.value == "url":
-            if not url or not url.startswith(("http://", "https://")):
-                return await self._err(
-                    interaction,
-                    "❌ provide a `url` starting with `http://` or `https://`."
-                )
-            config['welcome_thumbnail'] = f"url:{url[:500]}"
-            self._save_config(interaction.guild.id, config, 'welcome_thumbnail', url[:80])
-            await interaction.response.send_message("✅ welcome thumbnail set to your URL.")
-        else:
-            config['welcome_thumbnail'] = mode.value
-            self._save_config(interaction.guild.id, config, 'welcome_thumbnail', mode.value)
-            await interaction.response.send_message(
-                f"✅ welcome thumbnail set to **{mode.value}**."
+    async def _set_thumbnail(self, interaction, value, channel):
+        if not value or not value.strip():
+            return await self._err(
+                interaction,
+                "❌ provide the mode as `value`: `avatar`, `server`, `none`, "
+                "or an image URL."
             )
+        gid = interaction.guild.id
+        config = self.get_config(gid)
+        v = value.strip()
+        if v.lower() in ("reset", "avatar", "default"):
+            config['welcome_thumbnail'] = 'avatar'
+            self._save_config(gid, config, 'welcome_thumbnail', 'avatar')
+            return await interaction.response.send_message(
+                "✅ welcome thumbnail set to **avatar**."
+            )
+        if v.lower() == "server":
+            config['welcome_thumbnail'] = 'server'
+            self._save_config(gid, config, 'welcome_thumbnail', 'server')
+            return await interaction.response.send_message(
+                "✅ welcome thumbnail set to the **server icon**."
+            )
+        if v.lower() in ("none", "off"):
+            config['welcome_thumbnail'] = 'none'
+            self._save_config(gid, config, 'welcome_thumbnail', 'none')
+            return await interaction.response.send_message("✅ welcome thumbnail removed.")
+        if v.startswith(("http://", "https://")):
+            config['welcome_thumbnail'] = f"url:{v[:500]}"
+            self._save_config(gid, config, 'welcome_thumbnail', v[:80])
+            return await interaction.response.send_message(
+                "✅ welcome thumbnail set to your URL."
+            )
+        return await self._err(
+            interaction,
+            "❌ thumbnail must be `avatar`, `server`, `none`, or an image URL."
+        )
 
-    @welcome_set.command(name="footer", description="Set the welcome embed footer")
-    @app_commands.checks.has_permissions(manage_guild=True)
-    @app_commands.describe(footer="Footer text (tags supported), 'reset' for default, 'none' to remove")
-    async def welcome_set_footer(self, interaction: discord.Interaction,
-                                 footer: str):
-        self.bot.increment_command('welcome_set_footer')
-        config = self.get_config(interaction.guild.id)
-        if footer.strip().lower() in ("reset", "default"):
+    async def _set_footer(self, interaction, value, channel):
+        if not value or not value.strip():
+            return await self._err(
+                interaction,
+                "❌ provide the footer as `value` (tags supported), `reset` for "
+                "the default, or `none` to remove it."
+            )
+        gid = interaction.guild.id
+        config = self.get_config(gid)
+        if value.strip().lower() in ("reset", "default"):
             config['welcome_footer'] = DEFAULT_WELCOME_FOOTER
-            self._save_config(interaction.guild.id, config, 'welcome_footer', DEFAULT_WELCOME_FOOTER)
-            await interaction.response.send_message(
+            self._save_config(gid, config, 'welcome_footer', DEFAULT_WELCOME_FOOTER)
+            return await interaction.response.send_message(
                 f"✅ footer reset to default: **{DEFAULT_WELCOME_FOOTER}**"
             )
-            return
-        if footer.strip().lower() in ("none", "off", "empty"):
+        if value.strip().lower() in ("none", "off", "empty"):
             config['welcome_footer'] = ""
-            self._save_config(interaction.guild.id, config, 'welcome_footer', '(removed)')
-            await interaction.response.send_message("✅ footer removed.")
-            return
-        config['welcome_footer'] = footer[:2000]
-        self._save_config(interaction.guild.id, config, 'welcome_footer', footer[:80])
-        rendered = self._replace_variables(footer, interaction.user, interaction.guild)
+            self._save_config(gid, config, 'welcome_footer', '(removed)')
+            return await interaction.response.send_message("✅ footer removed.")
+        config['welcome_footer'] = value[:2000]
+        self._save_config(gid, config, 'welcome_footer', value[:80])
+        rendered = self._replace_variables(value, interaction.user, interaction.guild)
         await interaction.response.send_message(
-            f"✅ footer set — preview: **{rendered[:150]}**"
+            f"✅ footer updated — preview: **{rendered[:150]}**"
         )
 
-    @welcome_set.command(name="dm", description="Set the welcome DM sent to new members")
-    @app_commands.checks.has_permissions(manage_guild=True)
-    @app_commands.describe(dm="DM text (tags supported), or 'disable' to turn DMs off")
-    async def welcome_set_dm(self, interaction: discord.Interaction, dm: str):
-        self.bot.increment_command('welcome_set_dm')
-        config = self.get_config(interaction.guild.id)
-        if dm.strip().lower() in ("disable", "off", "none"):
+    async def _set_dm(self, interaction, value, channel):
+        if not value or not value.strip():
+            return await self._err(
+                interaction,
+                "❌ provide the DM text as `value` (tags supported), or `disable`."
+            )
+        gid = interaction.guild.id
+        config = self.get_config(gid)
+        if value.strip().lower() in ("disable", "off", "none"):
             config['dm_message'] = ''
-            self._save_config(interaction.guild.id, config, 'dm_message', '(disabled)')
-            await interaction.response.send_message("✅ welcome DM disabled.")
-            return
-        config['dm_message'] = dm[:1000]
-        self._save_config(interaction.guild.id, config, 'dm_message', dm[:80])
-        preview = self._replace_variables(dm, interaction.user, interaction.guild)
+            self._save_config(gid, config, 'dm_message', '(disabled)')
+            return await interaction.response.send_message("✅ welcome DM disabled.")
+        config['dm_message'] = value[:1000]
+        self._save_config(gid, config, 'dm_message', value[:80])
+        preview = self._replace_variables(value, interaction.user, interaction.guild)
         await interaction.response.send_message(
-            f"✅ welcome DM set.\npreview: {preview[:500]}"
+            f"✅ welcome DM updated.\npreview: {preview[:500]}"
         )
 
-    # ---- /welcome toggle ──────────────────────────────────────────
-    @welcome.command(name="toggle", description="Enable or disable welcome messages")
-    @app_commands.checks.has_permissions(manage_guild=True)
-    @app_commands.describe(state="on or off")
-    @app_commands.choices(state=[
-        app_commands.Choice(name="on", value="on"),
-        app_commands.Choice(name="off", value="off"),
-    ])
-    async def welcome_toggle(self, interaction: discord.Interaction,
-                             state: app_commands.Choice[str]):
-        self.bot.increment_command('welcome_toggle')
-        config = self.get_config(interaction.guild.id)
-        config['enabled'] = (state.value == "on")
-        self._save_config(interaction.guild.id, config, 'enabled', state.value)
+    async def _set_toggle(self, interaction, value, channel):
+        if not value or value.strip().lower() not in ("on", "off"):
+            return await self._err(interaction, "❌ provide `on` or `off` as `value`.")
+        gid = interaction.guild.id
+        config = self.get_config(gid)
+        state = value.strip().lower()
+        config['enabled'] = (state == "on")
+        self._save_config(gid, config, 'enabled', state)
         warn = ""
         if config['enabled'] and not config.get('channel_id'):
-            warn = "\n⚠️ no channel set — use `/welcome set channel` first."
-        await interaction.response.send_message(
-            f"✅ welcome messages **{state.value}**.{warn}"
-        )
+            warn = "\n⚠️ no channel set — use `/welcome config setting:channel` first."
+        await interaction.response.send_message(f"✅ welcome messages **{state}**.{warn}")
 
-    # ---- /welcome goodbye ... ─────────────────────────────────────
-    @welcome_goodbye.command(name="channel", description="Set the goodbye channel (auto-enables goodbye)")
-    @app_commands.checks.has_permissions(manage_guild=True)
-    @app_commands.describe(channel="Channel where goodbye messages are posted")
-    async def welcome_goodbye_channel(self, interaction: discord.Interaction,
-                                      channel: discord.TextChannel):
-        self.bot.increment_command('welcome_goodbye_channel')
-        config = self.get_config(interaction.guild.id)
-        config['goodbye_channel_id'] = str(channel.id)
+    async def _set_goodbye_channel(self, interaction, value, channel):
+        gid = interaction.guild.id
+        ch = self._resolve_channel_arg(interaction.guild, value, channel)
+        if ch is None:
+            return await self._err(
+                interaction,
+                "❌ mention a channel (use the `channel` option) or pass its "
+                "ID / mention as `value`."
+            )
+        config = self.get_config(gid)
+        config['goodbye_channel_id'] = str(ch.id)
         config['goodbye_enabled'] = True  # auto-enable goodbye
-        self._save_config(interaction.guild.id, config, 'goodbye_channel_id', channel.id)
+        self._save_config(gid, config, 'goodbye_channel_id', ch.id)
         await interaction.response.send_message(
-            f"✅ goodbye channel set to {channel.mention} — goodbye messages **enabled**."
+            f"✅ goodbye channel set to {ch.mention} — goodbye messages **enabled**."
         )
 
-    @welcome_goodbye.command(name="message", description="Set the goodbye message text")
-    @app_commands.checks.has_permissions(manage_guild=True)
-    @app_commands.describe(message="Tags: {user} {server} {membercount} {duration}")
-    async def welcome_goodbye_message(self, interaction: discord.Interaction,
-                                      message: str):
-        self.bot.increment_command('welcome_goodbye_message')
-        config = self.get_config(interaction.guild.id)
-        config['goodbye_message'] = message
-        self._save_config(interaction.guild.id, config, 'goodbye_message', message[:80])
-        await interaction.response.send_message(
-            "✅ goodbye message set.\nvariables: `{user}` `{server}` "
-            "`{membercount}` `{duration}` (how long they stayed)"
-        )
+    async def _set_goodbye_message(self, interaction, value, channel):
+        if not value or not value.strip():
+            return await self._err(
+                interaction,
+                "❌ provide the message as `value` — tags: `{user}` `{server}` "
+                "`{membercount}` `{duration}`."
+            )
+        gid = interaction.guild.id
+        config = self.get_config(gid)
+        config['goodbye_message'] = value
+        self._save_config(gid, config, 'goodbye_message', value[:80])
+        await interaction.response.send_message("✅ goodbye message updated.")
 
-    @welcome_goodbye.command(name="toggle", description="Enable or disable goodbye messages")
-    @app_commands.checks.has_permissions(manage_guild=True)
-    @app_commands.describe(state="on or off")
-    @app_commands.choices(state=[
-        app_commands.Choice(name="on", value="on"),
-        app_commands.Choice(name="off", value="off"),
-    ])
-    async def welcome_goodbye_toggle(self, interaction: discord.Interaction,
-                                     state: app_commands.Choice[str]):
-        self.bot.increment_command('welcome_goodbye_toggle')
-        config = self.get_config(interaction.guild.id)
-        config['goodbye_enabled'] = (state.value == "on")
-        self._save_config(interaction.guild.id, config, 'goodbye_enabled', state.value)
+    async def _set_goodbye_toggle(self, interaction, value, channel):
+        if not value or value.strip().lower() not in ("on", "off"):
+            return await self._err(interaction, "❌ provide `on` or `off` as `value`.")
+        gid = interaction.guild.id
+        config = self.get_config(gid)
+        state = value.strip().lower()
+        config['goodbye_enabled'] = (state == "on")
+        self._save_config(gid, config, 'goodbye_enabled', state)
         warn = ""
         if config['goodbye_enabled'] and not config.get('goodbye_channel_id'):
-            warn = "\n⚠️ no channel set — use `/welcome goodbye channel` first."
-        await interaction.response.send_message(
-            f"✅ goodbye messages **{state.value}**.{warn}"
-        )
+            warn = "\n⚠️ no channel set — use `/welcome config setting:goodbye_channel` first."
+        await interaction.response.send_message(f"✅ goodbye messages **{state}**.{warn}")
 
     # ---- /welcome test ────────────────────────────────────────────
     # S2 — manage_guild required: previews post to the real welcome channel,
@@ -865,7 +932,7 @@ class Welcome(commands.Cog):
                 return await self._err(
                     interaction,
                     f"❌ {type_value} channel not set. use "
-                    f"`/welcome set channel` (or `/welcome goodbye channel`) first."
+                    f"`/welcome config setting:channel` (or `setting:goodbye_channel`) first."
                 )
             is_goodbye = (type_value == "goodbye")
             success = await self._send_welcome_message(
@@ -884,7 +951,7 @@ class Welcome(commands.Cog):
             if not dm_msg or dm_msg.lower() == 'off':
                 return await self._err(
                     interaction,
-                    "❌ welcome DM not configured. use `/welcome set dm` first."
+                    "❌ welcome DM not configured. use `/welcome config setting:dm` first."
                 )
             try:
                 dm_text = self._replace_variables(dm_msg, member, interaction.guild)
@@ -1004,10 +1071,10 @@ class Welcome(commands.Cog):
             "• Use --- to separate plain text from embed (hybrid mode)\n"
             "• <#channelid> renders as a clickable channel link in embeds\n"
             "• [text](https://discord.com/channels/GUILD/CHANNEL) for named links\n"
-            "• /welcome set embed hybrid — Mimu-style text + embed\n"
-            "• /welcome set image <url> — banner at the bottom of the embed\n"
-            "• /welcome set color #FFC0CB — custom embed color\n"
-            "• /welcome set footer none — remove the footer entirely\n"
+            "• /welcome config embed_mode hybrid — Mimu-style text + embed\n"
+            "• /welcome config image <url> — banner at the bottom of the embed\n"
+            "• /welcome config color #FFC0CB — custom embed color\n"
+            "• /welcome config footer none — remove the footer entirely\n"
             "```"
         ))
         embed.set_footer(text="✩ ━━ aurelia ༉‧₊˚. ღ")
@@ -1066,7 +1133,7 @@ class WelcomeResetView(discord.ui.View):
             return
         await interaction.response.edit_message(
             content="✅ every welcome setting is back to defaults. configure "
-                    "again with `/welcome set channel`.",
+                    "again with `/welcome config setting:channel <#channel>`.",
             view=None,
         )
 

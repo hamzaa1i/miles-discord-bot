@@ -115,9 +115,41 @@ class Prefix(commands.Cog):
 
     # ─── Welcome ──────────────────────────────────────────────────
 
+    # FIX 3 — settings the prefix "welcome config" command can write.
+    # Mirrors the /welcome config slash choices (channels and toggles get
+    # dedicated handling below; everything else is a plain string write).
+    WELCOME_CONFIG_KEYS = {
+        "channel": "channel_id",
+        "message": "message",
+        "embed_mode": "embed_mode",
+        "color": "welcome_color",
+        "image": "welcome_image",
+        "title": "welcome_title",
+        "thumbnail": "welcome_thumbnail",
+        "footer": "welcome_footer",
+        "dm": "dm_message",
+        "goodbye_channel": "goodbye_channel_id",
+        "goodbye_message": "goodbye_message",
+    }
+
     async def _handle_welcome(self, message, args, args_str):
         sub = args[0].lower() if args else ""
 
+        # FIX 3 — /welcome config consolidation: the prefix equivalent is
+        # "welcome config <setting> <value...>", mirroring the slash choices.
+        if sub == "config":
+            await self._handle_welcome_config(message, args[1:])
+            return
+
+        if sub == "show":
+            await self._handle_welcome_show(message)
+            return
+
+        if sub == "test":
+            await self._handle_welcome_test(message, args[1:])
+            return
+
+        # Back-compat shortcuts from the old prefix interface
         if sub == "message":
             # FIX 2 — Capture everything after "welcome message " including newlines
             prefix = await self._get_prefix(message.guild.id)
@@ -153,23 +185,182 @@ class Prefix(commands.Cog):
             await message.reply(f"welcome channel set to {channel.mention}.")
             return
 
-        if sub == "test":
-            settings = await get_guild_setting_async(message.guild.id, "welcome_settings")
-            channel_id = settings.get("channel_id")
-            welcome_msg = settings.get("message", "Welcome {user} to {server}!")
-            if not channel_id:
-                await message.reply("no welcome channel set. use welcome channel #channel first.")
+        await message.reply(
+            "usage: welcome config <setting> <value> | welcome test "
+            "[welcome|goodbye|dm] | welcome show\n(use /welcome for full config options)"
+        )
+
+    async def _handle_welcome_config(self, message, args):
+        """FIX 3 — prefix mirror of /welcome config: 13 settings via
+        "welcome config <setting> <value>". The slash command does the rich
+        validation (hex colors, URL checks, autocomplete); this route keeps
+        writes simple so the advertised help text is truthful."""
+        if not message.author.guild_permissions.manage_guild:
+            owner_id = int(os.getenv("OWNER_ID", "0"))
+            if message.author.id != owner_id:
+                await message.reply("no permission.")
                 return
-            channel = message.guild.get_channel(int(channel_id))
-            if channel:
-                text = welcome_msg.replace("{user}", message.author.mention)
-                text = text.replace("{server}", message.guild.name)
-                text = text.replace("{membercount}", str(message.guild.member_count))
-                await channel.send(text)
-                await message.reply("test welcome sent.")
+
+        if not args:
+            await message.reply(
+                "usage: welcome config <setting> <value>\n"
+                "settings: channel, message, embed_mode, color, image, title, "
+                "thumbnail, footer, dm, toggle, goodbye_channel, "
+                "goodbye_message, goodbye_toggle\n"
+                "(use /welcome config for autocomplete + validation)"
+            )
             return
 
-        await message.reply("usage: welcome channel #channel | welcome message [text] | welcome test")
+        setting = args[0].lower()
+
+        # value = everything after the setting word, so multi-word message
+        # templates survive intact (same trick as "welcome message <text>")
+        prefix = await self._get_prefix(message.guild.id) or ""
+        match = re.match(
+            rf'^{re.escape(prefix)}welcome\s+config\s+\S+\s+',
+            message.content,
+            re.IGNORECASE
+        )
+        value = message.content[match.end():].strip() if match else " ".join(args[1:])
+
+        # toggles
+        if setting in ("toggle", "goodbye_toggle"):
+            state = (value or "").strip().lower()
+            if state not in ("on", "off"):
+                await message.reply(f"usage: welcome config {setting} on|off")
+                return
+            settings = await get_guild_setting_async(message.guild.id, "welcome_settings")
+            if setting == "toggle":
+                settings["enabled"] = (state == "on")
+            else:
+                settings["goodbye_enabled"] = (state == "on")
+            await set_guild_setting_async(message.guild.id, "welcome_settings", settings)
+            label = "welcome" if setting == "toggle" else "goodbye"
+            await message.reply(f"{label} messages {state}.")
+            return
+
+        # channel settings — a #channel mention in the message wins
+        if setting in ("channel", "goodbye_channel"):
+            channel = message.channel_mentions[0] if message.channel_mentions else None
+            if not channel:
+                await message.reply(f"mention a channel: welcome config {setting} #channel")
+                return
+            settings = await get_guild_setting_async(message.guild.id, "welcome_settings")
+            if setting == "channel":
+                settings["channel_id"] = str(channel.id)
+                settings["enabled"] = True
+            else:
+                settings["goodbye_channel_id"] = str(channel.id)
+                settings["goodbye_enabled"] = True
+            await set_guild_setting_async(message.guild.id, "welcome_settings", settings)
+            await message.reply(f"{setting} set to {channel.mention}.")
+            return
+
+        key = self.WELCOME_CONFIG_KEYS.get(setting)
+        if key is None:
+            await message.reply(
+                f"unknown setting `{setting}`. (use /welcome config for the full list)"
+            )
+            return
+        if not value:
+            await message.reply(f"usage: welcome config {setting} <value>")
+            return
+
+        settings = await get_guild_setting_async(message.guild.id, "welcome_settings")
+        # 'reset'-style values normalize to the cleared state for the
+        # style settings, matching the slash command's behavior
+        if (value.strip().lower() in ("none", "reset", "disable", "off")
+                and key in ("welcome_image", "welcome_title",
+                            "welcome_footer", "dm_message")):
+            settings[key] = None if key == "welcome_image" else ""
+        else:
+            settings[key] = value[:2000]
+        await set_guild_setting_async(message.guild.id, "welcome_settings", settings)
+        await message.reply(f"{setting} updated.")
+
+    async def _handle_welcome_show(self, message):
+        """FIX 3 — prefix mirror of /welcome show: a compact text overview
+        (the slash command shows the rich embed card)."""
+        welcome_cog = self.bot.get_cog("Welcome")
+        if not welcome_cog:
+            await message.reply("welcome system not loaded.")
+            return
+        config = welcome_cog.get_config(message.guild.id)
+        guild = message.guild
+
+        def fmt_channel(eid):
+            if not eid:
+                return "not set"
+            try:
+                obj = guild.get_channel(int(eid))
+                return obj.mention if obj else f"`{eid}` (not found)"
+            except (ValueError, TypeError):
+                return f"`{eid}` (invalid)"
+
+        dm_msg = config.get('dm_message', '')
+        lines = [
+            f"**welcome:** {'on' if config.get('enabled') else 'off'} · {fmt_channel(config.get('channel_id'))}",
+            f"**goodbye:** {'on' if config.get('goodbye_enabled') else 'off'} · {fmt_channel(config.get('goodbye_channel_id'))}",
+            f"**mode:** {config.get('embed_mode', 'embed')} · **color:** {config.get('welcome_color', '#FFC0CB')}",
+            f"**dm:** {'on' if dm_msg else 'off'}",
+            f"**message:** {(config.get('message') or '')[:150]}",
+        ]
+        await message.reply(
+            "**welcome config**\n" + "\n".join(lines) +
+            "\n(use /welcome show for the rich preview card)"
+        )
+
+    async def _handle_welcome_test(self, message, args):
+        """FIX 3 — optional type argument, same as /welcome test:
+        welcome (default), goodbye, or dm. Renders through the Welcome cog
+        so the preview matches what members actually see."""
+        test_type = (args[0].lower() if args else "welcome")
+        if test_type not in ("welcome", "goodbye", "dm"):
+            await message.reply("usage: welcome test [welcome|goodbye|dm]")
+            return
+        if not message.author.guild_permissions.manage_guild:
+            owner_id = int(os.getenv("OWNER_ID", "0"))
+            if message.author.id != owner_id:
+                await message.reply("no permission.")
+                return
+        welcome_cog = self.bot.get_cog("Welcome")
+        if not welcome_cog:
+            await message.reply("welcome system not loaded.")
+            return
+        config = welcome_cog.get_config(message.guild.id)
+
+        if test_type == "dm":
+            dm_msg = config.get('dm_message', '')
+            if not dm_msg or dm_msg.lower() == 'off':
+                await message.reply("welcome DM not configured. use welcome config dm <text> first.")
+                return
+            try:
+                dm_text = welcome_cog._replace_variables(dm_msg, message.author, message.guild)
+                await message.author.send(dm_text[:2000])
+                await message.reply("test DM sent to your inbox.")
+            except discord.Forbidden:
+                await message.reply("couldn't DM you — your DMs are closed.")
+            return
+
+        if test_type == "welcome":
+            cid = config.get('channel_id')
+        else:
+            cid = config.get('goodbye_channel_id') or config.get('channel_id')
+        channel = message.guild.get_channel(int(cid)) if cid else None
+        if not channel:
+            setting = 'channel' if test_type == 'welcome' else 'goodbye_channel'
+            await message.reply(
+                f"no {test_type} channel set. use welcome config {setting} #channel first."
+            )
+            return
+        success = await welcome_cog._send_welcome_message(
+            channel, config, message.author, message.guild,
+            is_goodbye=(test_type == "goodbye")
+        )
+        if success:
+            await message.reply(f"test {test_type} sent to {channel.mention}.")
+        else:
+            await message.reply(f"failed to send test {test_type}.")
 
     # ─── Goodbye ──────────────────────────────────────────────────
 
@@ -309,11 +500,10 @@ class Prefix(commands.Cog):
                 f"**AI Chat**\n"
                 f"`{prefix}` + any question → talk to aurelia\n\n"
                 f"**Welcome**\n"
-                f"`{prefix}welcome channel #channel`\n"
-                f"`{prefix}welcome message [text]`\n"
-                f"`{prefix}welcome test`\n"
-                f"`{prefix}goodbye channel #channel` / `{prefix}goodbye message [text]`\n"
-                f"(slash commands offer more: `/welcome set ...`)\n\n"
+                f"`{prefix}welcome config <setting> <value>`\n"
+                f"`{prefix}welcome test [welcome|goodbye|dm]`\n"
+                f"`{prefix}welcome show`\n"
+                f"(use /welcome for full config options)\n\n"
                 f"**Moderation**\n"
                 f"`{prefix}warnings add @user [reason]`\n"
                 f"`{prefix}warnings list @user`\n"

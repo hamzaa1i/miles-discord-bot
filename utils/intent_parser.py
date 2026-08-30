@@ -306,6 +306,108 @@ def deterministic_mod_intent(content: str, mention_count: int = 0) -> dict | Non
     return None
 
 
+# ─── FIX 1 — deterministic utility intent detection ──
+#
+# Root cause of "@aurelia snipe" answering "sniper's a solid pick": the
+# AI-chat fast-path (is_obvious_chat in cogs/ai_chat.py) ran BEFORE any
+# intent parsing and short-circuited every short message without a
+# moderation keyword straight to the chat model. Utility commands were
+# never matched.
+#
+# parse_fast_intent() is the deterministic counterpart of parse_intent():
+# regex ONLY, zero Groq calls, zero latency. It runs FIRST in the mention
+# handler, so utility commands (and moderation commands, which keep their
+# dedicated question-guarded detector) never depend on the model.
+UTILITY_PATTERNS = [
+    # (regex, intent) — first match wins. Word boundaries keep tense and
+    # compound words safe ("sniper", "rolled", "trolled" don't match).
+    (r'\bsnipe\b', 'snipe'),
+    (r'\bflip\b', 'flip'),
+    (r'\broll\b', 'roll'),
+    (r'\bjoke\b', 'joke'),
+    (r'\bmeme\b', 'meme'),
+    # weather: bare command ("weather") OR a city phrase
+    # ("weather in tokyo") — conversational mentions like "tell me about
+    # the weather phenomenon known as rain" must NOT trigger
+    (r'^\s*(?:weather|forecast)\b\s*$|\b(?:weather|forecast)\s+(?:in|at|for|of)\s+\S', 'weather'),
+    (r'\bavatar\b|\bpfp\b', 'avatar'),
+    (r'\bwhois\b|\buserinfo\b', 'whois'),
+    (r'\bserver\s?info\b|\bserver\s?stats\b', 'serverinfo'),
+    (r'\bremind\b', 'remind'),
+]
+
+
+def parse_fast_intent(content: str, message=None) -> dict | None:
+    """Deterministic regex-only parser. Returns intent dict or None.
+
+    Contains ONLY the regex matching logic — never calls Groq. Covers the
+    moderation intents (via deterministic_mod_intent, which keeps its
+    question guards) plus the utility intents the AI-chat fast-path used
+    to swallow. Returns {"intent": ..., "params": {...}} or None when no
+    pattern matches.
+    """
+    if not content or not content.strip():
+        return None
+
+    mention_count = 0
+    if message is not None:
+        try:
+            mention_count = len(message.mentions or [])
+        except Exception:
+            mention_count = 0
+
+    # moderation intents keep their dedicated (question-guarded) detector
+    mod = deterministic_mod_intent(content, mention_count)
+    if mod:
+        return mod
+
+    content_lower = content.lower().strip()
+
+    for pattern, intent in UTILITY_PATTERNS:
+        if not re.search(pattern, content_lower):
+            continue
+
+        params = {}
+        if intent == 'snipe':
+            m = re.search(r'\bsnipe\s+(\d+)', content_lower)
+            if m and int(m.group(1)) >= 1:
+                params['index'] = int(m.group(1))
+
+        elif intent == 'roll':
+            m = re.search(r'\broll\s+(?:a\s+)?(?:d\s*)?(\d+)', content_lower)
+            if m and int(m.group(1)) >= 2:
+                params['sides'] = min(int(m.group(1)), 1000)
+
+        elif intent == 'weather':
+            m = re.search(
+                r'\b(?:weather|forecast)\s+(?:in|at|for|of)\s+(.+)',
+                content_lower)
+            if m:
+                city = m.group(1).strip().strip('?.!')
+                if city:
+                    params['city'] = city[:80]
+
+        elif intent == 'remind':
+            # "remind me in 10 minutes to drink water"
+            dur = re.search(
+                r'\b(?:in|after)\s+(\d+(?:\.\d+)?)\s*'
+                r'(s|secs?|seconds?|m|mins?|minutes?|h|hrs?|hours?|d|days?)'
+                r'(?![a-z])',
+                content_lower)
+            if dur:
+                mult = {'s': 1, 'm': 60, 'h': 3600, 'd': 86400}[dur.group(2)[0]]
+                params['duration_seconds'] = int(float(dur.group(1)) * mult)
+            txt = re.search(r'\bto\s+(.+)', content_lower)
+            if txt:
+                reminder_text = txt.group(1).strip().strip('?.!')
+                if reminder_text:
+                    params['reminder_text'] = reminder_text[:500]
+
+        return {"intent": intent, "params": params}
+
+    return None
+
+
 async def parse_intent(message_content: str, ai_handler) -> dict:
     fallback = {"intent": "chat", "params": {}}
     try:

@@ -193,6 +193,12 @@ ALTER TABLE public.leveling_settings
   ADD COLUMN IF NOT EXISTS rate FLOAT DEFAULT 1.0;
 ALTER TABLE public.leveling_settings
   ADD COLUMN IF NOT EXISTS rewards JSONB DEFAULT '{}'::jsonb;
+-- FIX 2 — customizable level-up messages (template + channel mode:
+-- active | configured | dm | none)
+ALTER TABLE public.leveling_settings
+  ADD COLUMN IF NOT EXISTS level_up_message TEXT DEFAULT '🎉 {user} just reached level {level}! ✦';
+ALTER TABLE public.leveling_settings
+  ADD COLUMN IF NOT EXISTS level_up_channel_mode TEXT DEFAULT 'active';
 
 -- Self-role panels (panels blob added after the original per-message schema)
 ALTER TABLE public.self_role_panels
@@ -315,6 +321,8 @@ CREATE TABLE IF NOT EXISTS public.leveling_settings (
   channel_id TEXT,
   rate FLOAT DEFAULT 1.0,
   rewards JSONB DEFAULT '{}'::jsonb,
+  level_up_message TEXT DEFAULT '🎉 {user} just reached level {level}! ✦',
+  level_up_channel_mode TEXT DEFAULT 'active',
   updated_at TEXT
 );
 GRANT ALL ON public.leveling_settings TO anon;
