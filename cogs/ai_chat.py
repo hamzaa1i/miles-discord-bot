@@ -2404,18 +2404,32 @@ class AIChat(commands.Cog):
     # used to log every cycle (even when nothing was due), producing a
     # constant stream of "reminders?select=%2A&fired=eq.False" entries.
     # Now it stays silent unless a reminder actually fires.
+    #
+    # PHASE 2 / PART 4 — recurring reminders: when a reminder with
+    # repeat_interval = daily / weekly / monthly fires, its end_time is
+    # snoozed to the next occurrence (utils.db.snooze_reminder) instead
+    # of the row being deleted. One-shot reminders (repeat_interval
+    # 'none' or missing) keep the old delete-on-fire behavior — deleting
+    # is this loop's terminal state for a fired row (get_all_reminders
+    # only ever selects fired=False).
     @tasks.loop(seconds=60)
     async def check_reminders(self):
         import time as _time
         # PHASE 1A — Use utils/db instead of direct JSON
         try:
-            from utils.db import get_all_reminders, remove_reminder
+            from utils.db import get_all_reminders, remove_reminder, snooze_reminder
             all_reminders = get_all_reminders()
         except Exception:
             return
         # FIX 6 — Silent when there's nothing to fire. No more spam.
         if not all_reminders:
             return
+        # PHASE 2 / PART 4 — repeat intervals in seconds
+        repeat_intervals = {
+            "daily": 86400,
+            "weekly": 604800,
+            "monthly": 2592000,
+        }
         now = int(_time.time())
         fired_count = 0
         for r in all_reminders:
@@ -2443,7 +2457,27 @@ class AIChat(commands.Cog):
                                 await channel.send(f"{user.mention} ⏰ reminder: {text}")
             except Exception:
                 pass
-            # Remove the fired reminder
+            # PHASE 2 / PART 4 — recurring reminders fire again instead
+            # of being removed.
+            repeat = str(r.get('repeat_interval') or 'none').lower()
+            if repeat in repeat_intervals and reminder_id:
+                interval = repeat_intervals[repeat]
+                next_end = end_time + interval
+                # Downtime guard: if the bot was offline past several
+                # occurrences, skip the missed ones silently instead of
+                # firing a burst of DMs back to back.
+                while next_end <= now:
+                    next_end += interval
+                try:
+                    snoozed = snooze_reminder(int(user_id_str), str(reminder_id), next_end)
+                except Exception:
+                    snoozed = False
+                if snoozed:
+                    fired_count += 1
+                    continue
+                # Snooze failed — fall through and remove the row so it
+                # can't refire every 60s and spam the user.
+            # One-shot reminder (or failed snooze) — remove after firing.
             if reminder_id:
                 try:
                     remove_reminder(int(user_id_str), str(reminder_id))

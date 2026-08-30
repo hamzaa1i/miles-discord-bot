@@ -1,22 +1,34 @@
 """
 cogs/utility.py — general utility commands (trimmed).
 
-Kept: /math, /snipe, /afk
+Kept: /math, /snipe, /afk, /reminders
 Removed (to stay under Discord's 100-command limit): /password, /announce,
 /weather (moved to weather.py), /encode, /decode, /timestamp, /editsnipe,
 /color, /qr, /pin, /unpin.
+
+PHASE 2 / PART 4 — recurring reminders:
+  /remind create what:<text> when:<duration> [repeat:none|daily|weekly|monthly]
+  /remind list            — your active reminders with ids
+  /remind delete id:<n>   — cancel one (by id or position)
+The firing loop lives in cogs/ai_chat.py (check_reminders) and snoozes
+recurring reminders via utils.db.snooze_reminder instead of deleting.
 
 Snipe cache: module-level dict storing up to 5 most recent deleted
 messages per channel.
 """
 import discord
+import logging
 from discord.ext import commands, tasks
 from discord import app_commands
 import ast
 import math
+import re
+import time
 import aiohttp
 from datetime import datetime
 from utils.constants import COLOR_INFO, COLOR_ERROR
+
+log = logging.getLogger('cyn.utility')
 
 
 # ==================== Safe math evaluator ====================
@@ -103,6 +115,79 @@ def _prune_snipe_cache(cache: list):
         if isinstance(e, dict) and e.get('deleted_at')
         and (now - e['deleted_at']).total_seconds() <= SNIPE_TTL_SECONDS
     ]
+
+
+# ==================== PHASE 2 / PART 4 — recurring reminders ====================
+
+# Repeat intervals (seconds) — 'monthly' is the spec-fixed 30-day month.
+REPEAT_INTERVALS = {
+    "daily": 86400,
+    "weekly": 604800,
+    "monthly": 2592000,
+}
+
+# Duration parser: "30m", "2h", "1d", "1h30m", "2 days", "1.5h", "45" (min).
+_DURATION_RE = re.compile(
+    r"(\d+(?:\.\d+)?)\s*(seconds?|secs?|s|minutes?|mins?|m|hours?|hrs?|h|"
+    r"days?|d|weeks?|w)",
+    re.IGNORECASE,
+)
+_DURATION_UNITS = {
+    "s": 1, "sec": 1, "secs": 1, "second": 1, "seconds": 1,
+    "m": 60, "min": 60, "mins": 60, "minute": 60, "minutes": 60,
+    "h": 3600, "hr": 3600, "hrs": 3600, "hour": 3600, "hours": 3600,
+    "d": 86400, "day": 86400, "days": 86400,
+    "w": 604800, "week": 604800, "weeks": 604800,
+}
+MIN_REMINDER_SECONDS = 10
+MAX_REMINDER_SECONDS = 365 * 86400  # one year
+
+
+def parse_duration(spec: str) -> int | None:
+    """Parse a human duration into seconds, or None when invalid.
+
+    Supports unit suffixes (s/m/h/d/w, full words), stacked segments
+    ("1h30m"), floats ("1.5h"), and a bare number, which is treated as
+    minutes ("45" -> 45 minutes). Range-checked 10s .. 365d."""
+    if not spec or not str(spec).strip():
+        return None
+    text = str(spec).strip().lower()
+    # Bare number -> minutes
+    if re.fullmatch(r"\d+(?:\.\d+)?", text):
+        total = float(text) * 60
+    else:
+        matches = _DURATION_RE.findall(text)
+        if not matches:
+            return None
+        # Reject trailing junk (e.g. "10m later") by matching the whole
+        # string against the pattern stripped of spaces.
+        stripped = re.sub(r"\s+", "", text)
+        rebuilt = "".join(f"{n}{u}" for n, u in matches)
+        if stripped != rebuilt:
+            return None
+        total = 0.0
+        for num, unit in matches:
+            total += float(num) * _DURATION_UNITS[unit.lower()]
+    seconds = int(round(total))
+    if seconds < MIN_REMINDER_SECONDS or seconds > MAX_REMINDER_SECONDS:
+        return None
+    return seconds
+
+
+def _format_remaining(seconds: int) -> str:
+    """Compact human remaining-time string for reminder lists."""
+    seconds = max(0, int(seconds))
+    m, s = divmod(seconds, 60)
+    h, m = divmod(m, 60)
+    d, h = divmod(h, 24)
+    parts = []
+    if d:
+        parts.append(f"{d}d")
+    if h:
+        parts.append(f"{h}h")
+    if m or not parts:
+        parts.append(f"{m}m")
+    return " ".join(parts)
 
 
 class Utility(commands.Cog):
@@ -245,7 +330,6 @@ class Utility(commands.Cog):
         self.bot.increment_command('reminders')
         await interaction.response.defer(ephemeral=True)
         from utils.db import get_user_reminders
-        import time
 
         user_reminders = get_user_reminders(interaction.user.id)
 
@@ -260,19 +344,151 @@ class Utility(commands.Cog):
                 remaining = max(0, int(end_time) - int(time.time()))
             except (TypeError, ValueError):
                 remaining = 0
-            m, s = divmod(remaining, 60)
-            h, m = divmod(m, 60)
-            if h > 0:
-                time_str = f"{h}h {m}m"
-            elif m > 0:
-                time_str = f"{m}m {s}s"
-            else:
-                time_str = f"{s}s"
             text = r.get('text', 'no text')[:50]
-            lines.append(f"`{i}.` {text} - in {time_str}")
+            repeat = str(r.get('repeat_interval') or 'none').lower()
+            badge = f" · 🔁 {repeat}" if repeat in REPEAT_INTERVALS else ""
+            lines.append(f"`{i}.` {text} — in {_format_remaining(remaining)}{badge}")
 
         await interaction.followup.send(
             "**your reminders:**\n" + "\n".join(lines)
+        )
+
+    # ─── PHASE 2 / PART 4 — /remind group (create / list / delete) ──
+
+    remind = app_commands.Group(
+        name="remind", description="Set and manage reminders"
+    )
+
+    @remind.command(name="create", description="Set a reminder")
+    @app_commands.describe(
+        what="What to remind you about",
+        when="How far from now — e.g. 30m, 2h, 1d, 1h30m (bare numbers = minutes)",
+        repeat="Repeat the reminder (none / daily / weekly / monthly)",
+    )
+    @app_commands.choices(repeat=[
+        app_commands.Choice(name="Once (no repeat)", value="none"),
+        app_commands.Choice(name="Daily", value="daily"),
+        app_commands.Choice(name="Weekly", value="weekly"),
+        app_commands.Choice(name="Monthly", value="monthly"),
+    ])
+    async def remind_create(
+        self, interaction: discord.Interaction,
+        what: str,
+        when: str,
+        repeat: app_commands.Choice[str] = None,
+    ):
+        self.bot.increment_command('remind_create')
+        if not what.strip():
+            return await interaction.response.send_message(
+                "tell me what to remind you about ♡", ephemeral=True
+            )
+        seconds = parse_duration(when)
+        if seconds is None:
+            return await interaction.response.send_message(
+                "couldn't read that duration — try `30m`, `2h`, `1d`, or "
+                "`1h30m` (between 10 seconds and 365 days).",
+                ephemeral=True,
+            )
+
+        repeat_value = repeat.value if repeat else "none"
+        from utils.db import add_reminder
+        try:
+            add_reminder(interaction.user.id, {
+                'text': what.strip()[:500],
+                'end_time': int(time.time()) + seconds,
+                'channel_id': str(interaction.channel.id)
+                    if interaction.channel else None,
+                'repeat_interval': repeat_value,
+            })
+        except Exception as e:
+            log.error(f"[remind] failed to save: {e}")
+            return await interaction.response.send_message(
+                "couldn't save that reminder — try again.", ephemeral=True
+            )
+
+        repeat_suffix = ""
+        if repeat_value in REPEAT_INTERVALS:
+            repeat_suffix = (f" and repeating **{repeat_value}** 🔁")
+        await interaction.response.send_message(
+            f"got it ♡ i'll remind you in {_format_remaining(seconds)}"
+            f"{repeat_suffix}: *{what.strip()[:100]}*"
+        )
+
+    @remind.command(name="list", description="List your active reminders")
+    async def remind_list(self, interaction: discord.Interaction):
+        self.bot.increment_command('remind_list')
+        await interaction.response.defer(ephemeral=True)
+        from utils.db import get_user_reminders
+
+        user_reminders = get_user_reminders(interaction.user.id)
+        if not user_reminders:
+            return await interaction.followup.send(
+                "no active reminders — set one with `/remind create` ♡"
+            )
+
+        lines = []
+        for i, r in enumerate(user_reminders, 1):
+            end_time = r.get("end_time", 0)
+            try:
+                remaining = max(0, int(end_time) - int(time.time()))
+            except (TypeError, ValueError):
+                remaining = 0
+            rid = r.get('id')
+            text = r.get('text', 'no text')[:50]
+            repeat = str(r.get('repeat_interval') or 'none').lower()
+            badge = f" · 🔁 {repeat}" if repeat in REPEAT_INTERVALS else ""
+            id_str = f"`#{rid}`" if rid is not None else f"`#{i}`"
+            lines.append(
+                f"{id_str} · {text} — in {_format_remaining(remaining)}{badge}"
+            )
+
+        await interaction.followup.send(
+            "**your reminders:**\n" + "\n".join(lines)
+            + "\n\ncancel one with `/remind delete id:` (the # number or "
+              "its position in this list)"
+        )
+
+    @remind.command(name="delete", description="Cancel one of your reminders")
+    @app_commands.describe(id="The # id from /remind list (or its position)")
+    async def remind_delete(self, interaction: discord.Interaction, id: int):
+        self.bot.increment_command('remind_delete')
+        await interaction.response.defer(ephemeral=True)
+        from utils.db import get_user_reminders, remove_reminder
+
+        user_reminders = get_user_reminders(interaction.user.id)
+        if not user_reminders:
+            return await interaction.followup.send(
+                "you have no active reminders."
+            )
+
+        # Match by the row's real id first (Supabase serial ids), then by
+        # 1-based position (works for JSON-fallback rows whose ids are
+        # composite strings).
+        target = None
+        for r in user_reminders:
+            try:
+                if int(r.get('id')) == id:
+                    target = r
+                    break
+            except (TypeError, ValueError):
+                continue
+        if target is None and 1 <= id <= len(user_reminders):
+            target = user_reminders[id - 1]
+        if target is None:
+            return await interaction.followup.send(
+                f"no reminder with id `{id}` — check `/remind list`."
+            )
+
+        rid = target.get('id')
+        try:
+            remove_reminder(interaction.user.id, str(rid))
+        except Exception:
+            return await interaction.followup.send(
+                "couldn't delete that reminder — try again."
+            )
+        text = str(target.get('text', ''))[:60]
+        await interaction.followup.send(
+            f"✅ deleted: *{text}*"
         )
 
 

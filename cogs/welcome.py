@@ -43,13 +43,20 @@ FIX 3 — Mimu-style advanced welcome:
   - Member count in footer, user avatar as thumbnail
   - Literal \\n converted to real newlines
   - /welcome show carries the full Mimu-style tag reference + formatting tips
+
+PHASE 2 / PART 6 — first-message soft welcome:
+  on_message adds a 🌸 / ♡ reaction to a newcomer's FIRST message in the
+  guild (in-memory seen-set per guild + 14-day joined-at gate so a bot
+  restart can never spam established members). Reaction failures are
+  silently swallowed (missing permissions / deleted message).
 """
 import logging
+import random
 import re
 import discord
 from discord.ext import commands
 from discord import app_commands
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 from utils.database import Database
 from utils.db import get_guild_setting, set_guild_setting
@@ -71,6 +78,13 @@ DEFAULT_WELCOME_COLOR = "#FFC0CB"
 # remove the footer entirely.
 DEFAULT_WELCOME_FOOTER = "{membercount} members ♡"
 
+# PHASE 2 / PART 6 — first-message soft welcome. Only members who joined
+# within this window count as "newcomers" — after a restart the in-memory
+# seen-set is empty, and without this gate aurelia would react to the next
+# message of EVERY established member once.
+FIRST_MESSAGE_WINDOW_DAYS = 14
+FIRST_MESSAGE_EMOJIS = ("🌸", "♡")
+
 
 class Welcome(commands.Cog):
     def __init__(self, bot):
@@ -80,6 +94,9 @@ class Welcome(commands.Cog):
         self.dm_prefs_db = Database('data/dm_prefs.json')
         self.pending_welcomes = {}
         self.safe_mode_notified = set()
+        # PHASE 2 / PART 6 — guild_id -> set of member ids that have
+        # already posted at least one message since this cog loaded.
+        self.first_msg_seen: dict[int, set[int]] = {}
 
     def get_config(self, guild_id: int) -> dict:
         config = get_guild_setting(guild_id, "welcome_settings")
@@ -456,10 +473,61 @@ class Welcome(commands.Cog):
             except:
                 pass
 
+    # ─── PHASE 2 / PART 6 — first-message soft welcome ─────────
+
+    async def _maybe_first_message_reaction(self, message: discord.Message):
+        """React 🌸/♡ to a newcomer's first message in the guild.
+
+        First-message detection is in-memory best effort: a per-guild
+        seen-set plus a joined-at window. The member is added to the set
+        BEFORE reacting, so a failed reaction never retries on every
+        subsequent message. Forbidden/NotFound are silently ignored per
+        spec — a missing add-reactions permission must never raise."""
+        if not message.guild or message.author.bot:
+            return
+        member = message.author
+        # Webhooks and system messages aren't member chatter.
+        if getattr(message, "webhook_id", None):
+            return
+        if message.type not in (discord.MessageType.default,
+                                discord.MessageType.reply):
+            return
+
+        seen = self.first_msg_seen.setdefault(message.guild.id, set())
+        if member.id in seen:
+            return
+        # Mark as seen FIRST (see docstring).
+        seen.add(member.id)
+
+        # Newcomer gate — skip established members (restart safety).
+        joined = getattr(member, "joined_at", None)
+        if joined is None:
+            return
+        age = discord.utils.utcnow() - joined
+        if age > timedelta(days=FIRST_MESSAGE_WINDOW_DAYS):
+            return
+
+        try:
+            await message.add_reaction(random.choice(FIRST_MESSAGE_EMOJIS))
+            logger.debug(
+                f"[welcome] first-message reaction for "
+                f"{member.display_name} in {message.guild.name}"
+            )
+        except (discord.Forbidden, discord.NotFound):
+            pass  # no reaction permission / message deleted — by design
+        except discord.HTTPException:
+            pass
+
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
         if message.author.bot or not message.guild:
             return
+        # PHASE 2 / PART 6 — soft first-message welcome (never raises;
+        # it must not break the welcomer-reward logic below).
+        try:
+            await self._maybe_first_message_reaction(message)
+        except Exception as e:
+            logger.debug(f"[welcome] first-message reaction error: {e}")
         for mentioned in message.mentions:
             if mentioned.id not in self.pending_welcomes:
                 continue

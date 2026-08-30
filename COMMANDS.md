@@ -3,7 +3,7 @@
 Every slash command, prefix command, natural-language @mention intent, and
 reaction/button interaction in Aurelia — the Veloura community bot.
 
-> **Quick facts** · 35 cogs · 132 slash commands (129 cog commands + 3 hybrid
+> **Quick facts** · 39 cogs · 147 slash commands (144 cog commands + 3 hybrid
 > in `main.py`) · AI powered by Groq (`qwen/qwen3.6-27b` for chat,
 > `openai/gpt-oss-20b` for fast tasks, `openai/gpt-oss-120b` for reasoning)
 > · data in Supabase PostgreSQL with JSON-file fallback.
@@ -323,6 +323,58 @@ Level-up channel modes: `active` (where they leveled up — default),
 `configured` (the set channel), `dm` (direct message), `none` (disabled).
 See [Template Variables](#template-variables-reference) for all tags.
 
+### /daily 🆕 *New in Phase 2*
+Claim your daily XP reward and grow your streak — once per user per UTC day,
+per server (streaks are per-server).
+- **Permissions:** any user · **Cooldown:** 1 / 5s per user (the real limit is
+  one claim per UTC day)
+- Example: `/daily`
+- Example response: an embed — "꒰ა ♡ ໒꒱ daily reward" — "you claimed
+  **+80 XP** today ✦ / current streak: **3 day(s)** 🔥" · footer "highest
+  streak: 12 days · total claimed: 45"
+- **XP math:** 50 base + 10 per streak day (bonus capped at +150, so a
+  regular claim maxes at 200 XP), credited to your `/level` XP.
+  Milestone bonuses on top: 7-day **+100**, 30-day **+500**, 100-day
+  **+2000** bonus XP with a special embed callout.
+- Claim twice in one day → *ephemeral*: "you already claimed your daily
+  reward today ♡ come back tomorrow at midnight utc" (shows your streak).
+  Miss a day and the streak resets to 1.
+
+### /qotd — group *(Manage Guild)* 🆕 *New in Phase 2*
+Automated daily conversation starter. Aurelia posts one question per UTC day
+to the configured channel after the configured hour, from the server's own
+queue first, then from a built-in pool of 40 soft aesthetic questions.
+
+**/qotd config** — set the channel (this enables QOTD). Parameters:
+- `channel` (required) · `hour_utc` (int 0-23, optional, default 14) ·
+  `auto_thread` (bool, optional, default on — opens a public thread per
+  question)
+- Example: `/qotd config channel:#chill hour_utc:15 auto_thread:True`
+
+**/qotd toggle** — on/off. `enabled` (optional — flips when omitted)
+**/qotd add** — queue a custom question. `question` (required, max 500).
+Example: `/qotd add question:what's your comfort movie?`
+**/qotd list** — upcoming queued questions (*ephemeral*)
+**/qotd post** — force-post the next question immediately
+**/qotd show** — current settings card
+
+Posting engine: a 15-minute background loop posts at most one question per
+UTC day per server, once `current_hour_utc >= hour_utc`. Posted questions
+from the queue are marked used and never repeat.
+
+### /anniversary — group *(Manage Guild)* 🆕 *New in Phase 2*
+Passive join-anniversary celebrations.
+**/anniversary config** — set the celebration channel and enable/disable.
+`channel` (required) · `enabled` (required, on/off)
+Example: `/anniversary config channel:#general enabled:True`
+**/anniversary show** — current settings
+
+Daily background loop: members hitting **1 month** (30d), **6 months**
+(182d), **1 year** (365d), **2 years** (730d), or **every full year from 3
+years** up get a "꒰ა 🍰 ໒꒱ happy server anniversary!" card with their
+avatar and join date. One scan per UTC day (restart-safe via
+`last_run_date`).
+
 ### /birthday — group
 **/birthday set** — set your birthday (month + day). Parameters: `month`
 (int 1-12), `day` (int). Example: `/birthday set month:3 day:14`
@@ -511,10 +563,56 @@ Show a recently deleted message in this channel.
   (snipes expire after 5 minutes)."
 
 ### /reminders
-List your active reminders (*ephemeral*). · **Permissions:** any user
-- Example: `/reminders` → "your reminders: `1.` drink water - in 9m"
+List your active reminders (*ephemeral*) — recurring ones carry a 🔁 badge.
+· **Permissions:** any user
+- Example: `/reminders` → "your reminders: `1.` drink water - in 9m · 🔁 daily"
 - Create reminders conversationally: `@Aurelia remind me in 10 minutes to
-  drink water`
+  drink water`, or with `/remind create`.
+
+### /remind — group 🆕 *New in Phase 2*
+Create and manage reminders, including recurring ones.
+
+**/remind create** — set a reminder. Parameters:
+- `what` (string, required — what to remind you about)
+- `when` (string, required — duration: `30m`, `2h`, `1d`, `1h30m`, `45`
+  (bare numbers = minutes); 10 seconds … 365 days)
+- `repeat` (choice, optional, default none): `none` / `daily` / `weekly` /
+  `monthly`
+- Example: `/remind create what:take your vitamins when:12h repeat:daily`
+- Example response: "got it ♡ i'll remind you in 12h and repeating
+  **daily** 🔁: *take your vitamins*"
+
+**/remind list** — your active reminders with their ids (*ephemeral*)
+**/remind delete** — cancel one. `id` (int, required — the `#id` from
+`/remind list`, or its position in the list)
+
+When a recurring reminder fires (DM, or channel ping if DMs are closed)
+it re-arms itself: daily +24h, weekly +7d, monthly +30d. One-shot reminders
+are removed after firing. Missed occurrences during downtime are skipped
+silently (no DM bursts).
+
+### /time — group 🆕 *New in Phase 2*
+Timezone utilities (stdlib `zoneinfo` — no external APIs).
+
+**/time for** — see someone's current local time and how far ahead/behind
+you they are. `user` (member, required)
+- Example: `/time for user:@diva` → "diva's local time is **09:45 PM**
+  (Asia/Karachi) · 5h ahead of you"
+- If they haven't set a timezone: "@diva hasn't set their timezone yet.
+  they can set it with /time set timezone:America/New_York ♡" (*ephemeral*)
+
+**/time convert** — convert a clock time between zones. `time` (required,
+e.g. `8:00 PM` or `14:30`) · `from_tz` (required) · `to_tz` (required)
+- Accepted zone names: abbreviations (`EST`, `PST`, `CST`, `GMT`, `UTC`,
+  `CET`, `JST`, `AEST`, `BST`…), offsets (`UTC+3`, `GMT-5`), and full IANA
+  names (`America/New_York`, `Europe/London`, `Asia/Tokyo`)
+- Example: `/time convert time:8:00 PM from_tz:EST to_tz:GMT` →
+  "**8:00 PM EST (UTC−5)** → **1:00 AM GMT** (next day)"
+
+**/time set** — set YOUR timezone (shared with `/profile_set timezone`,
+used by `/time for`). `timezone` (required)
+- Example: `/time set timezone:America/New_York` → "✅ your timezone has
+  been set to **America/New_York** (current time: 03:45 PM) ♡"
 
 ### /weather
 Get current weather for a city (OpenWeather-style embed).
@@ -557,10 +655,9 @@ Show all commands (interactive menu). · **Permissions:** any user
 **/ping** — websocket latency with a color-coded embed. Example: "🏓 Pong —
 Websocket latency: **87ms**"
 **/uptime** — "Running for **2d 14h 3m**"
-**/botinfo** — full info card: servers, users, cogs, commands, latency,
-discord.py + Python versions, uptime, **⚡ cache stats** (entries + hit
-rate), **🧠 AI models + provider**, **💾 storage health** (Supabase /
-Supabase - degraded / JSON files).
+**/botinfo** — *(Manage Server)* sleek system-status card: Overview
+(servers · members · latency · uptime), Cache & Storage (cache entries +
+hit rate · Supabase health), Engine (Python · discord.py · Groq).
 
 ---
 
@@ -791,6 +888,7 @@ Two prefix systems:
 | Interaction | Where | What it does |
 |---|---|---|
 | ⭐ *(or custom emoji)* reaction | any message | Starboard: at the configured threshold the message is reposted to the starboard channel (once) |
+| 🌸 / ♡ reaction | a newcomer's first message | Soft first-message welcome (members who joined within 14 days; silent when reactions aren't permitted) |
 | 🇦 🇧 🇨 🇩 reactions | polls | Poll votes — counted by /poll end or expiry |
 | 👍 / 👎 reactions | AI-created poll intent | Simple two-option poll |
 | **enter ✦** button | giveaways | Toggle your entry (requirements re-checked at draw) |
@@ -848,7 +946,7 @@ Default: `🎉 {user} just reached level {level}! ✦`
 | /mod timeout · mute · unmute · warnings · antispam · config | Moderate Members / Mute Members |
 | /mod purge · antilink | Manage Messages |
 | /mod nuke · slowmode · lock · unlock · /voice | Manage Channels |
-| /aiautomod (all) · /leveling config · /giveaway start/end/reroll · /starboard (all) · /confess setup · /invites set · /welcome (all) · /onboarding (all) · /proactive (all) · /rules set/agree_role · /autorole set/remove · /selfroles setup · /birthday channel · /custom add/remove · /bump remind · /prefix set/remove | Manage Guild (or the noted role/permission) |
+| /aiautomod (all) · /leveling config · /giveaway start/end/reroll · /starboard (all) · /confess setup · /invites set · /welcome (all) · /onboarding (all) · /proactive (all) · /rules set/agree_role · /autorole set/remove · /selfroles setup · /birthday channel · /custom add/remove · /bump remind · /prefix set/remove · /qotd (all) · /anniversary (all) · /botinfo | Manage Guild (or the noted role/permission) |
 | /log (all) | Manage Channels |
 | /moderate via @mention (`@Aurelia ban …`) | matching mod permission, the /adminrole role, server owner, or bot owner |
 | /memory show (other users) | staff (Manage Messages / Manage Guild / server owner) |
@@ -862,6 +960,7 @@ Default: `🎉 {user} just reached level {level}! ✦`
 
 | Command | Cooldown |
 |---|---|
+| /daily 🆕 | 1 / 5s per user (one claim per UTC day) |
 | /vibe 🆕 | 1 / 5 min · per channel |
 | /askstars 🆕 | 1 / 60s · per user |
 | /pick 🆕 | 1 / 10s · per user |
@@ -880,13 +979,22 @@ Default: `🎉 {user} just reached level {level}! ✦`
 
 | Category | Commands |
 |---|---|
-| Top-level cog commands | 58 (54 before Phase 1) |
+| Top-level tree entries | 63 (36 commands + 27 groups) — was 58 before Phase 2 |
 | Hybrid commands (main.py) | 3 |
-| Subcommands (all groups) | 71 |
-| **Total slash commands** | **132** |
+| Subcommands (all groups, incl. nested) | 108 |
+| **Total invocable slash commands** | **147** (144 cog + 3 hybrid; 132 before Phase 2) |
 | Prefix text commands | 25+ routes |
 | Natural-language @mention intents | 30+ |
 | New in Phase 1 | /vibe · /pick · /askstars · /fortune |
+| New in Phase 2 | /daily · /qotd · /anniversary · /remind · /time |
+
+Discord's hard limit is 100 **top-level** commands — Aurelia is at 63.
+
+**Supabase migration (Phase 2):** run the `PHASE 2 (ENGAGEMENT CORE)` SQL
+block at the top of `utils/db.py` — it adds `repeat_interval` to
+`reminders` and creates `daily_streaks`, `qotd_settings`, `qotd_queue`, and
+`anniversary_settings`. Until then, all five features fall back to local
+JSON files automatically.
 
 
 

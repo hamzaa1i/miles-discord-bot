@@ -337,6 +337,54 @@ CREATE TABLE server_personality (
 -- );
 -- GRANT ALL ON public.fortune_history TO anon;
 -- ALTER TABLE public.fortune_history DISABLE ROW LEVEL SECURITY;
+--
+-- PHASE 2 (ENGAGEMENT CORE) — daily rewards, QOTD, anniversaries,
+-- recurring reminders. Run in the Supabase SQL editor:
+--
+-- ALTER TABLE reminders ADD COLUMN IF NOT EXISTS repeat_interval TEXT DEFAULT 'none';
+--
+-- CREATE TABLE IF NOT EXISTS daily_streaks (
+--   guild_id TEXT NOT NULL,
+--   user_id TEXT NOT NULL,
+--   streak INT DEFAULT 0,
+--   highest_streak INT DEFAULT 0,
+--   last_claim_date TEXT,
+--   total_claimed INT DEFAULT 0,
+--   PRIMARY KEY (guild_id, user_id)
+-- );
+-- GRANT ALL ON public.daily_streaks TO anon;
+-- ALTER TABLE public.daily_streaks DISABLE ROW LEVEL SECURITY;
+--
+-- CREATE TABLE IF NOT EXISTS qotd_settings (
+--   guild_id TEXT PRIMARY KEY,
+--   channel_id TEXT,
+--   enabled BOOLEAN DEFAULT FALSE,
+--   post_hour_utc INT DEFAULT 14,
+--   auto_thread BOOLEAN DEFAULT TRUE,
+--   last_post_date TEXT
+-- );
+-- GRANT ALL ON public.qotd_settings TO anon;
+-- ALTER TABLE public.qotd_settings DISABLE ROW LEVEL SECURITY;
+--
+-- CREATE TABLE IF NOT EXISTS qotd_queue (
+--   id BIGSERIAL PRIMARY KEY,
+--   guild_id TEXT NOT NULL,
+--   question TEXT NOT NULL,
+--   added_by TEXT,
+--   used BOOLEAN DEFAULT FALSE,
+--   added_at TEXT
+-- );
+-- GRANT ALL ON public.qotd_queue TO anon;
+-- ALTER TABLE public.qotd_queue DISABLE ROW LEVEL SECURITY;
+--
+-- CREATE TABLE IF NOT EXISTS anniversary_settings (
+--   guild_id TEXT PRIMARY KEY,
+--   channel_id TEXT,
+--   enabled BOOLEAN DEFAULT FALSE,
+--   last_run_date TEXT
+-- );
+-- GRANT ALL ON public.anniversary_settings TO anon;
+-- ALTER TABLE public.anniversary_settings DISABLE ROW LEVEL SECURITY;
 """
 import asyncio
 import functools
@@ -564,6 +612,30 @@ _TABLE_COLUMNS = {
     "command_usage": {"guild_id", "user_id", "command_name", "timestamp"},
     # PHASE 1 / PART 5 — daily fortune history (/fortune)
     "fortune_history": {"user_id", "last_fortune_date", "fortune_text"},
+    # PHASE 2 (ENGAGEMENT CORE) — recurring reminders: the repeat_interval
+    # column must survive column sanitization so /remind create can store
+    # 'none' / 'daily' / 'weekly' / 'monthly'.
+    "reminders": {
+        "user_id", "text", "end_time", "channel_id", "fired",
+        "repeat_interval",
+    },
+    # PHASE 2 (ENGAGEMENT CORE) — daily login streaks (/daily)
+    "daily_streaks": {
+        "guild_id", "user_id", "streak", "highest_streak",
+        "last_claim_date", "total_claimed",
+    },
+    # PHASE 2 (ENGAGEMENT CORE) — question of the day (/qotd)
+    "qotd_settings": {
+        "guild_id", "channel_id", "enabled", "post_hour_utc",
+        "auto_thread", "last_post_date",
+    },
+    "qotd_queue": {
+        "id", "guild_id", "question", "added_by", "used", "added_at",
+    },
+    # PHASE 2 (ENGAGEMENT CORE) — member anniversaries (/anniversary)
+    "anniversary_settings": {
+        "guild_id", "channel_id", "enabled", "last_run_date",
+    },
 }
 
 
@@ -1021,6 +1093,44 @@ def remove_reminder(user_id: int, reminder_id: str):
                 if r.get("id") != reminder_id
             ]
             _write_json("data/reminders.json", data)
+
+
+def snooze_reminder(user_id: int, reminder_id: str, new_end_time: float) -> bool:
+    """PHASE 2 (ENGAGEMENT CORE) — push a recurring reminder's next fire
+    time forward instead of deleting it.
+
+    Called by the reminder check loop in cogs/ai_chat.py when a reminder
+    with repeat_interval = daily/weekly/monthly fires: end_time is moved
+    to the next occurrence (the caller computes it) and the row stays
+    fired=False so it fires again. Returns True when the row was updated.
+
+    Supabase note: the loop passes the row's serial id as a string; the
+    REST filter coerces it against the BIGINT column (same as
+    remove_reminder)."""
+    if _use_supabase:
+        try:
+            _supabase.table("reminders").update(
+                {"end_time": float(new_end_time), "fired": False}
+            ).eq("id", reminder_id).execute()
+            return True
+        except Exception as e:
+            error_key = "snooze_reminder"
+            if error_key not in _supabase_error_logged:
+                logger.error(f"[DB] snooze_reminder error: {e}")
+                _supabase_error_logged.add(error_key)
+    # JSON fallback
+    data = _read_json("data/reminders.json")
+    u = str(user_id)
+    reminders = data.get(u) if isinstance(data.get(u), list) else None
+    if reminders is None:
+        return False
+    for r in reminders:
+        if isinstance(r, dict) and str(r.get("id")) == str(reminder_id):
+            r["end_time"] = float(new_end_time)
+            r["fired"] = False
+            _write_json("data/reminders.json", data)
+            return True
+    return False
 
 
 def get_user_reminders(user_id: int) -> list:
@@ -2188,3 +2298,362 @@ async def save_fortune_history_async(user_id: str, date_str: str,
         )
     except Exception as e:
         logger.warning(f"[DB] save_fortune_history failed: {e}")
+
+
+# ════════════════════════════════════════════════════════════════
+# PHASE 2 (ENGAGEMENT CORE)
+# Daily login streaks (/daily), leveling XP award, question of the
+# day (/qotd), and member anniversaries (/anniversary). Every helper
+# has a Supabase path and a JSON-file fallback so the features work
+# before the migration SQL above has been run.
+# ════════════════════════════════════════════════════════════════
+
+# ─── PHASE 2 / PART 1 — daily login streaks (/daily) ───────────
+
+_DAILY_STREAKS_JSON = "data/daily_streaks.json"
+
+
+def _json_get_daily_streak(guild_id: str, user_id: str) -> dict | None:
+    data = _read_json(_DAILY_STREAKS_JSON)
+    row = data.get(f"{guild_id}_{user_id}")
+    return row if isinstance(row, dict) else None
+
+
+def _json_save_daily_streak(guild_id: str, user_id: str, streak: int,
+                            highest: int, date_str: str, total: int):
+    data = _read_json(_DAILY_STREAKS_JSON)
+    data[f"{guild_id}_{user_id}"] = {
+        "guild_id": guild_id,
+        "user_id": user_id,
+        "streak": int(streak),
+        "highest_streak": int(highest),
+        "last_claim_date": date_str,
+        "total_claimed": int(total),
+    }
+    _write_json(_DAILY_STREAKS_JSON, data)
+
+
+async def get_daily_streak_async(guild_id: str, user_id: str) -> dict | None:
+    """PHASE 2 / PART 1 — return the user's daily-claim row for a guild:
+    {"streak", "highest_streak", "last_claim_date", "total_claimed"},
+    or None when they have never claimed. Supabase first, JSON fallback."""
+    sb = get_supabase()
+    if sb:
+        try:
+            result = await asyncio.to_thread(
+                lambda: sb.table("daily_streaks")
+                  .select("*")
+                  .eq("guild_id", guild_id)
+                  .eq("user_id", user_id)
+                  .maybe_single()
+                  .execute()
+            )
+            if result and result.data:
+                return result.data
+            # No row in Supabase — check the JSON fallback before giving
+            # up (a write may have landed there after a Supabase failure).
+            return _json_get_daily_streak(guild_id, user_id)
+        except Exception as e:
+            error_key = "get_daily_streak"
+            if error_key not in _supabase_error_logged:
+                logger.error(f"[DB] get_daily_streak error: {e}")
+                _supabase_error_logged.add(error_key)
+            return _json_get_daily_streak(guild_id, user_id)
+    return _json_get_daily_streak(guild_id, user_id)
+
+
+async def save_daily_streak_async(guild_id: str, user_id: str, streak: int,
+                                  highest: int, date_str: str, total: int):
+    """PHASE 2 / PART 1 — upsert the user's daily-claim row for a guild."""
+    payload = {
+        "guild_id": guild_id,
+        "user_id": user_id,
+        "streak": int(streak),
+        "highest_streak": int(highest),
+        "last_claim_date": date_str,
+        "total_claimed": int(total),
+    }
+    sb = get_supabase()
+    if sb:
+        try:
+            await asyncio.to_thread(
+                lambda: sb.table("daily_streaks").upsert(payload).execute()
+            )
+            return
+        except Exception as e:
+            error_key = "save_daily_streak"
+            if error_key not in _supabase_error_logged:
+                logger.error(f"[DB] save_daily_streak error: {e}")
+                logger.warning(
+                    "[DB] Supabase write failed for 'daily_streaks'. "
+                    "Falling back to JSON (run the PHASE 2 migration SQL)."
+                )
+                _supabase_error_logged.add(error_key)
+    _json_save_daily_streak(guild_id, user_id, streak, highest,
+                            date_str, total)
+
+
+# ─── PHASE 2 / PART 1 — leveling XP award (user_levels) ─────────
+
+_USER_LEVELS_JSON = "data/user_levels.json"
+
+
+def level_from_total_xp(total_xp: int) -> int:
+    """PHASE 2 — level for a total XP amount.
+
+    KEEP IN SYNC with cogs/leveling.py Leveling.get_level_from_xp —
+    the curve is 5·L² + 50·L + 100 XP per level."""
+    level, remaining = 0, max(0, int(total_xp))
+    while True:
+        needed = 5 * (level ** 2) + 50 * level + 100
+        if remaining < needed:
+            return level
+        remaining -= needed
+        level += 1
+
+
+def get_user_level_row(guild_id: int, user_id: int) -> dict:
+    """PHASE 2 — read a user's {xp, level} row from user_levels
+    (Supabase first, JSON fallback). Mirrors Leveling.get_user_level."""
+    sb = get_supabase()
+    if sb:
+        try:
+            r = sb.table("user_levels").select("xp,level").eq(
+                "guild_id", str(guild_id)
+            ).eq("user_id", str(user_id)).execute()
+            if r.data:
+                row = r.data[0]
+                return {"xp": int(row.get("xp", 0) or 0),
+                        "level": int(row.get("level", 0) or 0)}
+        except Exception as e:
+            error_key = "get_user_level_row"
+            if error_key not in _supabase_error_logged:
+                logger.error(f"[DB] get_user_level_row error: {e}")
+                _supabase_error_logged.add(error_key)
+    e = _read_json(_USER_LEVELS_JSON).get(f"{guild_id}_{user_id}", {})
+    return {"xp": int(e.get("xp", 0) or 0),
+            "level": int(e.get("level", 0) or 0)}
+
+
+def award_user_xp(guild_id: int, user_id: int, amount: int) -> dict:
+    """PHASE 2 / PART 1 — add XP to a user's user_levels row and
+    recalculate the level (same curve as cogs/leveling.py).
+
+    Returns {"xp", "old_level", "new_level", "leveled_up"}. Used by
+    /daily; leveling XP from chat still flows through the Leveling cog.
+    Negative amounts are clamped to 0 total."""
+    if not isinstance(amount, int):
+        try:
+            amount = int(amount)
+        except (TypeError, ValueError):
+            amount = 0
+    row = get_user_level_row(guild_id, user_id)
+    old_level = row["level"]
+    new_xp = max(0, row["xp"] + amount)
+    new_level = level_from_total_xp(new_xp)
+    sb = get_supabase()
+    saved = False
+    if sb:
+        try:
+            sb.table("user_levels").upsert({
+                "guild_id": str(guild_id),
+                "user_id": str(user_id),
+                "xp": int(new_xp),
+                "level": int(new_level),
+            }).execute()
+            saved = True
+        except Exception as e:
+            error_key = "award_user_xp"
+            if error_key not in _supabase_error_logged:
+                logger.error(f"[DB] award_user_xp error: {e}")
+                _supabase_error_logged.add(error_key)
+    if not saved:
+        data = _read_json(_USER_LEVELS_JSON)
+        data[f"{guild_id}_{user_id}"] = {"xp": int(new_xp),
+                                         "level": int(new_level)}
+        _write_json(_USER_LEVELS_JSON, data)
+    return {"xp": new_xp, "old_level": old_level, "new_level": new_level,
+            "leveled_up": new_level > old_level}
+
+
+# ─── PHASE 2 / PART 2 — question of the day (/qotd) ─────────────
+
+_QOTD_SETTINGS_TABLE = "qotd_settings"
+_QOTD_QUEUE_JSON = "data/qotd_queue.json"
+
+_QOTD_SETTINGS_DEFAULTS = {
+    "channel_id": None,
+    "enabled": False,
+    "post_hour_utc": 14,
+    "auto_thread": True,
+    "last_post_date": None,
+}
+
+
+async def get_qotd_settings_async(guild_id: str) -> dict:
+    """PHASE 2 / PART 2 — QOTD settings for a guild (cached 60s inside
+    get_guild_setting; defaults filled for missing keys)."""
+    raw = await get_guild_setting_async(int(guild_id), _QOTD_SETTINGS_TABLE)
+    settings = dict(raw) if isinstance(raw, dict) else {}
+    for key, default in _QOTD_SETTINGS_DEFAULTS.items():
+        settings.setdefault(key, default)
+    return settings
+
+
+async def set_qotd_settings_async(guild_id: str, payload: dict):
+    """PHASE 2 / PART 2 — save (merge) QOTD settings for a guild.
+
+    Merges into the current row so a partial update (e.g. only
+    last_post_date from the posting loop) can never wipe the channel or
+    hour configuration."""
+    current = await get_qotd_settings_async(guild_id)
+    current.update(payload if isinstance(payload, dict) else {})
+    # Keep only known columns — set_guild_setting sanitizes anyway, but
+    # the JSON fallback row should also stay clean.
+    clean = {k: v for k, v in current.items()
+             if k in _TABLE_COLUMNS[_QOTD_SETTINGS_TABLE] or k == "guild_id"}
+    await set_guild_setting_async(
+        int(guild_id), _QOTD_SETTINGS_TABLE, clean
+    )
+
+
+def _json_qotd_queue(guild_id: str) -> list:
+    data = _read_json(_QOTD_QUEUE_JSON)
+    rows = data.get(str(guild_id), [])
+    return rows if isinstance(rows, list) else []
+
+
+def _json_save_qotd_queue(guild_id: str, rows: list):
+    data = _read_json(_QOTD_QUEUE_JSON)
+    data[str(guild_id)] = rows
+    _write_json(_QOTD_QUEUE_JSON, data)
+
+
+async def add_qotd_question_async(guild_id: str, question: str,
+                                  added_by: str):
+    """PHASE 2 / PART 2 — append a custom question to the guild's queue."""
+    from datetime import datetime as _dt
+    sb = get_supabase()
+    if sb:
+        try:
+            await asyncio.to_thread(
+                lambda: sb.table("qotd_queue").insert({
+                    "guild_id": str(guild_id),
+                    "question": question,
+                    "added_by": str(added_by),
+                    "used": False,
+                    "added_at": _dt.utcnow().isoformat(),
+                }).execute()
+            )
+            return
+        except Exception as e:
+            error_key = "add_qotd_question"
+            if error_key not in _supabase_error_logged:
+                logger.error(f"[DB] add_qotd_question error: {e}")
+                _supabase_error_logged.add(error_key)
+    rows = _json_qotd_queue(guild_id)
+    next_id = max((int(r.get("id", 0)) for r in rows
+                   if isinstance(r, dict)), default=0) + 1
+    rows.append({
+        "id": next_id,
+        "guild_id": str(guild_id),
+        "question": question,
+        "added_by": str(added_by),
+        "used": False,
+        "added_at": _dt.utcnow().isoformat(),
+    })
+    _json_save_qotd_queue(guild_id, rows)
+
+
+async def get_next_qotd_question_async(guild_id: str) -> dict | None:
+    """PHASE 2 / PART 2 — fetch AND CONSUME the next queued question.
+
+    Returns {"question": str, "id": int|str} for the oldest unused row
+    (which is marked used=True before returning, so two consumers can
+    never post the same question), or None when the custom queue is
+    empty — the caller then falls back to the built-in pool."""
+    sb = get_supabase()
+    if sb:
+        try:
+            def _fetch():
+                return sb.table("qotd_queue").select("*").eq(
+                    "guild_id", str(guild_id)
+                ).eq("used", False).order("id", desc=False).limit(1).execute()
+            result = await asyncio.to_thread(_fetch)
+            if not (result and result.data):
+                return None
+            row = result.data[0]
+            await asyncio.to_thread(
+                lambda: sb.table("qotd_queue").update(
+                    {"used": True}
+                ).eq("id", row["id"]).execute()
+            )
+            return {"question": row.get("question", ""),
+                    "id": row.get("id")}
+        except Exception as e:
+            error_key = "get_next_qotd_question"
+            if error_key not in _supabase_error_logged:
+                logger.error(f"[DB] get_next_qotd_question error: {e}")
+                _supabase_error_logged.add(error_key)
+            return None
+    # JSON fallback — consume in one pass
+    rows = _json_qotd_queue(guild_id)
+    for r in rows:
+        if isinstance(r, dict) and not r.get("used"):
+            r["used"] = True
+            _json_save_qotd_queue(guild_id, rows)
+            return {"question": r.get("question", ""), "id": r.get("id")}
+    return None
+
+
+async def get_qotd_queue_async(guild_id: str) -> list:
+    """PHASE 2 / PART 2 — the guild's upcoming (unused) questions,
+    oldest first. Used by /qotd list."""
+    sb = get_supabase()
+    if sb:
+        try:
+            def _fetch():
+                return sb.table("qotd_queue").select("*").eq(
+                    "guild_id", str(guild_id)
+                ).eq("used", False).order("id", desc=False).limit(25).execute()
+            result = await asyncio.to_thread(_fetch)
+            return (result.data or []) if result else []
+        except Exception as e:
+            error_key = "get_qotd_queue"
+            if error_key not in _supabase_error_logged:
+                logger.error(f"[DB] get_qotd_queue error: {e}")
+                _supabase_error_logged.add(error_key)
+    return [r for r in _json_qotd_queue(guild_id)
+            if isinstance(r, dict) and not r.get("used")]
+
+
+# ─── PHASE 2 / PART 3 — member anniversaries (/anniversary) ─────
+
+_ANNIVERSARY_TABLE = "anniversary_settings"
+
+_ANNIVERSARY_DEFAULTS = {
+    "channel_id": None,
+    "enabled": False,
+    "last_run_date": None,
+}
+
+
+async def get_anniversary_settings_async(guild_id: str) -> dict:
+    """PHASE 2 / PART 3 — anniversary settings for a guild (channel,
+    enabled, last_run_date) with defaults filled."""
+    raw = await get_guild_setting_async(int(guild_id), _ANNIVERSARY_TABLE)
+    settings = dict(raw) if isinstance(raw, dict) else {}
+    for key, default in _ANNIVERSARY_DEFAULTS.items():
+        settings.setdefault(key, default)
+    return settings
+
+
+async def set_anniversary_settings_async(guild_id: str, payload: dict):
+    """PHASE 2 / PART 3 — save (merge) anniversary settings for a guild.
+    Merging keeps the daily loop's last_run_date update from wiping the
+    channel / enabled configuration."""
+    current = await get_anniversary_settings_async(guild_id)
+    current.update(payload if isinstance(payload, dict) else {})
+    clean = {k: v for k, v in current.items()
+             if k in _TABLE_COLUMNS[_ANNIVERSARY_TABLE] or k == "guild_id"}
+    await set_guild_setting_async(int(guild_id), _ANNIVERSARY_TABLE, clean)
