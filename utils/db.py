@@ -315,12 +315,38 @@ CREATE TABLE server_personality (
 -- );
 -- GRANT ALL ON public.onboarding_settings TO anon;
 -- ALTER TABLE public.onboarding_settings DISABLE ROW LEVEL SECURITY;
+--
+-- PHASE 1 / PART 3 — command usage analytics (batched by utils/usage_logger.py):
+--
+-- CREATE TABLE IF NOT EXISTS command_usage (
+--     id BIGSERIAL PRIMARY KEY,
+--     guild_id TEXT NOT NULL,
+--     user_id TEXT NOT NULL,
+--     command_name TEXT NOT NULL,
+--     timestamp TIMESTAMPTZ DEFAULT NOW()
+-- );
+-- GRANT ALL ON public.command_usage TO anon;
+-- ALTER TABLE public.command_usage DISABLE ROW LEVEL SECURITY;
+--
+-- PHASE 1 / PART 5 — daily fortune history (/fortune in cogs/fun_extras.py):
+--
+-- CREATE TABLE IF NOT EXISTS fortune_history (
+--     user_id TEXT PRIMARY KEY,
+--     last_fortune_date TEXT,
+--     fortune_text TEXT
+-- );
+-- GRANT ALL ON public.fortune_history TO anon;
+-- ALTER TABLE public.fortune_history DISABLE ROW LEVEL SECURITY;
 """
 import asyncio
+import functools
 import os
 import json
 import logging
+from datetime import datetime, timedelta
 from typing import Any
+
+from utils.cache import cache
 
 logger = logging.getLogger('cyn.db')
 
@@ -364,6 +390,81 @@ def init_db():
 
 def using_supabase() -> bool:
     return _use_supabase
+
+
+def get_supabase():
+    """PHASE 1 / PART 3 — Return the raw Supabase client, or None when
+    Supabase is not configured/connected. Used by utils/usage_logger.py
+    for batched command_usage inserts (and safe to call anywhere)."""
+    return _supabase if _use_supabase else None
+
+
+# ─── PART 2.1 — standardized graceful degradation ───────────────
+#
+# with_fallback wraps the async DB wrappers below. The sync functions
+# already fall back to JSON internally for Supabase-side errors; this
+# decorator adds the layer that was missing:
+#   * a global _supabase_degraded flag (surfaced in /botinfo as
+#     "Supabase - degraded" and cleared on the first success),
+#   * classification of the error (outage vs schema vs unexpected),
+#   * a last-resort JSON fallback for anything that still escapes
+#     (e.g. the JSON write itself failing inside the sync function, or
+#     the thread-pool call blowing up).
+
+_supabase_degraded = False
+
+
+def supabase_degraded() -> bool:
+    """PART 8 — True while Supabase is being treated as down (shown in
+    /botinfo's Storage section). Resets to False on the next success."""
+    return _supabase_degraded
+
+
+def with_fallback(table_name: str, fallback_fn=None):
+    """Decorate an async db wrapper with standardized degradation.
+
+    * timeout / 5xx / connection errors  → mark degraded (once), then
+      call fallback_fn if provided, else return None.
+    * schema errors ("column", "does not exist") → log once, return None
+      (no fallback — writing to a missing table makes it worse).
+    * any other error → log, call fallback_fn if provided, else None.
+    * success → clear the degraded flag ("Supabase recovered").
+    """
+    def decorator(func):
+        @functools.wraps(func)
+        async def wrapper(*args, **kwargs):
+            global _supabase_degraded
+            try:
+                result = await func(*args, **kwargs)
+                if _supabase_degraded:
+                    logger.info("[DB] Supabase recovered")
+                    _supabase_degraded = False
+                return result
+            except Exception as e:
+                error_str = str(e).lower()
+                if any(x in error_str for x in ["timeout", "503", "502", "504", "connection"]):
+                    if not _supabase_degraded:
+                        logger.warning(
+                            f"[DB] Supabase degraded ({e}), falling back to JSON for {table_name}"
+                        )
+                        _supabase_degraded = True
+                    if fallback_fn:
+                        if asyncio.iscoroutinefunction(fallback_fn):
+                            return await fallback_fn(*args, **kwargs)
+                        return fallback_fn(*args, **kwargs)
+                    return None
+                elif "column" in error_str or "does not exist" in error_str:
+                    logger.error(f"[DB] Schema error on {table_name}: {e}")
+                    return None
+                else:
+                    logger.error(f"[DB] Unexpected error on {table_name}: {e}")
+                    if fallback_fn:
+                        if asyncio.iscoroutinefunction(fallback_fn):
+                            return await fallback_fn(*args, **kwargs)
+                        return fallback_fn(*args, **kwargs)
+                    return None
+        return wrapper
+    return decorator
 
 
 # ─── JSON fallback helpers ─────────────────────────────────────
@@ -459,6 +560,10 @@ _TABLE_COLUMNS = {
     "onboarding_settings": {
         "guild_id", "enabled", "welcome_text", "roles",
     },
+    # PHASE 1 / PART 3 — command usage analytics (batched inserts)
+    "command_usage": {"guild_id", "user_id", "command_name", "timestamp"},
+    # PHASE 1 / PART 5 — daily fortune history (/fortune)
+    "fortune_history": {"user_id", "last_fortune_date", "fortune_text"},
 }
 
 
@@ -479,6 +584,14 @@ def _sanitize_columns(table: str, settings: dict) -> dict:
     return {k: v for k, v in settings.items() if k in valid_cols}
 
 
+# PHASE 1 / PART 1 — per-table cache TTLs for get_guild_setting.
+# Everything defaults to 60s; log_settings reads happen on nearly every
+# message-delete/edit so it gets the longer 120s TTL from the spec.
+_GUILD_SETTING_TTLS = {
+    "log_settings": 120,
+}
+
+
 def get_guild_setting(guild_id: int, table: str) -> dict:
     """Get settings for a guild from a specific table/file.
 
@@ -486,7 +599,26 @@ def get_guild_setting(guild_id: int, table: str) -> dict:
     PGRST205 error, we skip the Supabase query entirely and go straight
     to the JSON fallback. This stops the repeated `GET /rest/v1/<table>
     404 Not Found` spam that was polluting the logs on every message.
+
+    PHASE 1 / PART 1 — results are served from the shared TTL cache
+    (60s, 120s for log_settings). set_guild_setting() invalidates the
+    entry on every write, so config changes show up immediately. The
+    cached dict is copied on read AND on store so cogs that mutate the
+    returned dict can never corrupt the cache.
     """
+    key = f"gs:{table}:{guild_id}"
+    cached = cache.get_sync(key)
+    if cached is not None:
+        return dict(cached) if isinstance(cached, dict) else cached
+    result = _get_guild_setting_raw(guild_id, table)
+    if isinstance(result, dict):
+        cache.set_sync(
+            key, dict(result), ttl=_GUILD_SETTING_TTLS.get(table, 60)
+        )
+    return result
+
+
+def _get_guild_setting_raw(guild_id: int, table: str) -> dict:
     if not _use_supabase:
         data = _read_json(f"data/{table}.json")
         return data.get(str(guild_id), {})
@@ -551,7 +683,15 @@ def set_guild_setting(guild_id: int, table: str, settings: dict):
     Fix: Before sending the payload to Supabase, sanitize the dict so
     only known columns for that table are included. This prevents the
     column-mismatch error entirely.
+
+    PHASE 1 / PART 1 — invalidates the cached read for this guild+table
+    so the next get_guild_setting sees the new value right away.
     """
+    _set_guild_setting_raw(guild_id, table, settings)
+    cache.invalidate_sync(f"gs:{table}:{guild_id}")
+
+
+def _set_guild_setting_raw(guild_id: int, table: str, settings: dict):
     if not _use_supabase:
         data = _read_json(f"data/{table}.json")
         data[str(guild_id)] = settings
@@ -1074,7 +1214,21 @@ def clear_conversation_history(guild_id: int, user_id: int, channel_id: int = 0)
 
 def get_server_personality(guild_id: int) -> dict:
     """Get the personality note for a guild.
-    Returns {"personality_note": str, "set_by": str, "updated_at": str} or {}."""
+    Returns {"personality_note": str, "set_by": str, "updated_at": str} or {}.
+
+    PHASE 1 / PART 1 — cached under pers:{guild_id} for 300s (the note
+    rarely changes). set/clear_server_personality invalidate on write."""
+    key = f"pers:{guild_id}"
+    cached = cache.get_sync(key)
+    if cached is not None:
+        return dict(cached) if isinstance(cached, dict) else cached
+    result = _get_server_personality_raw(guild_id)
+    if isinstance(result, dict):
+        cache.set_sync(key, dict(result), ttl=300)
+    return result
+
+
+def _get_server_personality_raw(guild_id: int) -> dict:
     if _use_supabase:
         try:
             result = _supabase.table("server_personality").select("*").eq(
@@ -1149,6 +1303,8 @@ def set_server_personality(guild_id: int, note: str, set_by: str,
             "updated_at": updated_at,
         }
         _write_json("data/server_personality.json", data)
+    # PHASE 1 / PART 1 — the cached note is stale now
+    cache.invalidate_sync(f"pers:{guild_id}")
 
 
 def clear_server_personality(guild_id: int):
@@ -1177,6 +1333,8 @@ def clear_server_personality(guild_id: int):
         if str(guild_id) in data:
             del data[str(guild_id)]
         _write_json("data/server_personality.json", data)
+    # PHASE 1 / PART 1 — drop the cached note too
+    cache.invalidate_sync(f"pers:{guild_id}")
 
 
 # ─── User profiles (global per user_id) ────────────────────────
@@ -1496,7 +1654,21 @@ def remove_tempban(guild_id: int, user_id: int):
 # ─── PHASE 4: AI user memory facts ─────────────────────────────
 
 def get_user_facts(guild_id: int, user_id: int) -> list:
-    """Return the durable facts remembered about a user in a guild."""
+    """Return the durable facts remembered about a user in a guild.
+
+    PHASE 1 / PART 1 — cached under facts:{guild_id}:{user_id} for 300s.
+    add_user_fact / clear_user_facts invalidate on write."""
+    key = f"facts:{guild_id}:{user_id}"
+    cached = cache.get_sync(key)
+    if cached is not None:
+        return list(cached) if isinstance(cached, list) else cached
+    result = _get_user_facts_raw(guild_id, user_id)
+    if isinstance(result, list):
+        cache.set_sync(key, list(result), ttl=300)
+    return result
+
+
+def _get_user_facts_raw(guild_id: int, user_id: int) -> list:
     if _use_supabase:
         try:
             result = _supabase.table("user_memory").select("facts").eq(
@@ -1546,6 +1718,8 @@ def add_user_fact(guild_id: int, user_id: int, fact: str,
     if _use_supabase:
         try:
             _supabase.table("user_memory").upsert(payload).execute()
+            # PHASE 1 / PART 1 — facts changed; drop the cached list
+            cache.invalidate_sync(f"facts:{guild_id}:{user_id}")
             return True
         except Exception as e:
             error_key = "add_user_fact"
@@ -1556,6 +1730,8 @@ def add_user_fact(guild_id: int, user_id: int, fact: str,
     data = _read_json("data/user_memory.json")
     data[f"{guild_id}_{user_id}"] = payload
     _write_json("data/user_memory.json", data)
+    # PHASE 1 / PART 1 — facts changed; drop the cached list
+    cache.invalidate_sync(f"facts:{guild_id}:{user_id}")
     return True
 
 
@@ -1569,6 +1745,8 @@ def clear_user_facts(guild_id: int, user_id: int) -> int:
             _supabase.table("user_memory").delete().eq(
                 "guild_id", str(guild_id)
             ).eq("user_id", str(user_id)).execute()
+            # PHASE 1 / PART 1 — facts wiped; drop the cached list
+            cache.invalidate_sync(f"facts:{guild_id}:{user_id}")
             return len(facts)
         except Exception as e:
             error_key = "clear_user_facts"
@@ -1579,6 +1757,8 @@ def clear_user_facts(guild_id: int, user_id: int) -> int:
     data = _read_json("data/user_memory.json")
     data.pop(f"{guild_id}_{user_id}", None)
     _write_json("data/user_memory.json", data)
+    # PHASE 1 / PART 1 — facts wiped; drop the cached list
+    cache.invalidate_sync(f"facts:{guild_id}:{user_id}")
     return len(facts)
 
 
@@ -1778,33 +1958,116 @@ def get_active_giveaways() -> list:
 # save_conversation_message) runs on nearly every mention, so this was the
 # highest-frequency blocker.
 #
+# PHASE 1 / PART 2.1 — each hot wrapper is now wrapped with
+# @with_fallback(table, fallback_fn), which standardizes degradation:
+# timeout/5xx/connection errors flip the global _supabase_degraded flag
+# (shown in /botinfo), and a JSON fallback function answers the call if
+# the sync layer somehow raised.
+#
 # Usage from async code:
 #     from utils.db import get_conversation_history_async
 #     history = await get_conversation_history_async(guild_id, user_id, ...)
 #
 # The sync functions remain unchanged for background tasks / sync contexts.
 
+# ── PART 2.1 — standalone JSON fallbacks (mirror the sync functions'
+# own fallback branches, so the decorator can call them directly) ──
+
+def _json_get_guild_setting(guild_id: int, table: str) -> dict:
+    data = _read_json(f"data/{table}.json")
+    return data.get(str(guild_id), {})
+
+
+def _json_set_guild_setting(guild_id: int, table: str, settings: dict):
+    data = _read_json(f"data/{table}.json")
+    data[str(guild_id)] = settings
+    _write_json(f"data/{table}.json", data)
+
+
+def _json_get_warnings(guild_id: int, user_id: int) -> list:
+    data = _read_json("data/warnings.json")
+    return data.get(str(guild_id), {}).get(str(user_id), [])
+
+
+def _json_add_warning(guild_id: int, user_id: int, warning: dict) -> int:
+    w = dict(warning)  # never mutate the caller's dict
+    data = _read_json("data/warnings.json")
+    g, u = str(guild_id), str(user_id)
+    if g not in data or not isinstance(data[g], dict):
+        data[g] = {}
+    if u not in data[g] or not isinstance(data[g][u], list):
+        data[g][u] = []
+    all_cases = [
+        w2.get("case_id", 0)
+        for cases in data[g].values()
+        for w2 in cases
+        if isinstance(w2, dict)
+    ]
+    case_id = max(all_cases, default=0) + 1
+    w["case_id"] = case_id
+    data[g][u].append(w)
+    _write_json("data/warnings.json", data)
+    return case_id
+
+
+def _json_get_conversation_history(guild_id: int, user_id: int,
+                                    channel_id: int = 0,
+                                    limit: int = 20) -> list:
+    data = _read_json("data/conversation_memory.json")
+    key = f"{guild_id}_{user_id}_{channel_id}"
+    entries = data.get(key, [])
+    if not isinstance(entries, list):
+        return []
+    return entries[-limit:]
+
+
+def _json_save_conversation_message(guild_id: int, user_id: int, role: str,
+                                     content: str, timestamp: str = None,
+                                     channel_id: int = 0):
+    if timestamp is None:
+        timestamp = datetime.utcnow().isoformat()
+    data = _read_json("data/conversation_memory.json")
+    key = f"{guild_id}_{user_id}_{channel_id}"
+    if key not in data or not isinstance(data[key], list):
+        data[key] = []
+    data[key].append({
+        "role": role,
+        "content": content,
+        "timestamp": timestamp,
+    })
+    if len(data[key]) > 20:
+        data[key] = data[key][-20:]
+    _write_json("data/conversation_memory.json", data)
+
+
+@with_fallback("guild_settings", _json_get_guild_setting)
 async def get_guild_setting_async(guild_id: int, table: str) -> dict:
     """Non-blocking get_guild_setting — runs the blocking REST call in a
-    thread-pool executor via asyncio.to_thread()."""
+    thread-pool executor via asyncio.to_thread(). (Cached, PART 1 — the
+    cache lives inside the sync function so thread and loop callers both
+    benefit.)"""
     return await asyncio.to_thread(get_guild_setting, guild_id, table)
 
 
+@with_fallback("guild_settings", _json_set_guild_setting)
 async def set_guild_setting_async(guild_id: int, table: str, settings: dict):
-    """Non-blocking set_guild_setting."""
+    """Non-blocking set_guild_setting (invalidates the cache on write)."""
     return await asyncio.to_thread(set_guild_setting, guild_id, table, settings)
 
 
+@with_fallback("warnings", _json_get_warnings)
 async def get_warnings_async(guild_id: int, user_id: int) -> list:
     """Non-blocking get_warnings."""
     return await asyncio.to_thread(get_warnings, guild_id, user_id)
 
 
+@with_fallback("warnings", _json_add_warning)
 async def add_warning_async(guild_id: int, user_id: int, warning: dict) -> int:
     """Non-blocking add_warning."""
     return await asyncio.to_thread(add_warning, guild_id, user_id, warning)
 
 
+@with_fallback("conversation_memory", _json_get_conversation_history)
 async def get_conversation_history_async(guild_id: int, user_id: int,
                                          channel_id: int = 0,
                                          limit: int = 20) -> list:
@@ -1814,6 +2077,7 @@ async def get_conversation_history_async(guild_id: int, user_id: int,
     )
 
 
+@with_fallback("conversation_memory", _json_save_conversation_message)
 async def save_conversation_message_async(guild_id: int, user_id: int,
                                           role: str, content: str,
                                           timestamp: str = None,
@@ -1823,6 +2087,13 @@ async def save_conversation_message_async(guild_id: int, user_id: int,
         save_conversation_message, guild_id, user_id, role, content,
         timestamp, channel_id
     )
+
+
+async def get_server_personality_async(guild_id: int) -> dict:
+    """Non-blocking get_server_personality (PHASE 1 / PART 1 — cached
+    under pers:{guild_id} for 300s inside the sync function). Used by the
+    AI chat hot path so a cache miss no longer blocks the event loop."""
+    return await asyncio.to_thread(get_server_personality, guild_id)
 
 
 async def get_user_facts_async(guild_id: int, user_id: int) -> list:
@@ -1851,3 +2122,69 @@ async def get_active_giveaways_async() -> list:
 async def save_giveaway_async(giveaway: dict):
     """Non-blocking save_giveaway (PHASE 4 giveaways)."""
     return await asyncio.to_thread(save_giveaway, giveaway)
+
+
+# ─── PHASE 1 / PART 4.5 — conversation memory retention ─────────
+
+async def cleanup_old_conversation_memory():
+    """Daily safety net: purge conversation_memory rows older than 7 days.
+
+    save_conversation_message already trims to the most recent 20 per
+    (guild, user, channel), so this is a belt-and-braces pass that keeps
+    abandoned conversations and orphaned channels from accumulating
+    forever. Called daily from cogs/ai_chat.py's cleanup_memory_task."""
+    try:
+        sb = get_supabase()
+        if not sb:
+            return
+        # Delete messages older than 7 days as a safety net
+        cutoff = (datetime.utcnow() - timedelta(days=7)).isoformat()
+        await asyncio.to_thread(
+            lambda: sb.table("conversation_memory")
+              .delete()
+              .lt("timestamp", cutoff)
+              .execute()
+        )
+        logger.info("[CLEANUP] pruned conversation_memory older than 7 days")
+    except Exception as e:
+        logger.warning(f"[CLEANUP] conversation_memory cleanup failed: {e}")
+
+
+# ─── PHASE 1 / PART 5 — daily fortune history (/fortune) ────────
+
+async def get_fortune_history_async(user_id: str) -> dict | None:
+    """Return the user's last fortune row, or None (PART 5 /fortune)."""
+    try:
+        sb = get_supabase()
+        if not sb:
+            return None
+        result = await asyncio.to_thread(
+            lambda: sb.table("fortune_history")
+              .select("*")
+              .eq("user_id", user_id)
+              .maybe_single()
+              .execute()
+        )
+        return result.data if result else None
+    except Exception:
+        return None
+
+
+async def save_fortune_history_async(user_id: str, date_str: str,
+                                      fortune_text: str):
+    """Upsert the user's fortune for today (PART 5 /fortune)."""
+    try:
+        sb = get_supabase()
+        if not sb:
+            return
+        await asyncio.to_thread(
+            lambda: sb.table("fortune_history")
+              .upsert({
+                  "user_id": user_id,
+                  "last_fortune_date": date_str,
+                  "fortune_text": fortune_text,
+              })
+              .execute()
+        )
+    except Exception as e:
+        logger.warning(f"[DB] save_fortune_history failed: {e}")

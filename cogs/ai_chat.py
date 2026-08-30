@@ -9,12 +9,86 @@ import logging
 import time
 from datetime import datetime, timedelta
 from utils.intent_parser import parse_intent, parse_fast_intent
-from utils.ai_handler import call_ai, call_ai_fast
+from utils.ai_handler import call_ai, call_ai_fast, _EMPTY_CONTENT_FALLBACK
 from utils.database import Database
 
 logger = logging.getLogger('cyn.chat')
 
 OWNER_ID = int(os.getenv('OWNER_ID', '0'))
+
+
+# ─── PHASE 1 / PART 6.2 — response variety pools ─────────────────
+# Every canned line the bot can say now comes from a pool, so repeat
+# interactions feel alive instead of looped. random_greeting() answers
+# bare @mentions; random_fallback() covers "nothing to say" moments.
+GREETINGS = [
+    "i'm here ♡", "hey, what's up ✦", "listening ✧",
+    "oh hi ♡", "what's on your mind? ✦", "i'm all ears ♡",
+    "hey you ✧", "tell me everything ♡", "i'm here, always ✦",
+    "hi ♡ how can i help?", "what's up ✦", "i'm listening ♡",
+]
+
+FALLBACKS = [
+    "hmm, i'm not sure about that ♡",
+    "that's interesting ✦",
+    "tell me more? ✧",
+    "i'll think about that ♡",
+    "not sure, but i'm here ✦",
+]
+
+
+def random_greeting() -> str:
+    return random.choice(GREETINGS)
+
+
+def random_fallback() -> str:
+    return random.choice(FALLBACKS)
+
+
+# ─── PHASE 1 / PART 2.2 — graceful AI failure lines ────────────
+# When call_ai exhausts its retries / returns the empty-content marker,
+# the user sees one of these instead of the same dead line every time.
+GRACEFUL_ERRORS = [
+    "i'm having trouble thinking right now ♡ try again in a moment",
+    "my thoughts are a bit fuzzy ✦ give me a second",
+    "something went wrong in my head ♡ try again?",
+    "brain.exe has stopped responding ♡ retry?",
+]
+
+# Response strings that mean "the AI call failed" — replaced with a
+# random GRACEFUL_ERRORS line before anything is sent to the user.
+# (The capacity message from ai_handler is NOT here: its "try again in
+# Xs" hint is genuinely useful and worth showing verbatim.)
+_AI_ERROR_MARKERS = {
+    _EMPTY_CONTENT_FALLBACK,
+    "something broke. try again.",
+    "something broke on my end. try again.",
+}
+
+
+# ─── PHASE 1 / PART 6.3 — time-of-day awareness ──────────────────
+def get_time_context() -> str:
+    """Soft persona nudge based on the current UTC hour — morning warmth,
+    relaxed afternoons, cozy evenings, gentle late nights."""
+    hour = datetime.utcnow().hour
+    if 5 <= hour < 12:
+        return "It's morning UTC. Be warm and bright. Use ☀️ or 🌸 occasionally."
+    elif 12 <= hour < 17:
+        return "It's afternoon UTC. Be casual and relaxed."
+    elif 17 <= hour < 22:
+        return "It's evening UTC. Be cozy and soft. Use ✦ or 🌙 occasionally."
+    else:
+        return "It's late night UTC. Be gentle and quiet. Use 🌙 or ✧ occasionally."
+
+
+# ─── PHASE 1 / PART 6.5 — compliment detection rule ───────────
+_COMPLIMENT_RULE = (
+    "If the user compliments you (says you're the best, cute, amazing, "
+    "sweet, love you, etc.), respond with shy warmth. Examples: "
+    "'stop it ♡', 'you're making me blush ✦', 'no you are ♡', "
+    "'now you're just being sweet ✧'. Keep it brief (under 8 words) "
+    "and genuine."
+)
 
 
 # FIX 5 — Confirmation view for AI-driven moderation actions.
@@ -101,6 +175,10 @@ class AIChat(commands.Cog):
         self._fact_msg_counters = {}
         if not self.check_reminders.is_running():
             self.check_reminders.start()
+        # PHASE 1 / PART 4.5 — daily conversation_memory purge (7-day
+        # safety net, see utils.db.cleanup_old_conversation_memory)
+        if not self.cleanup_memory_task.is_running():
+            self.cleanup_memory_task.start()
 
     def get_user_rate_limit(self, member) -> int:
         """Return the message limit per hour for this user (tiered)."""
@@ -323,6 +401,13 @@ class AIChat(commands.Cog):
         if extra_context:
             base += f"\n{extra_context}"
 
+        # PHASE 1 / PART 6.3 — time-of-day awareness (morning / afternoon /
+        # evening / late-night persona nudges, UTC)
+        base += f"\n\nTime context: {get_time_context()}"
+
+        # PHASE 1 / PART 6.5 — shy warmth when the user compliments aurelia
+        base += f"\n\n{_COMPLIMENT_RULE}"
+
         return base
 
     # PHASE 3B1 — Detect formality of incoming message
@@ -363,7 +448,7 @@ class AIChat(commands.Cog):
                               chosen_model: str = None) -> str:
         from utils.db import (
             get_conversation_history_async, save_conversation_message_async,
-            get_server_personality,
+            get_server_personality_async,
         )
 
         # FIX 3 — build server summary (now short, ~100 tokens, cached 30min)
@@ -372,10 +457,11 @@ class AIChat(commands.Cog):
             server_summary = await self.get_server_summary(guild)
 
         # PHASE 2B — load server personality note
+        # (PHASE 1 / PART 1 — cached 300s in utils.db, non-blocking wrapper)
         personality_note = ""
         if guild:
             try:
-                pnote = get_server_personality(guild.id)
+                pnote = await get_server_personality_async(guild.id)
                 personality_note = pnote.get("personality_note", "") if pnote else ""
             except Exception:
                 pass
@@ -1836,11 +1922,12 @@ class AIChat(commands.Cog):
             content = message.content.replace(f'<@{self.bot.user.id}>', '').strip()
             content = content.replace(f'<@!{self.bot.user.id}>', '').strip()
 
-            # PART 5 — Bare mention with no text — respond with a short acknowledgment.
-            # Previously this silently dropped or used a long greeting list; now it's
-            # a consistent short "hm?" so the user knows the mention registered.
+            # PART 5 — Bare mention with no text — respond with a short
+            # acknowledgment. PHASE 1 / PART 6.2: the acknowledgment now
+            # comes from the GREETINGS pool so repeat pings get variety
+            # ("send @Aurelia 5 times, verify different greetings").
             if not content or not content.strip():
-                await self._safe_reply(message, "hm?")
+                await self._safe_reply(message, random_greeting())
                 return
 
             # FIX 1 — Resolve all Discord mention IDs to human-readable names
@@ -1981,9 +2068,11 @@ class AIChat(commands.Cog):
                 traceback.print_exc()
                 response = None
 
-            # FIX 1 — never reply with None/empty
-            if not response:
-                response = "something broke on my end. try again."
+            # FIX 1 — never reply with None/empty.
+            # PHASE 1 / PART 2.2 — the dead canned error lines (and the
+            # empty-content marker) become a random graceful line instead.
+            if not response or response in _AI_ERROR_MARKERS:
+                response = random.choice(GRACEFUL_ERRORS)
 
             # DIAGNOSTIC — Log after AI call
             logger.debug(f"[AI_CALL] response received: {response[:100] if response else 'NONE'}")
@@ -2059,7 +2148,9 @@ class AIChat(commands.Cog):
     @app_commands.checks.cooldown(1, 8.0, key=lambda i: i.user.id)
     async def aurelia_command(self, interaction: discord.Interaction, message: str):
         self.bot.increment_command('aurelia')
-        await interaction.response.defer()
+        # PHASE 1 / PART 6.1 — thinking=True shows the native "aurelia is
+        # thinking..." indicator while the AI works.
+        await interaction.response.defer(thinking=True)
 
         try:
             # FIX 1 — deterministic fast-path before the LLM parser (same
@@ -2132,6 +2223,9 @@ class AIChat(commands.Cog):
             logger.error(f"[aurelia] {type(e).__name__}: {e}")
             await interaction.followup.send("something went wrong.")
             return
+        # PHASE 1 / PART 2.2 — graceful randomized failure line
+        if not response or response in _AI_ERROR_MARKERS:
+            response = random.choice(GRACEFUL_ERRORS)
         await interaction.followup.send(response)
 
     # PHASE 2A — /forget command: clears persistent conversation memory
@@ -2184,7 +2278,7 @@ class AIChat(commands.Cog):
                 return
 
             if not content.strip():
-                await self._safe_reply(message, "hm?")
+                await self._safe_reply(message, random_greeting())
                 return
 
             self.update_rate_limit(message.author.id)
@@ -2281,6 +2375,10 @@ class AIChat(commands.Cog):
                     chosen_model=chosen_model
                 )
 
+            # PHASE 1 / PART 2.2 — swap dead error lines for a graceful one
+            if not response or response in _AI_ERROR_MARKERS:
+                response = random.choice(GRACEFUL_ERRORS)
+
             logger.debug(f"[RESPONSE] → {response[:100]}")
 
             try:
@@ -2297,6 +2395,8 @@ class AIChat(commands.Cog):
     def cog_unload(self):
         if hasattr(self, 'check_reminders') and self.check_reminders.is_running():
             self.check_reminders.cancel()
+        if hasattr(self, 'cleanup_memory_task') and self.cleanup_memory_task.is_running():
+            self.cleanup_memory_task.cancel()
 
     # FIX 6 — Polling interval raised from 30s to 60s. The reminder loop
     # used to log every cycle (even when nothing was due), producing a
@@ -2354,6 +2454,19 @@ class AIChat(commands.Cog):
 
     @check_reminders.before_loop
     async def before_check_reminders(self):
+        await self.bot.wait_until_ready()
+
+    # PHASE 1 / PART 4.5 — daily conversation memory retention purge.
+    # save_conversation_message already trims to the newest 20 rows per
+    # (guild, user, channel); this daily pass deletes anything older than
+    # 7 days as a safety net so the table can't grow unbounded.
+    @tasks.loop(hours=24)
+    async def cleanup_memory_task(self):
+        from utils.db import cleanup_old_conversation_memory
+        await cleanup_old_conversation_memory()
+
+    @cleanup_memory_task.before_loop
+    async def before_cleanup_memory(self):
         await self.bot.wait_until_ready()
 
 

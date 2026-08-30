@@ -45,6 +45,7 @@ budget so the model has room to finish reasoning and emit real text.
 import os
 import re
 import time
+import asyncio
 import logging
 from groq import AsyncGroq
 
@@ -85,6 +86,10 @@ DEFAULT_FAST_MODEL = MODEL_FAST
 # content. With max_tokens=100 the model would burn all 100 tokens on
 # reasoning and return an empty content string. 300 is the safe floor.
 MIN_MAX_TOKENS = 300
+
+# PHASE 1 / PART 2.2 — how many times call_ai retries (with backoff)
+# after a rate limit (429) or a Groq server error (502/503/504).
+MAX_RETRIES = 3
 
 # FIX (empty content) — the canned reply returned when a completion has no
 # visible text at all. call_ai() detects this marker and retries once with a
@@ -272,16 +277,22 @@ async def call_ai(
     messages: list,
     model: str = DEFAULT_MODEL,
     max_tokens: int = 300,
-    temperature: float = 0.9
+    temperature: float = 0.9,
+    retry_count: int = 0,
 ) -> str:
-    """Call Groq with automatic fallback.
+    """Call Groq with automatic fallback AND retry-with-backoff.
 
     Failure chain:
       1. Try the requested `model` (defaults to MODEL_CHAT).
       2. If it returns 400 / 404 / "model not found" → retry with MODEL_FALLBACK.
       3. If MODEL_CHAT was rate-limited (429) → retry with MODEL_FALLBACK.
-      4. If MODEL_FALLBACK is also rate-limited → return a "try again later" msg.
-      5. Anything else → return "something broke on my end. try again."
+      4. PHASE 1 / PART 2.2 — if the whole call still failed with a rate
+         limit, sleep (exponential 1s → 2s → 4s) and recurse, up to
+         MAX_RETRIES (3) times. Server errors (502/503/504) retry every
+         5s the same way.
+      5. All retries exhausted or non-retryable → graceful error string
+         (the caller-side check for _EMPTY_CONTENT_FALLBACK in
+         cogs/ai_chat.py randomizes what the user sees).
 
     FIX 2 — `max_tokens` is floored at MIN_MAX_TOKENS (300) so reasoning
     models have enough budget to emit visible content after their internal
@@ -418,13 +429,48 @@ async def call_ai(
     except Exception as e:
         elapsed = time.time() - start
         error_str = str(e)
+        error_lower = error_str.lower()
 
         # DIAGNOSTIC — Log ALL errors with full traceback
         logger.error(f"[GROQ CRITICAL] {type(e).__name__}: {e} time={elapsed:.2f}s")
         import traceback
         traceback.print_exc()
 
-        # Both models rate-limited
+        # ── PART 2.2 — retry with exponential backoff on rate limits ──
+        # 1s → 2s → 4s. ("rate" alone is too greedy — "generate" contains
+        # it — so match the specific phrasings Groq actually returns.)
+        _is_rate_limit = (
+            "429" in error_lower
+            or "rate limit" in error_lower
+            or "rate_limit" in error_lower
+            or "ratelimit" in error_lower
+            or "too many requests" in error_lower
+        )
+        if _is_rate_limit and retry_count < MAX_RETRIES:
+            wait_time = 2 ** retry_count  # 1s, 2s, 4s
+            logger.warning(
+                f"[AI] retry {retry_count + 1}/{MAX_RETRIES} for {model} "
+                f"after 429, waiting {wait_time}s"
+            )
+            await asyncio.sleep(wait_time)
+            return await call_ai(
+                messages, model, max_tokens, temperature, retry_count + 1
+            )
+
+        # ── PART 2.2 — retry Groq server errors (502/503/504) every 5s ──
+        if (any(code in error_lower for code in ("503", "502", "504"))
+                and retry_count < MAX_RETRIES):
+            wait_time = 5
+            logger.warning(
+                f"[AI] retry {retry_count + 1}/{MAX_RETRIES} for {model} "
+                f"after {error_str[:50]}, waiting {wait_time}s"
+            )
+            await asyncio.sleep(wait_time)
+            return await call_ai(
+                messages, model, max_tokens, temperature, retry_count + 1
+            )
+
+        # Both models rate-limited AND backoff retries exhausted
         if "429" in error_str:
             wait_match = re.search(
                 r'try again in (\d+m[\d.]+s|\d+\.\d+s|\d+s)',

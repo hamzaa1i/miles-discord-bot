@@ -29,6 +29,10 @@ class AutoMod(commands.Cog):
         self.message_tracker = defaultdict(lambda: defaultdict(list))
         # Offense tracking: {guild_id: {user_id: offense_count}}
         self.offense_counts = defaultdict(lambda: defaultdict(int))
+        # PHASE 1 / PART 4.2 — when each user's LAST offense happened:
+        # {guild_id: {user_id: timestamp}}. The cleanup task uses it to
+        # decay offense counts after an hour of good behavior.
+        self._offense_last_seen = defaultdict(lambda: defaultdict(float))
         # Raid tracking: {guild_id: [join_timestamp, ...]}
         self.join_tracker = defaultdict(list)
         # FIX 6 — In-memory settings cache with 60s TTL to avoid hitting
@@ -38,10 +42,66 @@ class AutoMod(commands.Cog):
         # Start raid check loop
         if not self.raid_check.is_running():
             self.raid_check.start()
+        # PHASE 1 / PART 4.2 — tracker hygiene loop. message_tracker was
+        # only cleaned per-user on that user's NEXT message (so users and
+        # guilds that went idle leaked entries forever) and offense_counts
+        # was never cleaned at all.
+        if not self.tracker_cleanup.is_running():
+            self.tracker_cleanup.start()
 
     def cog_unload(self):
         if self.raid_check.is_running():
             self.raid_check.cancel()
+        if self.tracker_cleanup.is_running():
+            self.tracker_cleanup.cancel()
+
+    # PHASE 1 / PART 4.2 — every 5 minutes:
+    #   * message_tracker: drop timestamps older than 60s, then remove
+    #     empty users and empty guilds (the 10s spam window only matters
+    #     for active chatters).
+    #   * offense_counts: forget offenses whose last action was more than
+    #     an hour ago — the timeout escalation resets after good behavior.
+    #   * _settings_cache: drop entries older than 10 minutes (they are
+    #     re-fetched on demand; this also forgets guilds the bot left).
+    @tasks.loop(minutes=5)
+    async def tracker_cleanup(self):
+        now = time.time()
+        for guild_id in list(self.message_tracker.keys()):
+            users = self.message_tracker.get(guild_id)
+            if not users:
+                self.message_tracker.pop(guild_id, None)
+                continue
+            for user_id in list(users.keys()):
+                fresh = [t for t in users[user_id] if now - t < 60]
+                if fresh:
+                    users[user_id] = fresh
+                else:
+                    del users[user_id]
+            if not users:
+                self.message_tracker.pop(guild_id, None)
+
+        for guild_id in list(self._offense_last_seen.keys()):
+            last_seen = self._offense_last_seen.get(guild_id)
+            if not last_seen:
+                self._offense_last_seen.pop(guild_id, None)
+                self.offense_counts.pop(guild_id, None)
+                continue
+            for user_id in list(last_seen.keys()):
+                if now - last_seen[user_id] > 3600:
+                    del last_seen[user_id]
+                    self.offense_counts[guild_id].pop(user_id, None)
+            if not last_seen:
+                self._offense_last_seen.pop(guild_id, None)
+                self.offense_counts.pop(guild_id, None)
+
+        for guild_id in list(self._settings_cache.keys()):
+            cached = self._settings_cache.get(guild_id)
+            if cached is None or now - cached[1] > 600:
+                self._settings_cache.pop(guild_id, None)
+
+    @tracker_cleanup.before_loop
+    async def before_tracker_cleanup(self):
+        await self.bot.wait_until_ready()
 
     # ─── Settings helpers ──────────────────────────────────────────
 
@@ -164,6 +224,9 @@ class AutoMod(commands.Cog):
         # Increment offense count
         self.offense_counts[guild_id][user_id] += 1
         offense = self.offense_counts[guild_id][user_id]
+        # PHASE 1 / PART 4.2 — remember when this user's last offense was
+        # so the cleanup task can decay the counter after an hour.
+        self._offense_last_seen[guild_id][user_id] = time.time()
 
         # First offense: 60s timeout. Repeat: 10min timeout.
         if offense == 1:

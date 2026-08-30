@@ -4,7 +4,7 @@ import random
 import time as _time
 from datetime import datetime
 import discord
-from discord.ext import commands
+from discord.ext import commands, tasks
 from discord import app_commands
 from utils import db as _db
 from utils.db import get_guild_setting, set_guild_setting
@@ -32,6 +32,36 @@ class Leveling(commands.Cog):
         # FIX 5 — {guild_id: (config_dict, timestamp)}; refreshed at most
         # once per CONFIG_CACHE_TTL seconds per guild.
         self._config_cache: dict[int, tuple[dict, float]] = {}
+        # PHASE 1 / PART 4.3 — xp_cooldowns only ever GREW: every user who
+        # ever chatted in any guild left a "{gid}_{uid}" key forever. This
+        # sweep drops entries older than the 60s cooldown window (they're
+        # meaningless by then) and forgets config-cache entries for guilds
+        # the bot left.
+        if not self.cooldown_cleanup.is_running():
+            self.cooldown_cleanup.start()
+
+    def cog_unload(self):
+        if self.cooldown_cleanup.is_running():
+            self.cooldown_cleanup.cancel()
+
+    @tasks.loop(minutes=10)
+    async def cooldown_cleanup(self):
+        now = datetime.utcnow()
+        stale = [
+            k for k, ts in self.xp_cooldowns.items()
+            if (now - ts).total_seconds() > CD
+        ]
+        for k in stale:
+            del self.xp_cooldowns[k]
+        tnow = _time.time()
+        for gid in list(self._config_cache.keys()):
+            cached = self._config_cache.get(gid)
+            if cached is None or tnow - cached[1] > 3600:
+                self._config_cache.pop(gid, None)
+
+    @cooldown_cleanup.before_loop
+    async def before_cooldown_cleanup(self):
+        await self.bot.wait_until_ready()
 
     def get_level_from_xp(self, total_xp: int):
         level, remaining = 0, max(0, int(total_xp))

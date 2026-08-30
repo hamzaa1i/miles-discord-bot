@@ -10,7 +10,7 @@ Snipe cache: module-level dict storing up to 5 most recent deleted
 messages per channel.
 """
 import discord
-from discord.ext import commands
+from discord.ext import commands, tasks
 from discord import app_commands
 import ast
 import math
@@ -108,6 +108,46 @@ def _prune_snipe_cache(cache: list):
 class Utility(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+        # PHASE 1 / PART 4.1 — snipe entries are pruned lazily on write
+        # and on read, but a channel that goes quiet after deletes kept
+        # its (expired) entries forever. This 5-minute sweep drops every
+        # expired entry and deletes now-empty channel keys so the module
+        # dict stays bounded.
+        if not self.snipe_cleanup.is_running():
+            self.snipe_cleanup.start()
+
+    def cog_unload(self):
+        if self.snipe_cleanup.is_running():
+            self.snipe_cleanup.cancel()
+
+    @tasks.loop(minutes=5)
+    async def snipe_cleanup(self):
+        now = datetime.utcnow()
+        pruned = 0
+        for channel_id in list(snipe_cache.keys()):
+            entries = snipe_cache.get(channel_id)
+            if not entries:
+                del snipe_cache[channel_id]
+                continue
+            keep = [
+                e for e in entries
+                if isinstance(e, dict) and e.get('deleted_at')
+                and (now - e['deleted_at']).total_seconds() <= SNIPE_TTL_SECONDS
+            ]
+            pruned += len(entries) - len(keep)
+            if keep:
+                snipe_cache[channel_id] = keep
+            else:
+                del snipe_cache[channel_id]
+        if pruned:
+            import logging
+            logging.getLogger('cyn.utility').debug(
+                f"[SNIPE] pruned {pruned} expired entr{'y' if pruned == 1 else 'ies'}"
+            )
+
+    @snipe_cleanup.before_loop
+    async def before_snipe_cleanup(self):
+        await self.bot.wait_until_ready()
 
     @commands.Cog.listener()
     async def on_message_delete(self, message: discord.Message):

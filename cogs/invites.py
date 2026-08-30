@@ -168,6 +168,18 @@ class Invites(commands.Cog):
         return rows[:limit]
 
     # ─── Listeners ──────────────────────────────────────────────
+    # PHASE 1 / PART 4.4 — when the bot leaves (or is kicked from) a
+    # guild, its invite snapshot is dead weight forever. Drop it so the
+    # cache stays proportional to the guilds we're actually in.
+    @commands.Cog.listener()
+    async def on_guild_remove(self, guild: discord.Guild):
+        removed = self.invite_cache.pop(guild.id, None)
+        if removed is not None:
+            logger.info(
+                f"[invites] dropped cached invites for {guild.name} "
+                f"({len(removed)} code(s)) after leaving the server"
+            )
+
     @commands.Cog.listener()
     async def on_invite_create(self, invite: discord.Invite):
         if not invite.guild:

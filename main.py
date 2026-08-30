@@ -17,6 +17,8 @@ import logging
 from datetime import datetime
 from flask import Flask, jsonify
 from threading import Thread
+from utils.cache import cache
+from utils.usage_logger import usage_logger
 
 load_dotenv()
 
@@ -29,6 +31,35 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger('cyn')
+
+# PHASE 1 / PART 7 — Sentry error tracking (optional).
+# Enabled only when SENTRY_DSN is set in the environment (add it to the
+# Render env vars if you want crash + error reporting; the free tier is
+# 5,000 errors/month). SENTRY_ENV (default "production") and
+# SENTRY_RELEASE (default "unknown") are optional tags.
+sentry_dsn = os.getenv("SENTRY_DSN")
+if sentry_dsn:
+    try:
+        import sentry_sdk
+        from sentry_sdk.integrations.logging import LoggingIntegration
+
+        sentry_logging = LoggingIntegration(
+            level=logging.INFO,        # Capture info and above as breadcrumbs
+            event_level=logging.ERROR  # Send errors as events
+        )
+
+        sentry_sdk.init(
+            dsn=sentry_dsn,
+            traces_sample_rate=0.1,
+            environment=os.getenv("SENTRY_ENV", "production"),
+            integrations=[sentry_logging],
+            release=os.getenv("SENTRY_RELEASE", "unknown"),
+        )
+        logger.info("✅ Sentry error tracking initialized")
+    except Exception as e:
+        logger.warning(f"⚠️ Sentry init failed: {e}")
+else:
+    logger.info("ℹ️ Sentry disabled (SENTRY_DSN not set)")
 
 # Owner ID from env (used everywhere)
 OWNER_ID = int(os.getenv('OWNER_ID', '0'))
@@ -269,6 +300,16 @@ class CynBot(commands.Bot):
                     traceback.print_exc()
                     logger.error(f"❌ Failed to load cogs.{cog_name}: {e}", exc_info=True)
 
+        # PHASE 1 / PART 1 — cache hygiene: prune expired entries every
+        # 5 minutes so the TTL store never holds stale rows.
+        if not cache_cleanup_task.is_running():
+            cache_cleanup_task.start()
+
+        # PHASE 1 / PART 3 — start the batched command-usage flush loop
+        # (drains the usage_logger buffer to Supabase every 30 seconds).
+        asyncio.create_task(usage_logger.start_periodic_flush())
+        logger.info("✅ Cache cleanup task + usage logger started")
+
     async def on_ready(self):
         logger.info(f"🤖 {self.user} is online!")
         logger.info(f"📊 {len(self.guilds)} servers | {len(self.users)} users")
@@ -433,6 +474,22 @@ class CynBot(commands.Bot):
 bot = CynBot()
 
 
+# PHASE 1 / PART 1 — prune expired cache entries every 5 minutes.
+# cleanup() only touches entries whose TTL already elapsed, so this is
+# a cheap pass; it exists so keys for guilds/users that went quiet get
+# reclaimed instead of waiting for a random future read.
+@tasks.loop(minutes=5)
+async def cache_cleanup_task():
+    pruned = await cache.cleanup()
+    if pruned > 0:
+        logger.debug(f"[CACHE] pruned {pruned} expired entries")
+
+
+@cache_cleanup_task.before_loop
+async def before_cache_cleanup():
+    await bot.wait_until_ready()
+
+
 # Sync commands to new guilds when the bot joins them
 @bot.event
 async def on_guild_join(guild: discord.Guild):
@@ -559,6 +616,28 @@ async def on_app_command_error(
         raise error
 
 
+# PHASE 1 / PART 3 — batched command-usage analytics.
+# Every completed application command is queued in-memory and flushed
+# to the Supabase `command_usage` table in batches of 10 (or every 30s
+# by the periodic flush started in setup_hook). Fire-and-forget: usage
+# logging can never break or delay a command. Also feeds the in-memory
+# per-command counters used by the /stats endpoint.
+@bot.event
+async def on_app_command_completion(
+    interaction: discord.Interaction,
+    command: app_commands.Command,
+):
+    try:
+        bot.increment_command(command.qualified_name)
+        asyncio.create_task(usage_logger.log(
+            guild_id=str(interaction.guild_id) if interaction.guild_id else "dm",
+            user_id=str(interaction.user.id),
+            command_name=command.qualified_name,
+        ))
+    except Exception:
+        pass  # never let logging break a command
+
+
 # ==================== CORE SLASH COMMANDS (kept in main for compatibility) ====================
 
 @bot.hybrid_command(name="ping", description="Check bot latency")
@@ -600,11 +679,36 @@ async def botinfo(ctx):
     hours, remainder = divmod(int(delta.total_seconds()), 3600)
     minutes, seconds = divmod(remainder, 60)
     days, hours = divmod(hours, 24)
-    uptime_str = f"{days}d {hours}h {minutes}m {seconds}s"
+    uptime_str = f"{days}d {hours}h {minutes}m"
 
     import sys
     import discord as _discord
     owner_str = str(bot.owner_user) if bot.owner_user else "volc"
+
+    # PHASE 1 / PART 8 — cache stats + AI model info + storage health.
+    cache_stats = cache.stats()
+    try:
+        from utils.db import using_supabase, supabase_degraded
+        if supabase_degraded():
+            storage_str = "Supabase - degraded"
+        elif using_supabase():
+            storage_str = "Supabase"
+        else:
+            storage_str = "JSON files"
+    except Exception:
+        storage_str = "JSON files"
+    try:
+        from utils.ai_handler import MODEL_CHAT, MODEL_FAST
+        ai_models = f"{MODEL_CHAT} + {MODEL_FAST}"
+    except Exception:
+        ai_models = "unavailable"
+
+    # Count every leaf command (groups expand to their subcommands)
+    all_cmds = list(bot.tree.get_commands())
+    total_cmds = sum(
+        len(g.commands) if hasattr(g, 'commands') else 1
+        for g in all_cmds
+    )
 
     embed = discord.Embed(title="Aurelia", color=0x2b2d31)
     embed.set_thumbnail(url=bot.user.avatar.url if bot.user.avatar else None)
@@ -612,11 +716,24 @@ async def botinfo(ctx):
     embed.add_field(name="Servers", value=f"{len(bot.guilds):,}", inline=True)
     embed.add_field(name="Users", value=f"{sum(g.member_count for g in bot.guilds):,}", inline=True)
     embed.add_field(name="Cogs", value=f"{len(bot.cogs)}", inline=True)
-    embed.add_field(name="Commands", value=f"{len(bot.tree.get_commands())}", inline=True)
+    embed.add_field(name="Commands", value=f"{total_cmds}", inline=True)
     embed.add_field(name="Latency", value=f"{round(bot.latency * 1000)}ms", inline=True)
     embed.add_field(name="discord.py", value=_discord.__version__, inline=True)
     embed.add_field(name="Python", value=f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}", inline=True)
     embed.add_field(name="Uptime", value=uptime_str, inline=True)
+    # ⚡ PHASE 1 / PART 8 — performance section
+    embed.add_field(
+        name="⚡ Cache",
+        value=(
+            f"{cache_stats['size']} entries · {cache_stats['hit_rate']}% hit rate"
+        ),
+        inline=True,
+    )
+    # 🧠 AI section
+    embed.add_field(name="🧠 AI", value=ai_models, inline=True)
+    embed.add_field(name="Provider", value="Groq", inline=True)
+    # 💾 Storage section
+    embed.add_field(name="💾 Storage", value=f"Database: {storage_str}", inline=True)
     embed.set_footer(text="Aurelia — built by volc")
     await ctx.send(embed=embed)
 

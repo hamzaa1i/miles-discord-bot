@@ -22,6 +22,33 @@ COLOR_DEFAULT = 0xE6E6FA
 FOOTER = "✩ ━━ aurelia ༉‧₊˚. ღ"
 
 
+# ─── PHASE 1 / PART 6.4 — Seasonal embed colors ─────────────────
+def get_seasonal_color() -> int:
+    """Return this month's accent color so new embeds drift with the
+    seasons: winter blue (jan) → valentine pink (feb) → spring green
+    (mar) → ... → winter lavender (dec).
+
+    Used by the Phase 1 quick-win commands (/vibe /pick /askstars) and
+    available to any future cog. Existing cogs keep their hardcoded
+    colors — retroactive changes are out of scope."""
+    month = datetime.utcnow().month
+    colors = {
+        1: 0xB0C4DE,   # january - winter blue
+        2: 0xFFB6C1,   # february - valentine pink
+        3: 0x98FB98,   # march - spring green
+        4: 0xFFC0CB,   # april - pastel pink
+        5: 0xDDA0DD,   # may - plum
+        6: 0xFFD700,   # june - summer gold
+        7: 0xFFA07A,   # july - warm coral
+        8: 0xFF8C00,   # august - late summer
+        9: 0xD2691E,   # september - autumn
+        10: 0x8B4513,  # october - deep autumn
+        11: 0xCD853F,  # november - warm brown
+        12: 0xE6E6FA,  # december - winter lavender
+    }
+    return colors.get(month, 0xFFC0CB)
+
+
 # ─── Core builder ──────────────────────────────────────────────
 
 def veloura_embed(title="", description="", color=None):
