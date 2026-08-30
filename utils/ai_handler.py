@@ -41,6 +41,14 @@ fact extraction, automod classification, proactive lines all use this path).
 Fix: (a) check `reasoning` as well as `reasoning_content`; (b) if the first
 call still returns no visible content, retry ONCE with a doubled max_tokens
 budget so the model has room to finish reasoning and emit real text.
+
+FIX (live P0) — Untagged chain-of-thought preambles leaked into user
+messages in live testing ("We need to output two lines: first line is the
+choice ..." in /pick; "We have a conversation. The user says ... The
+developer says: ..." in @aurelia chat). _strip_cot_preambles() now strips
+LEADING meta-reasoning paragraphs from every response and, when the
+reasoning and the real answer share one block with no blank line, extracts
+the final concise answer.
 """
 import os
 import re
@@ -146,6 +154,99 @@ def _validate_messages(messages: list) -> list:
     return clean_messages
 
 
+# ─── FIX 1 (live P0) — untagged CoT / meta-reasoning leak stripping ─────
+#
+# Live testing (Aug 2026) caught qwen3.6-27b / gpt-oss-20b leaking raw
+# chain-of-thought into user-visible messages with NO XML tags at all:
+#   /pick:        "We need to output two lines: first line is the choice ..."
+#   @aurelia hi:  "We have a conversation. The user says 'volc: hi' twice.
+#                 The developer says: note: your last two responses began ..."
+# The starters below essentially never begin a legitimate casual reply, so:
+#   1. LEADING paragraphs that start with one are stripped (repeatedly —
+#      some models emit several reasoning paragraphs before the answer);
+#   2. if the reasoning and the real answer share a single block with no
+#      blank-line separator, the final concise answer (last paragraph, or
+#      last line) is extracted instead.
+_COT_STARTERS = (
+    "we need to",
+    "we have a conversation",
+    "the user says",
+    "the developer says",
+    "let's choose",
+    "let me choose",
+    "let's pick",
+    "let me think",
+    "thinking process",
+    "here is the response",
+    "here's the response",
+    "here's a thinking process",
+    "here's my thinking process",
+)
+
+_COT_PREAMBLE_RE = re.compile(
+    r"^(?:" + "|".join(re.escape(s) for s in _COT_STARTERS) + r")"
+    r".*?\n\n+",
+    flags=re.DOTALL | re.IGNORECASE,
+)
+
+_COT_STARTER_RE = re.compile(
+    r"^(?:" + "|".join(re.escape(s) for s in _COT_STARTERS) + r")\b",
+    flags=re.IGNORECASE,
+)
+
+
+def _strip_cot_preambles(content: str) -> str:
+    """FIX 1 (live P0) — remove untagged reasoning preambles from output.
+
+    Runs inside _extract_content on EVERY AI response, so every caller
+    (chat, intent parsing, /pick, /vibe, automod, fact extraction, ...)
+    is protected. Legitimate replies that merely MENTION these phrases
+    mid-text are untouched — only LEADING paragraphs are stripped.
+    """
+    if not content:
+        return content
+
+    # Upstream tag removal can leave leading newlines ("</think>\n\nhi")
+    # which would defeat the ^-anchored patterns below — normalize first.
+    content = content.strip()
+
+    # 1. Drop leading reasoning paragraphs (blank-line separated).
+    stripped_any = False
+    for _ in range(5):
+        new = _COT_PREAMBLE_RE.sub("", content, count=1)
+        if new == content:
+            break
+        content = new
+        stripped_any = True
+
+    if not _COT_STARTER_RE.match(content):
+        return content.strip()
+
+    # 2. Reasoning + answer in ONE block (no blank line): keep only the
+    #    final concise answer — last non-empty paragraph, else last line.
+    paragraphs = [p for p in (s.strip() for s in content.split("\n\n")) if p]
+    if len(paragraphs) > 1:
+        # every remaining paragraph is starter-led -> pure reasoning with
+        # no real answer at all -> discard everything (the caller-side
+        # empty-content fallback + doubled-token retry then kick in)
+        if all(_COT_STARTER_RE.match(p) for p in paragraphs):
+            return ""
+        content = paragraphs[-1]
+    else:
+        # A single starter-led paragraph that survived the loop: if earlier
+        # reasoning paragraphs were stripped above, this tail is reasoning
+        # too -> discard. If nothing was stripped, it may be a legitimate
+        # reply ("let me think about that ♡") -> keep, but fall back to
+        # the last line when the block spans several lines.
+        if stripped_any:
+            return ""
+        lines = [l for l in (s.strip() for s in content.splitlines()) if l]
+        if len(lines) > 1:
+            content = lines[-1]
+
+    return content.strip()
+
+
 def _extract_content(response) -> str:
     """FIX 2 — Robustly extract text from a Groq chat completion response.
 
@@ -212,20 +313,13 @@ def _extract_content(response) -> str:
                     flags=re.DOTALL | re.IGNORECASE,
                 )
 
-            # Strip common reasoning-process preambles that some models
-            # emit even without XML tags.
-            content = re.sub(
-                r"^Here's (?:a |my )?thinking process:.*?\n\n",
-                '',
-                content,
-                flags=re.DOTALL | re.IGNORECASE,
-            )
-            content = re.sub(
-                r"^Let me think.*?\n\n",
-                '',
-                content,
-                flags=re.DOTALL | re.IGNORECASE,
-            )
+            # FIX 1 (live P0) — strip untagged CoT / meta-reasoning
+            # preambles ("We need to output two lines: ...", "We have a
+            # conversation. The user says ...", "The developer says ...").
+            # Subsumes the old "Here's a thinking process:" / "Let me
+            # think" preamble strips and adds a no-blank-line fallback
+            # that extracts the final concise answer.
+            content = _strip_cot_preambles(content)
 
             content = content.strip()
 

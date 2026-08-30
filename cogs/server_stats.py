@@ -271,7 +271,7 @@ class ServerStats(commands.Cog):
             timestamp=datetime.utcnow()
         )
         embed.set_author(
-            name=f"{user} ({user.id})",
+            name=f"{user.display_name} (@{user.name})",
             icon_url=user.avatar.url if user.avatar else user.default_avatar.url
         )
         embed.set_thumbnail(

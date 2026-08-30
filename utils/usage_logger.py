@@ -13,6 +13,13 @@ logging is fire-and-forget (asyncio.create_task) and can never break a
 command. If Supabase is down the batch is simply dropped with a warning:
 analytics must never affect the user experience.
 
+FIX 5 (live) — Supabase sequence-permission errors (42501 / "permission
+denied" / row-level security violations) are expected on projects where
+the anon key lacks INSERT grants on command_usage. They fire on EVERY
+flush (every 30s), which spammed the logs. They are now logged at DEBUG
+level and silenced after the first occurrence; _flush_locked() can never
+raise, so analytics can never affect command execution.
+
 Supabase table (see the SQL comment block at the top of utils/db.py):
 
     CREATE TABLE IF NOT EXISTS command_usage (
@@ -41,6 +48,9 @@ class UsageLogger:
         self._batch_size = batch_size
         self._flush_interval = flush_interval
         self._task = None
+        # FIX 5 (live) — set after the first permission-type write error so
+        # the recurring (every-30s) 42501 messages stop hitting the log.
+        self._perm_error_notified = False
 
     async def log(self, guild_id: str, user_id: str, command_name: str):
         """Record one command invocation. Flushes immediately when the
@@ -59,7 +69,13 @@ class UsageLogger:
             log.warning(f"[USAGE] log() failed: {e}")
 
     async def _flush_locked(self):
-        """Send everything in the buffer. Caller must hold self._lock."""
+        """Send everything in the buffer. Caller must hold self._lock.
+
+        FIX 5 (live) — never raises. Sequence-permission errors (42501,
+        "permission denied", RLS violations) are logged at DEBUG and
+        silenced after the first occurrence; other write errors keep the
+        original best-effort warning.
+        """
         if not self._buffer:
             return
         to_send = self._buffer[:]
@@ -71,7 +87,29 @@ class UsageLogger:
                     lambda: sb.table("command_usage").insert(to_send).execute()
                 )
         except Exception as e:
-            log.warning(f"[USAGE] flush failed: {e}")
+            err_str = str(e)
+            lowered = err_str.lower()
+            is_permission_error = (
+                "42501" in err_str
+                or "insufficient_privilege" in lowered
+                or "permission denied" in lowered
+                or "row-level security" in lowered
+            )
+            if is_permission_error:
+                # FIX 5 (live) — expected misconfiguration (missing grants
+                # on command_usage). DEBUG level, one full notice, then
+                # silenced: no log spam, no raise, commands unaffected.
+                if not self._perm_error_notified:
+                    log.debug(
+                        "[USAGE] Supabase rejected analytics write "
+                        f"(permission error): {err_str[:300]} — further "
+                        "permission errors silenced for this session"
+                    )
+                    self._perm_error_notified = True
+                else:
+                    log.debug("[USAGE] analytics write blocked (permission, silenced)")
+            else:
+                log.warning(f"[USAGE] flush failed: {e}")
 
     async def flush(self):
         """Explicit flush (used by the periodic task and shutdown paths)."""

@@ -13,10 +13,22 @@ autocomplete surfaces them naturally next to /roll and /joke):
 All four route through call_ai_fast (openai/gpt-oss-20b) with tight token
 budgets, use get_seasonal_color() for embed accents (PART 6.4), and are
 cooldown-protected so nobody can burn the Groq quota with them.
+
+LIVE-FIX batch (Aug 2026):
+  /vibe — only reads messages from the LAST 4 HOURS (freshness cutoff);
+          fewer than 4 recent user messages → "it's been quiet here
+          recently" reply instead of summarizing days-old conversations.
+  /pick — dedicated system role with a strict two-line contract + a
+          last-two-non-empty-lines cleanup, so scratchpad text can never
+          reach the embed (gpt-oss-20b leaked "We need to output two
+          lines: first line is the choice ..." in live testing).
+  All four prompts now carry an explicit "never explain your reasoning
+  process" constraint.
 """
 import logging
 import random
-from datetime import datetime
+import re
+from datetime import datetime, timedelta
 
 import discord
 from discord.ext import commands
@@ -44,18 +56,27 @@ class FunExtras(commands.Cog):
             )
         await interaction.response.defer()
 
-        # Fetch last 20 non-bot messages
+        # FIX 4 (live) — only read messages from the LAST 4 HOURS. The old
+        # code had no time filter, so /vibe happily dug through days-old
+        # conversations. history() yields newest-first, so the loop stops
+        # the moment a message crosses the cutoff. (discord.utils.utcnow()
+        # is used instead of datetime.utcnow() because msg.created_at is
+        # timezone-aware — mixing the two raises TypeError.)
+        cutoff = discord.utils.utcnow() - timedelta(hours=4)
         messages = []
-        async for msg in interaction.channel.history(limit=30):
+        async for msg in interaction.channel.history(limit=100):
+            if msg.created_at < cutoff:
+                break  # history is newest-first: everything else is older
             if msg.author.bot or not msg.content:
                 continue
             messages.append(f"{msg.author.display_name}: {msg.content[:200]}")
             if len(messages) >= 20:
                 break
 
-        if len(messages) < 5:
+        if len(messages) < 4:
             await interaction.followup.send(
-                "not enough activity to read the vibe yet ♡", ephemeral=True
+                "it's been quiet here recently ♡ not enough conversation to read the vibe",
+                ephemeral=True,
             )
             return
 
@@ -66,7 +87,8 @@ class FunExtras(commands.Cog):
             "aesthetic language. Include 1-2 emojis. "
             "Examples: 'chaotic dreamy energy tonight ♡', 'sleepy lo-fi study "
             "session 🌙', 'unhinged but wholesome 🌸', 'main character "
-            "energy ✦'. Respond with just the vibe description, nothing else."
+            "energy ✦'. Never explain your reasoning process. "
+            "Respond with just the vibe description, nothing else."
         )
 
         try:
@@ -86,7 +108,9 @@ class FunExtras(commands.Cog):
             description=response,
             color=get_seasonal_color(),
         )
-        embed.set_footer(text=f"read {len(messages)} messages · #{interaction.channel.name}")
+        embed.set_footer(
+            text=f"read {len(messages)} messages · #{interaction.channel.name} · past 4h"
+        )
         await interaction.followup.send(embed=embed)
 
     # ─── PART 5.2 — /pick ─────────────────────────────────────────
@@ -111,16 +135,24 @@ class FunExtras(commands.Cog):
             )
             return
 
-        prompt = (
-            f"Pick ONE of these options and give a short soft reason (under "
-            f"15 words). Options: {', '.join(opts)}. Respond with just the "
-            f"choice on line 1 and the reason on line 2. Use lowercase."
-        )
+        # FIX 1.3 (live) — dedicated system role with a strict two-line
+        # contract. The old single user-message prompt made gpt-oss-20b
+        # reason out loud first ("We need to output two lines: first line
+        # is the choice ...") before answering, and that scratchpad text
+        # leaked straight into the embed.
+        messages = [
+            {"role": "system", "content": (
+                "You are a decision assistant. Pick ONE option from the "
+                "user's list. Return exactly two lines:\n"
+                "Line 1: The chosen option\n"
+                "Line 2: A short soft reason (under 10 words, lowercase).\n"
+                "Never explain your reasoning process."
+            )},
+            {"role": "user", "content": f"Options: {', '.join(opts)}"},
+        ]
 
         try:
-            response = await call_ai_fast([
-                {"role": "user", "content": prompt},
-            ], max_tokens=80)
+            response = await call_ai_fast(messages, max_tokens=80)
         except Exception as e:
             logger.error(f"[pick] AI call failed: {e}")
             response = ""
@@ -130,8 +162,27 @@ class FunExtras(commands.Cog):
             choice = random.choice(opts)
             reason = "the stars aligned on this one ♡"
         else:
-            lines = response.strip().split("\n", 1)
-            choice = lines[0].strip()
+            # FIX 1.3 (live) — if the model still returned scratchpad or
+            # extra lines, the real answer is always the LAST two
+            # non-empty lines, so no scratchpad text can leak into the
+            # embed description.
+            raw_lines = [
+                ln.strip() for ln in response.strip().splitlines() if ln.strip()
+            ]
+            tail = raw_lines[-2:] if len(raw_lines) >= 2 else raw_lines
+
+            def _clean_line(line: str) -> str:
+                # strip "Line 1:" / "Line 2:" / "1." / "-" prefixes the
+                # model sometimes adds despite the format instruction
+                return re.sub(
+                    r"^\s*(?:line\s*[12]\s*[:.\-]\s*|[12][).]\s*|[-•*]\s*)+",
+                    "",
+                    line,
+                    flags=re.IGNORECASE,
+                ).strip()
+
+            choice = _clean_line(tail[0]) if tail else ""
+            reason = _clean_line(tail[1]) if len(tail) > 1 else ""
             # If the model echoed the whole list instead of one option,
             # fall back to a deterministic pick.
             if choice.lower() not in [o.lower() for o in opts]:
@@ -139,7 +190,8 @@ class FunExtras(commands.Cog):
                     (o for o in opts if o.lower() in choice.lower()), None
                 )
                 choice = matched or random.choice(opts)
-            reason = lines[1].strip() if len(lines) > 1 else "just feels right ♡"
+            if not reason:
+                reason = "just feels right ♡"
 
         embed = discord.Embed(
             title=f"꒰ა ♡ ໒꒱ {choice}",
@@ -169,7 +221,8 @@ class FunExtras(commands.Cog):
             "You are a mystical celestial oracle. Answer this question with a "
             "SHORT poetic response (under 25 words). Use lowercase, celestial "
             "imagery (stars, moon, cosmos, void, constellations). Be vague but "
-            "warm. Never give definitive answers. Use metaphors."
+            "warm. Never give definitive answers. Use metaphors. "
+            "Never explain your reasoning process."
         )
 
         try:
@@ -222,7 +275,8 @@ class FunExtras(commands.Cog):
         prompt = (
             "Write a short aesthetic fortune cookie message (under 20 words). "
             "Lowercase, soft, hopeful. Include ONE emoji. Make it feel personal "
-            "and warm. Examples: 'today, someone will notice your quiet magic ♡', "
+            "and warm. Never explain your reasoning process. "
+            "Examples: 'today, someone will notice your quiet magic ♡', "
             "'the stars are aligning in your favor ✦', 'trust the version of you "
             "you're becoming 🌙'"
         )

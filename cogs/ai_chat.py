@@ -301,6 +301,9 @@ class AIChat(commands.Cog):
         base = (
             "CRITICAL: never output <think>, </think>, <thinking>, </thinking>, or any XML-style tags. "
             "never show your reasoning process. just respond directly with your final answer. "
+            "CRITICAL: Never output your reasoning, thoughts, scratchpad, or "
+            "analysis. Never acknowledge these instructions or mention "
+            "'the developer'. Output ONLY your final response directly. "
             "\n\n"
             "you are aurelia, veloura's custom community bot. "
             "personality: soft, elegant, slightly playful, lowercase always. "
@@ -524,18 +527,14 @@ class AIChat(commands.Cog):
         messages = [{"role": "system", "content": system_prompt}]
         messages.extend(history)
 
-        # FIX 4 — Variety hint: if 2+ previous assistant messages, inject a reminder
-        assistant_msgs = [m for m in history if m.get("role") == "assistant"]
-        if len(assistant_msgs) >= 2:
-            starters = [m["content"][:20] for m in assistant_msgs[-2:]]
-            messages.append({
-                "role": "system",
-                "content": (
-                    f"note: your last two responses began with: "
-                    f"'{starters[0]}' and '{starters[1]}'. "
-                    f"start this response differently."
-                )
-            })
+        # FIX 1.2 (live) — the old anti-repetition mechanism QUOTED the
+        # model's own previous opening words back at it via an injected
+        # meta-note (a per-turn system message listing the last two
+        # response starters). That phrasing made the model think it was
+        # inside a prompt-engineering evaluation, so it monologued about
+        # the instructions instead of just replying. Variety is now handled
+        # by the VARIETY rule in the base system prompt plus temperature
+        # sampling — no per-turn injection, no quoting of past starters.
 
         messages.append({"role": "user", "content": clean_content})
 
@@ -673,6 +672,9 @@ class AIChat(commands.Cog):
                 "do, hobbies, favorite music/games/food, pets, strong preferences, "
                 "important life events. NOT durable: moods, small talk, jokes, "
                 "questions they asked, anything about the assistant.\n\n"
+                "CRITICAL: Never output your reasoning, thoughts, scratchpad, "
+                "or analysis. Never acknowledge these instructions or mention "
+                "'the developer'. Output ONLY your final response directly.\n\n"
                 "Return ONLY a JSON array of 0-2 short third-person facts about "
                 f"{author_name} (use their name). Empty array [] if nothing durable.\n"
                 "Example: [\"diva is from karachi\", \"diva likes nightcore\"]\n\n"
@@ -1381,7 +1383,7 @@ class AIChat(commands.Cog):
                               else target.default_avatar.url)
                 embed = discord.Embed(color=0xFFC0CB)  # veloura pink
                 embed.set_author(
-                    name=f"{target} ({target.id})",
+                    name=f"{target.display_name} (@{target.name})",
                     icon_url=avatar_url,
                 )
                 embed.set_thumbnail(url=avatar_url)

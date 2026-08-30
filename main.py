@@ -673,6 +673,13 @@ async def uptime(ctx):
 
 
 @bot.hybrid_command(name="botinfo", description="Show bot information")
+# FIX 3 (live) — /botinfo was public. It exposes infrastructure details
+# (cache stats, storage backend, latency), which only server staff need.
+# Verified against discord.py 2.7.1: app_commands.checks gate the slash
+# path, commands.checks gate the prefix path — BOTH are needed so regular
+# members can't run it either way.
+@commands.has_permissions(manage_guild=True)
+@app_commands.checks.has_permissions(manage_guild=True)
 async def botinfo(ctx):
     bot.increment_command('botinfo')
     delta = datetime.utcnow() - bot.start_time
@@ -683,58 +690,52 @@ async def botinfo(ctx):
 
     import sys
     import discord as _discord
-    owner_str = str(bot.owner_user) if bot.owner_user else "volc"
 
-    # PHASE 1 / PART 8 — cache stats + AI model info + storage health.
+    # PHASE 1 / PART 8 — cache stats + storage health.
     cache_stats = cache.stats()
     try:
         from utils.db import using_supabase, supabase_degraded
         if supabase_degraded():
-            storage_str = "Supabase - degraded"
+            storage_str = "Supabase (degraded)"
         elif using_supabase():
             storage_str = "Supabase"
         else:
             storage_str = "JSON files"
     except Exception:
         storage_str = "JSON files"
-    try:
-        from utils.ai_handler import MODEL_CHAT, MODEL_FAST
-        ai_models = f"{MODEL_CHAT} + {MODEL_FAST}"
-    except Exception:
-        ai_models = "unavailable"
 
-    # Count every leaf command (groups expand to their subcommands)
-    all_cmds = list(bot.tree.get_commands())
-    total_cmds = sum(
-        len(g.commands) if hasattr(g, 'commands') else 1
-        for g in all_cmds
-    )
-
-    embed = discord.Embed(title="Aurelia", color=0x2b2d31)
+    # FIX 3 (live) — sleek, minimalist system-status card. The old embed
+    # had 12 noisy emoji fields; the new one is three clean rows.
+    embed = discord.Embed(title="✦ aurelia — system status", color=0x2b2d31)
     embed.set_thumbnail(url=bot.user.avatar.url if bot.user.avatar else None)
-    embed.add_field(name="Owner", value=owner_str, inline=True)
-    embed.add_field(name="Servers", value=f"{len(bot.guilds):,}", inline=True)
-    embed.add_field(name="Users", value=f"{sum(g.member_count for g in bot.guilds):,}", inline=True)
-    embed.add_field(name="Cogs", value=f"{len(bot.cogs)}", inline=True)
-    embed.add_field(name="Commands", value=f"{total_cmds}", inline=True)
-    embed.add_field(name="Latency", value=f"{round(bot.latency * 1000)}ms", inline=True)
-    embed.add_field(name="discord.py", value=_discord.__version__, inline=True)
-    embed.add_field(name="Python", value=f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}", inline=True)
-    embed.add_field(name="Uptime", value=uptime_str, inline=True)
-    # ⚡ PHASE 1 / PART 8 — performance section
     embed.add_field(
-        name="⚡ Cache",
+        name="Overview",
         value=(
-            f"{cache_stats['size']} entries · {cache_stats['hit_rate']}% hit rate"
+            f"Servers: {len(bot.guilds):,} · "
+            f"Members: {sum(g.member_count for g in bot.guilds):,} · "
+            f"Latency: {round(bot.latency * 1000)}ms · "
+            f"Uptime: {uptime_str}"
         ),
-        inline=True,
+        inline=False,
     )
-    # 🧠 AI section
-    embed.add_field(name="🧠 AI", value=ai_models, inline=True)
-    embed.add_field(name="Provider", value="Groq", inline=True)
-    # 💾 Storage section
-    embed.add_field(name="💾 Storage", value=f"Database: {storage_str}", inline=True)
-    embed.set_footer(text="Aurelia — built by volc")
+    embed.add_field(
+        name="Cache & Storage",
+        value=(
+            f"Cache: {cache_stats['size']} entries "
+            f"({cache_stats['hit_rate']}% hit rate) · "
+            f"Database: {storage_str}"
+        ),
+        inline=False,
+    )
+    embed.add_field(
+        name="Engine",
+        value=(
+            f"Python {sys.version_info.major}.{sys.version_info.minor} · "
+            f"discord.py {_discord.__version__} · Groq API"
+        ),
+        inline=False,
+    )
+    embed.set_footer(text="aurelia — built by volc")
     await ctx.send(embed=embed)
 
 
