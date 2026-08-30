@@ -466,6 +466,29 @@ async def call_ai_fast(
     )
 
 
+async def call_ai_reasoning(
+    messages: list,
+    max_tokens: int = 1000,
+    temperature: float = 0.6
+) -> str:
+    """FIX 1.5 — heavy reasoning path: uses the BIG model
+    (openai/gpt-oss-120b) for tasks that need real comprehension and
+    structured output — channel recaps, deep digests, complex analysis.
+
+    Distinct from call_ai_fast on purpose: summaries routed through the
+    small chat model previously came back with the conversational
+    "i'm here. what's on your mind?" fallback when the model didn't
+    understand the task. The reasoning model gets a generous default
+    token budget (1000) so its internal chain-of-thought can't starve
+    the visible answer."""
+    return await call_ai(
+        messages,
+        model=MODEL_REASONING,
+        max_tokens=max_tokens,
+        temperature=temperature,
+    )
+
+
 # PHASE 3C — Smart model routing based on message content + intent
 def pick_model(message_content: str, intent: str = "chat") -> str:
     """Pick the right Groq model based on complexity.

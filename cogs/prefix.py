@@ -302,20 +302,18 @@ class Prefix(commands.Cog):
 
     async def _handle_simple(self, message, cmd, args, args_str):
         if cmd == "help":
-            prefix = await self._get_prefix(message.guild.id) or "@cyn"
+            prefix = await self._get_prefix(message.guild.id) or "@aurelia"
             help_text = (
-                f"**cyn commands** (prefix: `{prefix}`)\n"
+                f"**aurelia commands** (prefix: `{prefix}`)\n"
                 f"also available as slash commands (`/help` for full menu)\n\n"
                 f"**AI Chat**\n"
-                f"`{prefix}` + any question → talk to cyn\n\n"
+                f"`{prefix}` + any question → talk to aurelia\n\n"
                 f"**Welcome**\n"
-                f"`{prefix}welcome config welcome_channel #channel`\n"
-                f"`{prefix}welcome config welcome_message [text]`\n"
-                f"`{prefix}welcome config goodbye_message [text]`\n"
-                f"`{prefix}welcome config welcome_dm [text]`\n"
-                f"`{prefix}welcome config welcome_toggle on/off`\n"
-                f"`{prefix}welcome test welcome/goodbye/dm`\n"
-                f"`{prefix}welcome show`\n\n"
+                f"`{prefix}welcome channel #channel`\n"
+                f"`{prefix}welcome message [text]`\n"
+                f"`{prefix}welcome test`\n"
+                f"`{prefix}goodbye channel #channel` / `{prefix}goodbye message [text]`\n"
+                f"(slash commands offer more: `/welcome set ...`)\n\n"
                 f"**Moderation**\n"
                 f"`{prefix}warnings add @user [reason]`\n"
                 f"`{prefix}warnings list @user`\n"
@@ -326,6 +324,7 @@ class Prefix(commands.Cog):
                 f"**Utility**\n"
                 f"`{prefix}ping` — latency\n"
                 f"`{prefix}uptime` — bot uptime\n"
+                f"`{prefix}botinfo` — bot info\n"
                 f"`{prefix}weather [city]` — weather\n"
                 f"`{prefix}prefix set/remove/list` — manage prefix\n\n"
                 f"**Fun**\n"
@@ -355,7 +354,7 @@ class Prefix(commands.Cog):
 
         if cmd == "botinfo":
             await message.reply(
-                f"cyn — AI Discord companion\n"
+                f"aurelia — veloura's AI companion\n"
                 f"servers: {len(self.bot.guilds)}\n"
                 f"users: {sum(g.member_count for g in self.bot.guilds)}\n"
                 f"latency: {round(self.bot.latency * 1000)}ms"
@@ -400,7 +399,7 @@ class Prefix(commands.Cog):
         if sub == "remove":
             await set_guild_setting_async(message.guild.id, "prefix_settings", {"prefix": None})
             self._invalidate_cache(message.guild.id)
-            await message.reply("custom prefix removed. use @mention to talk to cyn.")
+            await message.reply("custom prefix removed. use @mention to talk to aurelia.")
             return
 
         # Show current
@@ -408,14 +407,14 @@ class Prefix(commands.Cog):
         if prefix:
             await message.reply(f"current prefix: `{prefix}`\nusage: `{prefix}hello`")
         else:
-            await message.reply("no custom prefix set. use @mention to talk to cyn.")
+            await message.reply("no custom prefix set. use @mention to talk to aurelia.")
 
     # ==================== /prefix slash command group ====================
 
     prefix_group = app_commands.Group(name="prefix", description="Custom prefix settings")
 
     @prefix_group.command(name="set", description="Set a custom prefix for AI chat")
-    @app_commands.describe(prefix="The prefix (e.g. 'cyn.' or 'c!')")
+    @app_commands.describe(prefix="The prefix (e.g. 'aurelia.' or 'a!')")
     @app_commands.checks.has_permissions(manage_guild=True)
     async def prefix_set(self, interaction: discord.Interaction, prefix: str):
         self.bot.increment_command('prefix_set')
@@ -442,7 +441,7 @@ class Prefix(commands.Cog):
             await set_guild_setting_async(interaction.guild_id, "prefix_settings", {"prefix": None})
             self._invalidate_cache(interaction.guild_id)
             await interaction.followup.send(
-                "✅ custom prefix removed. use @mention to talk to cyn.",
+                "✅ custom prefix removed. use @mention to talk to aurelia.",
                 ephemeral=True
             )
         except Exception as e:
@@ -460,7 +459,7 @@ class Prefix(commands.Cog):
             )
         else:
             await interaction.followup.send(
-                "no custom prefix set. use @mention to talk to cyn.",
+                "no custom prefix set. use @mention to talk to aurelia.",
                 ephemeral=True
             )
 

@@ -42,7 +42,12 @@ from utils.veloura_embeds import veloura_embed, COLOR_LAVENDER, COLOR_PINK
 
 logger = logging.getLogger('cyn.giveaways')
 
-BUTTON_PREFIX = "gw:"
+# FIX Part 5.4 — new buttons use the explicit "giveaway:" custom_id
+# prefix so they can never collide with other persistent buttons
+# (onboarding uses "onboard:", self-roles "veloura_sr:"). Older
+# giveaways still carry "gw:" buttons, so BOTH prefixes are accepted.
+BUTTON_PREFIX = "giveaway:"
+LEGACY_BUTTON_PREFIX = "gw:"
 
 _DURATION_UNITS = {
     's': 1, 'm': 60, 'h': 3600, 'd': 86400, 'w': 604800,
@@ -130,9 +135,14 @@ class Giveaways(commands.Cog):
         if data.get("component_type") != 2:  # button
             return
         custom_id = data.get("custom_id", "") or ""
-        if not custom_id.startswith(BUTTON_PREFIX):
+        # FIX Part 5.4 — accept both the new "giveaway:" prefix and the
+        # legacy "gw:" prefix (buttons already live in Discord messages).
+        if custom_id.startswith(BUTTON_PREFIX):
+            gw_id = custom_id[len(BUTTON_PREFIX):]
+        elif custom_id.startswith(LEGACY_BUTTON_PREFIX):
+            gw_id = custom_id[len(LEGACY_BUTTON_PREFIX):]
+        else:
             return
-        gw_id = custom_id[len(BUTTON_PREFIX):]
         gw = await asyncio.to_thread(get_giveaway, gw_id)
         if not gw:
             try:
@@ -177,6 +187,10 @@ class Giveaways(commands.Cog):
         entries.append(str(interaction.user.id))
         gw['entries'] = entries
         await save_giveaway_async(gw)
+        logger.info(
+            f"[giveaways] {gw_id}: {interaction.user.id} entered — "
+            f"{len(entries)} entrant(s) total"
+        )
         try:
             await interaction.response.send_message(
                 f"you're in ✦ ({len(entries)} entrants)",
@@ -207,11 +221,23 @@ class Giveaways(commands.Cog):
         if ended:
             status = "ended"
             winners = gw.get('winner_ids') or []
+            entries = gw.get('entries') or []
             if winners:
                 mentions = " ".join(f"<@{w}>" for w in winners[:10])
-                outcome = f"winner{'s' if len(winners) != 1 else ''}: {mentions}"
+                outcome = (
+                    f"winner{'s' if len(winners) != 1 else ''}: {mentions}\n"
+                    f"entries: {len(entries)} · winners: {len(winners)}"
+                )
+            elif entries:
+                # FIX 1.6 — entries existed but nobody passed validation:
+                # say WHY instead of a vague "no valid entrants won".
+                outcome = (
+                    f"no entries met the requirements "
+                    f"(needed: {self._requirements_text(gw, guild)})\n"
+                    f"entries: {len(entries)} · winners: 0"
+                )
             else:
-                outcome = "no valid entrants won"
+                outcome = "nobody entered this one ༉‧₊˚"
             desc = (
                 f"**prize:** {gw.get('prize', 'something nice')}\n"
                 f"{outcome}"
@@ -278,25 +304,68 @@ class Giveaways(commands.Cog):
             channel = None
 
         entries = [str(e) for e in (gw.get('entries') or [])]
+        # FIX 1.6 — debug logging at draw time: exactly what the draw saw.
+        logger.info(
+            f"[giveaways] drawing {gw.get('id')}: {len(entries)} entrant(s) "
+            f"→ {entries}"
+        )
         winners = []
         if entries:
-            # re-validate every entrant, then sample
-            valid = []
-            for uid in set(entries):
-                member = guild.get_member(int(uid))
-                if not member:
-                    try:
-                        member = await guild.fetch_member(int(uid))
-                    except (discord.NotFound, discord.Forbidden, discord.HTTPException):
-                        member = None
-                if not member:
-                    continue
-                ok, _ = await self._check_requirements(member, gw)
-                if ok:
-                    valid.append(uid)
+            has_requirements = bool(
+                gw.get('required_role_id')
+                or int(gw.get('min_account_days') or 0) > 0
+                or int(gw.get('min_level') or 0) > 0
+            )
+            if not has_requirements:
+                # FIX 1.6 — no requirements at all: every entry qualifies.
+                # Skip member re-validation entirely — a failed member
+                # fetch used to silently drop EVERY entry and the draw
+                # came back "no valid entrants won".
+                valid = list(set(entries))
+                logger.info(
+                    f"[giveaways] {gw.get('id')}: no requirements — "
+                    f"all {len(valid)} entrant(s) qualify"
+                )
+            else:
+                # re-validate every entrant, then sample
+                valid = []
+                for uid in set(entries):
+                    member = guild.get_member(int(uid))
+                    if not member:
+                        try:
+                            member = await guild.fetch_member(int(uid))
+                        except (discord.NotFound, discord.Forbidden,
+                                discord.HTTPException):
+                            member = None
+                        except Exception as e:
+                            logger.warning(
+                                f"[giveaways] {gw.get('id')}: fetch_member "
+                                f"{uid} failed: {type(e).__name__}: {e}"
+                            )
+                            member = None
+                    if not member:
+                        logger.info(
+                            f"[giveaways] {gw.get('id')}: entrant {uid} "
+                            f"skipped — no longer in the server"
+                        )
+                        continue
+                    ok, why = await self._check_requirements(member, gw)
+                    if ok:
+                        valid.append(uid)
+                    else:
+                        logger.info(
+                            f"[giveaways] {gw.get('id')}: entrant {uid} "
+                            f"failed validation — {why}"
+                        )
             count = int(gw.get('winners_count') or 1)
             if valid:
                 winners = random.sample(valid, min(count, len(valid)))
+            else:
+                logger.warning(
+                    f"[giveaways] {gw.get('id')}: {len(entries)} entrant(s) "
+                    f"but 0 passed validation (needed: "
+                    f"{self._requirements_text(gw, guild)})"
+                )
 
         gw['ended'] = True
         gw['winner_ids'] = winners
@@ -494,18 +563,33 @@ class Giveaways(commands.Cog):
             return
         await interaction.response.defer()
         guild = interaction.guild
-        valid = []
-        for uid in set(entries):
-            member = guild.get_member(int(uid))
-            if not member:
-                try:
-                    member = await guild.fetch_member(int(uid))
-                except (discord.NotFound, discord.Forbidden, discord.HTTPException):
-                    member = None
-            if member:
-                ok, _ = await self._check_requirements(member, gw)
-                if ok:
-                    valid.append(uid)
+        entries = [str(e) for e in (gw.get('entries') or [])]
+        has_requirements = bool(
+            gw.get('required_role_id')
+            or int(gw.get('min_account_days') or 0) > 0
+            or int(gw.get('min_level') or 0) > 0
+        )
+        if not has_requirements:
+            # FIX 1.6 — no requirements: every entry qualifies, no
+            # member re-validation needed (same fast path as the draw).
+            valid = list(set(entries))
+            logger.info(
+                f"[giveaways] reroll {gw.get('id')}: no requirements — "
+                f"all {len(valid)} entrant(s) qualify"
+            )
+        else:
+            valid = []
+            for uid in set(entries):
+                member = guild.get_member(int(uid))
+                if not member:
+                    try:
+                        member = await guild.fetch_member(int(uid))
+                    except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                        member = None
+                if member:
+                    ok, _ = await self._check_requirements(member, gw)
+                    if ok:
+                        valid.append(uid)
         if not valid:
             await interaction.followup.send("no valid entrants to reroll.")
             return

@@ -176,6 +176,13 @@ ALTER TABLE public.welcome_settings
   ADD COLUMN IF NOT EXISTS welcome_image TEXT;
 ALTER TABLE public.welcome_settings
   ADD COLUMN IF NOT EXISTS welcome_color TEXT DEFAULT '#FFC0CB';
+-- PART 2 (welcome rework) — title / thumbnail source / footer template
+ALTER TABLE public.welcome_settings
+  ADD COLUMN IF NOT EXISTS welcome_title TEXT;
+ALTER TABLE public.welcome_settings
+  ADD COLUMN IF NOT EXISTS welcome_thumbnail TEXT DEFAULT 'avatar';
+ALTER TABLE public.welcome_settings
+  ADD COLUMN IF NOT EXISTS welcome_footer TEXT DEFAULT '{membercount} members ♡';
 
 -- Leveling settings
 ALTER TABLE public.leveling_settings
@@ -214,7 +221,10 @@ CREATE TABLE IF NOT EXISTS public.welcome_settings (
   embed_mode TEXT DEFAULT 'embed',
   dm_message TEXT,
   welcome_image TEXT,
-  welcome_color TEXT DEFAULT '#FFC0CB'
+  welcome_color TEXT DEFAULT '#FFC0CB',
+  welcome_title TEXT,
+  welcome_thumbnail TEXT DEFAULT 'avatar',
+  welcome_footer TEXT DEFAULT '{membercount} members ♡'
 );
 GRANT ALL ON public.welcome_settings TO anon;
 ALTER TABLE public.welcome_settings DISABLE ROW LEVEL SECURITY;

@@ -191,11 +191,42 @@ class AIAutoMod(commands.Cog):
             if message.content.startswith(('!', '/', '-')):
                 return
 
+            # PART 5.2 — never interfere with other systems' messages:
+            # (a) @Aurelia mention → the AI chat pipeline owns it
+            if self.bot.user and self.bot.user in message.mentions:
+                return
+            # (b) guild custom prefix → the prefix cog owns it
+            prefix_cog = self.bot.get_cog("Prefix")
+            if prefix_cog and hasattr(prefix_cog, "_get_prefix"):
+                try:
+                    pfx = await prefix_cog._get_prefix(message.guild.id)
+                    if pfx and message.content.lower().startswith(
+                            str(pfx).lower()):
+                        return
+                except Exception:
+                    pass
+
             cfg = await self._get_config(message.guild.id)
             if not cfg.get('enabled'):
                 return
             if not self._heuristic_trips(message.content):
                 return
+
+            # (c) custom commands → the custom-commands cog owns it. Only
+            # checked when the heuristic already tripped (rare), so the
+            # table lookup is effectively free.
+            custom_cog = self.bot.get_cog("CustomCommands")
+            if custom_cog:
+                try:
+                    content = message.content.strip().lower()
+                    table = custom_cog._cache.get(message.guild.id)
+                    if table:
+                        if content in table or any(
+                                ' ' in t and content.startswith(t + ' ')
+                                for t in table):
+                            return
+                except Exception:
+                    pass
 
             # ── classify via fast model ──
             raw = await call_ai_fast(

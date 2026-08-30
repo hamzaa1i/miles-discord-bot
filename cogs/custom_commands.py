@@ -110,10 +110,30 @@ class CustomCommands(commands.Cog):
             guild_id = message.guild.id
             if guild_id in self._empty_guilds:
                 return
+            content_raw = message.content.strip()
+
+            # PART 5.1 — integration guards: never reply to something
+            # another system owns.
+            # (a) @Aurelia mention → the AI chat pipeline owns it
+            if self.bot.user:
+                if (content_raw.startswith(f"<@{self.bot.user.id}>")
+                        or content_raw.startswith(f"<@!{self.bot.user.id}>")):
+                    return
+            # (b) guild custom prefix → the prefix cog owns it (cached read,
+            #     no DB hit after the first lookup per guild)
+            prefix_cog = self.bot.get_cog("Prefix")
+            if prefix_cog and hasattr(prefix_cog, "_get_prefix"):
+                try:
+                    pfx = await prefix_cog._get_prefix(guild_id)
+                    if pfx and content_raw.lower().startswith(str(pfx).lower()):
+                        return
+                except Exception:
+                    pass
+
             table = await self._aload_triggers(guild_id)
             if not table:
                 return
-            content = message.content.strip().lower()
+            content = content_raw.strip().lower()
             if not content:
                 return
             # exact match first (O(1)), then prefix match for multi-word

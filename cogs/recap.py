@@ -2,8 +2,20 @@
 cogs/recap.py — PHASE 4 Feature 3: /recap channel AI digest.
 
 "what did i miss?" — fetches the last N hours of a channel's messages,
-sends the transcript to the big model, and returns an aesthetic digest:
-topics discussed, most active people, and the overall mood.
+sends the transcript to the big reasoning model, and returns an aesthetic
+digest: topics discussed, most active people, and the overall mood.
+
+FIX 1.5 — /recap used to route through call_ai (the casual chat model
+with a small token budget). When the model didn't recognize the task it
+replied with Aurelia's conversational fallback ("i'm here. what's on
+your mind?") instead of an actual summary. Now:
+  * the digest runs on call_ai_reasoning (the BIG model, gpt-oss-120b)
+    with a generous 1200-token budget
+  * the prompt is an explicit summarization instruction (topics /
+    participants / mood, bullet points) — nothing conversational
+  * the canned greeting / error strings are treated as failures and the
+    call is retried ONCE with a hard format instruction before giving up
+  * fewer than 3 qualifying messages → "not enough activity to summarize"
 
 Named /recap (not /summarize) because ai_features.py already ships a
 /summarize command that summarizes pasted TEXT — this one summarizes a
@@ -25,29 +37,57 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 from typing import Optional
-from utils.ai_handler import call_ai
+from utils.ai_handler import call_ai_reasoning
 from utils.veloura_embeds import veloura_embed, COLOR_PINK
 
 logger = logging.getLogger('cyn.recap')
 
+# FIX 1.5 — explicit, non-conversational summarization prompt. The old
+# prompt still let the model slip into "chat mode"; this one demands
+# bullet-point structure with topics, participants, and mood.
 _SUMMARY_PROMPT = (
-    "You summarize Discord channel transcripts for people who were away. "
-    "Write in lowercase, soft and slightly playful, but stay INFORMATIVE — "
-    "this is a digest, not a performance.\n\n"
+    "Summarize this conversation. Extract main topics, active "
+    "participants, and overall mood. Format as bullet points.\n\n"
     "Structure your reply EXACTLY as markdown like this:\n"
     "topics:\n"
     "- <topic one line>\n"
     "- <topic one line>\n"
+    "\n"
+    "who was active:\n"
+    "- <participant names>\n"
     "\n"
     "vibe: <one sentence on the overall mood of the chat>\n"
     "\n"
     "highlights:\n"
     "- <anything funny, important, or worth knowing>\n"
     "\n"
-    "Rules: 2-4 topics, 1-2 highlights. Mention usernames when relevant. "
-    "Never invent things that aren't in the transcript. If the transcript "
-    "is too thin to summarize, say so in one short line instead."
+    "Write in lowercase, soft and slightly playful, but stay INFORMATIVE — "
+    "this is a digest, not a performance. Rules: 2-4 topics, 1-2 "
+    "highlights. Mention usernames when relevant. Never invent things "
+    "that aren't in the transcript. Do NOT greet anyone, do NOT ask a "
+    "question back — output ONLY the summary."
 )
+
+# FIX 1.5 — second-chance prompt when the first call came back with a
+# canned conversational line instead of a summary.
+_RETRY_FORMAT_INSTRUCTION = (
+    "Your previous reply was a conversational greeting, not a summary. "
+    "Reply with ONLY the markdown summary in the exact structure "
+    "requested (topics / who was active / vibe / highlights). "
+    "No greetings, no questions."
+)
+
+# FIX 1.5 — responses that mean "the model didn't summarize" — retry once.
+_CANNED_RESPONSES = (
+    "i'm here. what's on your mind?",
+    "something broke",
+    "at capacity",
+)
+
+
+def _is_canned(text: str) -> bool:
+    lowered = (text or "").strip().lower()
+    return (not lowered) or any(sig in lowered for sig in _CANNED_RESPONSES)
 
 
 class Recap(commands.Cog):
@@ -108,35 +148,57 @@ class Recap(commands.Cog):
             )
             return
 
-        if len(lines) < 5:
+        # FIX 1.5 — 3 qualifying messages is enough activity to summarize
+        # (was 5, which made busy-but-short windows refuse).
+        if len(lines) < 3:
             await interaction.followup.send(
-                f"not enough conversation in {target_channel.mention} in the "
-                f"last {hours_val}h to recap ༉‧₊˚"
+                f"not enough activity in {target_channel.mention} in the "
+                f"last {hours_val}h to summarize ༉‧₊˚"
             )
             return
 
         transcript = "\n".join(lines)[-12000:]  # keep the most recent 12k chars
 
-        # ── AI digest ──
+        # ── AI digest — FIX 1.5: BIG model + retry on canned greeting ──
+        user_msg = (
+            f"Channel: #{target_channel.name} in the last "
+            f"{hours_val} hours.\n\nTranscript:\n{transcript}"
+        )
+        result = None
         try:
-            result = await call_ai(
+            result = await call_ai_reasoning(
                 [
                     {"role": "system", "content": _SUMMARY_PROMPT},
-                    {"role": "user",
-                     "content": f"Channel: #{target_channel.name} in the last "
-                                f"{hours_val} hours.\n\nTranscript:\n{transcript}"},
+                    {"role": "user", "content": user_msg},
                 ],
-                max_tokens=800,
+                max_tokens=1200,
                 temperature=0.6,
             )
         except Exception as e:
             logger.error(f"[recap] AI call failed: {e}")
-            await interaction.followup.send(
-                "the recap broke on my end. try again in a minute.", ephemeral=True
-            )
-            return
 
-        if not result or "something broke" in result or "at capacity" in result:
+        # FIX 1.5 — a canned greeting / error line is NOT a summary.
+        # Retry once with an explicit format instruction.
+        if _is_canned(result):
+            logger.warning(
+                f"[recap] first attempt returned canned/empty content "
+                f"({(result or '')[:60]!r}) — retrying with format nudge"
+            )
+            try:
+                result = await call_ai_reasoning(
+                    [
+                        {"role": "system", "content": _SUMMARY_PROMPT},
+                        {"role": "user", "content": user_msg},
+                        {"role": "assistant", "content": (result or "")},
+                        {"role": "user", "content": _RETRY_FORMAT_INSTRUCTION},
+                    ],
+                    max_tokens=1600,
+                    temperature=0.4,
+                )
+            except Exception as e:
+                logger.error(f"[recap] retry AI call failed: {e}")
+
+        if _is_canned(result):
             await interaction.followup.send(
                 "the recap broke on my end. try again in a minute.", ephemeral=True
             )

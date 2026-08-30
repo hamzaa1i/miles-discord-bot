@@ -391,6 +391,7 @@ _TABLE_COLUMNS = {
         "goodbye_channel_id", "goodbye_message", "goodbye_enabled",
         "autorole_id", "welcome_reward", "welcomer_reward",
         "embed_mode", "dm_message", "welcome_image", "welcome_color",
+        "welcome_title", "welcome_thumbnail", "welcome_footer",
     },
     "log_settings": {
         "guild_id", "channel_id", "enabled",
@@ -631,13 +632,39 @@ def get_warnings(guild_id: int, user_id: int) -> list:
 
 
 def add_warning(guild_id: int, user_id: int, warning: dict) -> int:
-    """Add a warning and return the case ID."""
+    """Add a warning and return the case ID.
+
+    FIX 1.1 ("case #None") — the Supabase `warnings.case_id` column is a
+    plain nullable INT (NOT an identity/serial column), so an insert
+    without case_id comes back with case_id=null and the old code did
+    `result.data[0].get("case_id", 0)` → None (key present, value null).
+    The AI warn executor then printed "case #None".
+
+    Fix: generate the next per-guild case number CLIENT-SIDE (max + 1,
+    exactly like the JSON fallback), include it in the insert payload so
+    the stored row carries a real case number, and return it."""
     if _use_supabase:
         try:
+            # FIX 1.1 — next per-guild case number, computed client-side.
+            case_id = None
+            try:
+                top = _supabase.table("warnings").select("case_id").eq(
+                    "guild_id", str(guild_id)
+                ).order("case_id", desc=True).limit(1).execute()
+                if top.data:
+                    case_id = int(top.data[0].get("case_id") or 0) + 1
+                else:
+                    case_id = 1
+            except Exception:
+                case_id = None  # fall back to whatever the DB returns
             warning["guild_id"] = str(guild_id)
             warning["user_id"] = str(user_id)
+            if case_id:
+                warning["case_id"] = case_id
             result = _supabase.table("warnings").insert(warning).execute()
-            return result.data[0].get("case_id", 0) if result.data else 0
+            if result.data and result.data[0].get("case_id"):
+                return int(result.data[0]["case_id"])
+            return case_id or 0
         except Exception as e:
             error_key = "add_warning"
             if error_key not in _supabase_error_logged:

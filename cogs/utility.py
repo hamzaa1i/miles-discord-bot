@@ -83,8 +83,26 @@ def _safe_math_eval(expression: str) -> float:
 
 
 # ==================== Snipe cache ====================
+# FIX 1.4 — per-channel rolling cache of deleted messages.
+#   * limit raised 5 → 10 per channel
+#   * entries expire after SNIPE_TTL_SECONDS (5 minutes) — checked lazily
+#     on write AND on /snipe, so nothing needs a background timer
+#   * showing a snipe does NOT evict it; only the TTL removes entries
 snipe_cache: dict = {}
-SNAPE_MAX = 5
+SNAPE_MAX = 10
+SNIPE_TTL_SECONDS = 300  # 5 minutes
+
+
+def _prune_snipe_cache(cache: list):
+    """Drop entries older than the TTL (in place). Lazy — called on write
+    and on read, so no background loop is needed."""
+    import datetime as _dt
+    now = _dt.datetime.utcnow()
+    cache[:] = [
+        e for e in cache
+        if isinstance(e, dict) and e.get('deleted_at')
+        and (now - e['deleted_at']).total_seconds() <= SNIPE_TTL_SECONDS
+    ]
 
 
 class Utility(commands.Cog):
@@ -106,6 +124,7 @@ class Utility(commands.Cog):
             'attachments': [a.url for a in message.attachments],
         }
         cache = snipe_cache.setdefault(message.channel.id, [])
+        _prune_snipe_cache(cache)
         cache.insert(0, entry)
         if len(cache) > SNAPE_MAX:
             cache[:] = cache[:SNAPE_MAX]
@@ -128,37 +147,52 @@ class Utility(commands.Cog):
             except discord.InteractionResponded:
                 await interaction.followup.send(f"couldn't evaluate: `{e}`", ephemeral=True)
 
-    @app_commands.command(name="snipe", description="Show the nth most recent deleted message (1=most recent)")
+    @app_commands.command(name="snipe", description="Show a recently deleted message (1=most recent)")
+    @app_commands.describe(index="Which deleted message to show (1=most recent, 10=oldest)")
     async def snipe(self, interaction: discord.Interaction, index: int = 1):
         self.bot.increment_command('snipe')
         cache = snipe_cache.get(interaction.channel.id, [])
+        # FIX 1.4 — lazy TTL pruning, then show the most recent entry by
+        # default (index 1). Showing does NOT evict; the TTL handles expiry.
+        _prune_snipe_cache(cache)
         if not cache:
             try:
-                await interaction.response.send_message("nothing to snipe here.", ephemeral=True)
+                await interaction.response.send_message(
+                    "no recently deleted messages here (snipes expire after "
+                    f"{SNIPE_TTL_SECONDS // 60} minutes).",
+                    ephemeral=True,
+                )
             except discord.InteractionResponded:
                 pass
             return
         if index < 1 or index > len(cache):
             try:
                 await interaction.response.send_message(
-                    f"index out of range. only {len(cache)} snipe(s) cached (max {SNAPE_MAX}).",
+                    f"index out of range. only {len(cache)} snipe(s) cached "
+                    f"(max {SNAPE_MAX}, newest first).",
                     ephemeral=True
                 )
             except discord.InteractionResponded:
                 pass
             return
         entry = cache[index - 1]
+        deleted_ts = entry['deleted_at']
         embed = discord.Embed(
             description=entry['content'][:2048] or "*empty*",
             color=COLOR_ERROR,
-            timestamp=entry['deleted_at']
+            timestamp=deleted_ts
         )
         embed.set_author(name=entry['author_name'], icon_url=entry.get('author_avatar'))
+        # FIX 1.4 — show the deletion time in the footer (plus which snipe
+        # of how many this is).
         embed.set_footer(
-            text=f"Showing snipe {index} of {min(SNAPE_MAX, len(cache))} • This message was deleted"
+            text=(
+                f"deleted {deleted_ts.strftime('%H:%M:%S')} UTC "
+                f"· snipe {index} of {len(cache)}"
+            )
         )
         if entry.get('attachments'):
-            embed.add_field(name="Attachments", value="\n".join(entry['attachments']), inline=False)
+            embed.add_field(name="Attachments", value="\n".join(entry['attachments'])[:1024], inline=False)
         try:
             await interaction.response.send_message(embed=embed)
         except discord.InteractionResponded:

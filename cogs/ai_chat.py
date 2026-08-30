@@ -521,10 +521,21 @@ class AIChat(commands.Cog):
 
     # PHASE 4 — AI long-term memory ──────────────────────────────
 
-    # Per-user message counter: run fact extraction every 4th message so
-    # we don't burn a Groq call on every single chat message.
-    _FACT_EVERY_N_MESSAGES = 4
-    _FACT_MIN_USER_MSG_LEN = 40
+    # Per-user message counter: run fact extraction on a sampled cadence.
+    # FIX 1.3 — extraction used to fire only every 4th message with a
+    # 40-char minimum, so short personal messages like "im from london"
+    # (14 chars) NEVER triggered it and /memory show stayed empty. Now:
+    #   * sampled extraction runs on every 2nd message (min 20 chars), and
+    #   * ANY message containing a personal indicator ("i'm", "my",
+    #     "i play", ...) triggers extraction immediately, even short ones.
+    _FACT_EVERY_N_MESSAGES = 2
+    _FACT_MIN_USER_MSG_LEN = 20
+    _FACT_INDICATOR_MIN_LEN = 6
+    _PERSONAL_INDICATORS = (
+        "i am", "i'm", "im ", "my ", "i like", "i love", "i play",
+        "i live", "i work", "i go to", "i study", "i have a",
+        "i'm from", "im from", "my name", "my fav",
+    )
 
     async def _maybe_extract_facts(self, guild_id: int, user_id: int,
                                    author_name: str, user_msg: str,
@@ -532,19 +543,41 @@ class AIChat(commands.Cog):
         """Sampled background task: extract durable facts about the user
         from this exchange and store them in user_memory.
 
-        Sampled (every 4th message per user, min 40 chars) so API cost stays
-        low. Everything is wrapped — a failure here must NEVER surface to
+        FIX 1.3 — triggers when EITHER:
+          * it's the user's 2nd (4th, 6th, ...) message and it's ≥ 20 chars, OR
+          * the message contains a personal indicator ("i'm from london",
+            "my favorite color is black", "i play valorant") — extracted
+            immediately regardless of the message counter.
+        Everything is wrapped — a failure here must NEVER surface to
         the user or break the chat pipeline."""
         try:
             if not guild_id or not user_id:
                 return
-            if not user_msg or len(user_msg) < self._FACT_MIN_USER_MSG_LEN:
+            if not user_msg:
+                return
+            msg_len = len(user_msg)
+            low = user_msg.lower()
+            has_indicator = any(
+                ind in low for ind in self._PERSONAL_INDICATORS
+            )
+            # sampled path: every Nth message with a minimum length
+            sampled_ok = msg_len >= self._FACT_MIN_USER_MSG_LEN
+            # indicator path: short personal messages still count
+            indicator_ok = (
+                has_indicator and msg_len >= self._FACT_INDICATOR_MIN_LEN
+            )
+            if not (sampled_ok or indicator_ok):
                 return
             counter = self._fact_msg_counters.get(user_id, 0) + 1
             self._fact_msg_counters[user_id] = counter
-            if counter % self._FACT_EVERY_N_MESSAGES != 0:
+            is_nth = counter % self._FACT_EVERY_N_MESSAGES == 0
+            if not (is_nth or indicator_ok):
                 return
-            logger.info(f"[memory] extracting facts after message {counter}")
+            trigger = "indicator" if (indicator_ok and not is_nth) else "sampled"
+            logger.info(
+                f"[memory] extracting facts after message {counter} "
+                f"(trigger: {trigger})"
+            )
 
             import json as _json
             prompt = (
@@ -590,6 +623,10 @@ class AIChat(commands.Cog):
                 return
             if not isinstance(facts, list):
                 return
+            # FIX 1.3 — spec logging: how many facts came out, and for whom.
+            logger.info(
+                f"[MEMORY] extracted {len(facts)} fact(s) for user {user_id}"
+            )
             logger.info(f"[memory] extracted: {facts}")
 
             from utils.db import add_user_fact_async
@@ -987,10 +1024,18 @@ class AIChat(commands.Cog):
 
                     logger.info(f"[WARN] ✅ Successfully warned {target_name} (case #{case_id})")
 
-                    await self._safe_reply(
-                        message,
-                        f"warned **{target_name}**. case #{case_id}. reason: {warn_reason}"
-                    )
+                    # FIX 1.1 — never print "case #None": if the store
+                    # couldn't give us a case number, still confirm the warn.
+                    if case_id:
+                        await self._safe_reply(
+                            message,
+                            f"warned **{target_name}**. case #{case_id}. reason: {warn_reason}"
+                        )
+                    else:
+                        await self._safe_reply(
+                            message,
+                            f"warned **{target_name}**. reason: {warn_reason}"
+                        )
 
                 view = ModConfirmView(
                     action="warn", target=None, reason=warn_reason,
@@ -1232,13 +1277,71 @@ class AIChat(commands.Cog):
                 await self._safe_reply(message, embed=embed)
                 return True
 
-            if intent == 'avatar':
+            if intent == 'whois':
+                # FIX 1.2 — whois used to fall through to the generic AI
+                # response ("diva is a member of this server...") because
+                # there was NO whois executor. Build a real profile embed
+                # modeled on /whois in cogs/server_stats.py, with the
+                # veloura aesthetic color.
                 target = resolve_user() or author
-                embed = discord.Embed(title=f"{target.display_name}'s avatar", color=0x1a1a2e)
-                if target.avatar:
-                    embed.set_image(url=target.avatar.url)
-                else:
-                    embed.set_image(url=target.default_avatar.url)
+                avatar_url = (target.avatar.url if target.avatar
+                              else target.default_avatar.url)
+                embed = discord.Embed(color=0xFFC0CB)  # veloura pink
+                embed.set_author(
+                    name=f"{target} ({target.id})",
+                    icon_url=avatar_url,
+                )
+                embed.set_thumbnail(url=avatar_url)
+                # joined / created (Member-only fields guard for User)
+                joined = getattr(target, 'joined_at', None)
+                embed.add_field(
+                    name="Joined",
+                    value=joined.strftime('%b %d, %Y') if joined else 'unknown',
+                    inline=True,
+                )
+                created = getattr(target, 'created_at', None)
+                embed.add_field(
+                    name="Created",
+                    value=created.strftime('%b %d, %Y') if created else 'unknown',
+                    inline=True,
+                )
+                # roles (top 5, excluding @everyone) + top role
+                if isinstance(target, discord.Member):
+                    roles = [r for r in target.roles if not r.is_default()]
+                    top5 = sorted(roles, reverse=True)[:5]
+                    embed.add_field(
+                        name=f"Roles ({len(roles)})",
+                        value=" ".join(r.mention for r in top5) if top5 else "none",
+                        inline=True,
+                    )
+                    top_role = target.top_role
+                    embed.add_field(
+                        name="Top Role",
+                        value=top_role.mention if top_role and not top_role.is_default() else "none",
+                        inline=True,
+                    )
+                    embed.add_field(
+                        name="Booster",
+                        value="yes ♡" if target.premium_since else "no",
+                        inline=True,
+                    )
+                embed.add_field(name="User ID", value=str(target.id), inline=True)
+                embed.set_footer(text=f"aurelia • whois")
+                await self._safe_reply(message, embed=embed)
+                return True
+
+            if intent == 'avatar':
+                # FIX 1.2 / Part 6.2 — proper avatar embed (was a bare
+                # 0x1a1a2e embed with no footer): veloura pink + user ID.
+                target = resolve_user() or author
+                avatar_url = (target.avatar.url if target.avatar
+                              else target.default_avatar.url)
+                embed = discord.Embed(
+                    title=f"{target.display_name}'s avatar",
+                    color=0xFFC0CB,  # veloura pink
+                )
+                embed.set_image(url=avatar_url)
+                embed.set_footer(text=f"user id: {target.id}")
                 await self._safe_reply(message, embed=embed)
                 return True
 

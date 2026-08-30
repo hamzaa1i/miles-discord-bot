@@ -19,6 +19,11 @@ CATEGORIES = {
             ("@aurelia <message>", "Chat naturally with Aurelia via mention"),
             ("/aurelia <message>", "Slash alternative to @mention"),
             ("/summarize <text>", "Summarize text in 3-5 bullets"),
+            ("/recap [channel] [hours]", "AI digest of what happened in a channel"),
+            ("/memory show [user]", "See what aurelia remembers (staff can view others)"),
+            ("/memory clear", "Erase everything aurelia remembers about you"),
+            ("/proactive toggle <on|off>", "Let aurelia speak on her own (staff)"),
+            ("/proactive channel <#channel>", "Add/remove a proactive channel (staff)"),
             ("/translate <language> <text>", "Translate text to a language"),
             ("/explain <topic>", "Explain a topic like you're 12"),
             ("/advice <situation>", "Blunt, sarcastic advice"),
@@ -64,12 +69,16 @@ CATEGORIES = {
             ("/mod antilink [on/off] [channel]", "Block non-Discord links"),
             ("/mod tempban @user [duration] [reason]", "Temp ban with auto-unban"),
             ("/mod config [setting] [value]", "Configure warn thresholds"),
+            ("/aiautomod toggle <on|off>", "Toggle AI-powered automod (staff)"),
+            ("/aiautomod channel <#channel>", "Where AI automod alerts go"),
+            ("/aiautomod timeout <duration>", "Severity-5 timeout length (30m, 1h, 1d...)"),
+            ("/aiautomod status", "Show AI automod config"),
         ],
     },
     "community": {
         "emoji": "🌍",
         "name": "Community",
-        "desc": "Levels, invites, polls, confessions, birthdays",
+        "desc": "Levels, invites, polls, confessions, birthdays, giveaways",
         "color": COLOR_FUN,
         "commands": [
             ("/level [@user]", "View your level card"),
@@ -79,6 +88,17 @@ CATEGORIES = {
             ("/invites show [@user]", "Show invite count"),
             ("/invites set @user [count]", "Set invite count (admin)"),
             ("/invite_leaderboard", "Top 10 inviters"),
+            ("/giveaway start <prize> <duration>", "Start a giveaway (staff)"),
+            ("/giveaway end <id>", "End a giveaway early (staff)"),
+            ("/giveaway reroll <id>", "Pick a new winner (staff)"),
+            ("/giveaway list", "List running giveaways"),
+            ("/starboard channel <#channel>", "Set the starboard channel (staff)"),
+            ("/starboard threshold <n>", "Reactions needed to star a message"),
+            ("/starboard emoji <emoji>", "Which reaction stars a message"),
+            ("/starboard toggle <on|off>", "Enable/disable the starboard"),
+            ("/custom add <trigger> <response>", "Create a custom command (staff)"),
+            ("/custom remove <trigger>", "Delete a custom command (staff)"),
+            ("/custom list", "List this server's custom commands"),
             ("/poll create <q> <o1> <o2> [o3] [o4] [dur]", "Create a poll"),
             ("/poll end <message_id>", "End a poll early"),
             ("/confess text [text]", "Submit an anonymous confession"),
@@ -138,12 +158,31 @@ CATEGORIES = {
     "settings": {
         "emoji": "⚙️",
         "name": "Settings",
-        "desc": "Welcome, autorole, logging, status, prefix, rules",
+        "desc": "Welcome, onboarding, autorole, logging, status, prefix, rules",
         "color": COLOR_DEFAULT,
         "commands": [
-            ("/welcome config [setting] [value] [channel]", "Configure welcome & goodbye"),
-            ("/welcome test [type]", "Test welcome/goodbye/DM"),
-            ("/welcome show", "Show current config"),
+            ("/welcome set channel <#channel>", "Set the welcome channel (auto-enables)"),
+            ("/welcome set message <text>", "Set the welcome message"),
+            ("/welcome set embed <mode>", "text / embed / hybrid rendering"),
+            ("/welcome set color <hex|reset>", "Welcome embed color"),
+            ("/welcome set image <url|reset>", "Welcome banner image"),
+            ("/welcome set title <text|reset>", "Welcome embed title"),
+            ("/welcome set thumbnail <mode>", "avatar / server / none / custom url"),
+            ("/welcome set footer <text|reset|none>", "Customizable footer"),
+            ("/welcome set dm <text|disable>", "Welcome DM"),
+            ("/welcome toggle <on|off>", "Enable/disable welcome messages"),
+            ("/welcome goodbye channel <#channel>", "Set the goodbye channel"),
+            ("/welcome goodbye message <text>", "Set the goodbye message"),
+            ("/welcome goodbye toggle <on|off>", "Enable/disable goodbye messages"),
+            ("/welcome test [type]", "Preview welcome/goodbye/DM"),
+            ("/welcome show", "Overview of the current config"),
+            ("/welcome tags", "Every available welcome tag"),
+            ("/welcome reset", "Factory reset (with confirmation)"),
+            ("/onboarding toggle <on|off>", "DM onboarding for new members (staff)"),
+            ("/onboarding addrole <@role>", "Add a role to the onboarding panel"),
+            ("/onboarding removerole <@role>", "Remove a role from the panel"),
+            ("/onboarding message <text>", "Set the onboarding DM text"),
+            ("/onboarding test", "Preview the onboarding DM"),
             ("/autorole set @role", "Assign role to new members"),
             ("/autorole remove", "Disable autorole"),
             ("/autorole show", "Show configured autorole"),
@@ -237,7 +276,21 @@ class HelpView(discord.ui.View):
         for key, cat in CATEGORIES.items():
             embed.add_field(name=f"{cat['emoji']} {cat['name']}", value=f"{cat['desc']}\n`{len(cat['commands'])} commands`", inline=True)
         total = sum(len(c['commands']) for c in CATEGORIES.values())
-        embed.set_footer(text=f"{total} total commands • ✩ ━━ aurelia ༉‧₊˚. ღ")
+        # PART 4 — the old footer said "{total} total commands", which
+        # counted every CATEGORIES entry (subcommands and @mention aliases
+        # included) and inflated the number to 97 while Discord only sees
+        # the TOP-LEVEL slash commands. Count the real tree instead and
+        # clarify both numbers.
+        top_level = None
+        try:
+            top_level = len(self.bot.tree.get_commands())
+        except Exception:
+            top_level = None
+        if top_level:
+            footer = f"{top_level} commands · {total} incl. subcommands"
+        else:
+            footer = f"{total} commands incl. subcommands"
+        embed.set_footer(text=f"{footer} • ✩ ━━ aurelia ༉‧₊˚. ღ")
         return embed
 
     def build_category_embeds(self, key):
@@ -257,7 +310,7 @@ class HelpView(discord.ui.View):
                 commands_text += f"`{cmd}`\n{desc}\n\n"
             if commands_text:
                 embed.add_field(name=f"Commands (page {page_idx+1}/{total_pages})", value=commands_text[:1024], inline=False)
-            embed.set_footer(text=f"click 🏠 Home to return · {len(commands)} total · ✩ aurelia")
+            embed.set_footer(text=f"click 🏠 Home to return · {len(commands)} entries · ✩ aurelia")
             pages.append(embed)
         return pages
 

@@ -111,7 +111,11 @@ class Polls(commands.Cog):
             )
             if options_text:
                 embed.add_field(name="Options", value=options_text, inline=False)
-            footer = f"by <@{pdata.get('author_id', '?')}>"
+            # PART 6.4 — footer shows the author's display name. Footers
+            # don't render <@id> mentions (Discord shows the raw text),
+            # so we store the name at creation time and print that.
+            author_name = pdata.get('author_name') or 'someone'
+            footer = f"by {author_name}"
             end_time = pdata.get('end_time')
             if end_time:
                 footer += f" · ends <t:{end_time}:R>"
@@ -225,6 +229,9 @@ class Polls(commands.Cog):
             'channel_id': str(interaction.channel.id),
             'guild_id': str(interaction.guild.id),
             'author_id': str(interaction.user.id),
+            # PART 6.4 — display name for the footer (mentions don't render
+            # in embed footers, so we render the name instead)
+            'author_name': interaction.user.display_name,
             'question': question,
             'options': options,
             'end_time': end_time,

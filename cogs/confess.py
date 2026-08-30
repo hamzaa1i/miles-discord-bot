@@ -20,7 +20,7 @@ import logging
 import discord
 from discord.ext import commands
 from discord import app_commands
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 from utils.db import get_guild_setting_async, set_guild_setting_async
 
@@ -93,6 +93,30 @@ class Confess(commands.Cog):
             try:
                 await interaction.followup.send(
                     "confessions only work in servers.", ephemeral=True
+                )
+            except Exception:
+                pass
+            return
+
+        # PART 6.3 — alt-account abuse prevention: the member must have
+        # been in THIS server for at least 24 hours before confessing.
+        member = interaction.user
+        joined_at = getattr(member, "joined_at", None)
+        if joined_at is None:
+            try:
+                await interaction.followup.send(
+                    "i couldn't verify how long you've been here — "
+                    "try again in a moment.",
+                    ephemeral=True,
+                )
+            except Exception:
+                pass
+            return
+        if (discord.utils.utcnow() - joined_at) < timedelta(hours=24):
+            try:
+                await interaction.followup.send(
+                    "you must be in the server for 24h before confessing.",
+                    ephemeral=True,
                 )
             except Exception:
                 pass
