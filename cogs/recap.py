@@ -132,6 +132,10 @@ class Recap(commands.Cog):
         # ── collect transcript ──
         cutoff = discord.utils.utcnow() - timedelta(hours=hours_val)
         lines = []
+        # PHASE 3 / PART 6 — recap privacy: authors who opted out of
+        # recaps are skipped from the digest. Lookups hit the shared
+        # 120s privacy cache in utils.db.
+        _recap_optouts: dict[int, bool] = {}
         try:
             async for msg in target_channel.history(
                     limit=300, after=cutoff, oldest_first=True):
@@ -140,6 +144,18 @@ class Recap(commands.Cog):
                 content = msg.content.strip()
                 if not content or content.startswith(('!', '/', '-')):
                     continue
+                author_id = msg.author.id
+                if author_id not in _recap_optouts:
+                    try:
+                        from utils.db import get_user_privacy_async
+                        priv = await get_user_privacy_async(author_id)
+                        _recap_optouts[author_id] = bool(
+                            priv and priv.get("recap_optout")
+                        )
+                    except Exception:
+                        _recap_optouts[author_id] = False
+                if _recap_optouts[author_id]:
+                    continue  # their messages stay out of the digest
                 lines.append(f"{msg.author.display_name}: {content[:220]}")
         except discord.Forbidden:
             await interaction.followup.send(

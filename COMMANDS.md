@@ -3,7 +3,7 @@
 Every slash command, prefix command, natural-language @mention intent, and
 reaction/button interaction in Aurelia — the Veloura community bot.
 
-> **Quick facts** · 39 cogs · 147 slash commands (144 cog commands + 3 hybrid
+> **Quick facts** · 45 cogs · 167 slash commands (164 cog commands + 3 hybrid
 > in `main.py`) · AI powered by Groq (`qwen/qwen3.6-27b` for chat,
 > `openai/gpt-oss-20b` for fast tasks, `openai/gpt-oss-120b` for reasoning)
 > · data in Supabase PostgreSQL with JSON-file fallback.
@@ -375,6 +375,63 @@ years** up get a "꒰ა 🍰 ໒꒱ happy server anniversary!" card with their
 avatar and join date. One scan per UTC day (restart-safe via
 `last_run_date`).
 
+### /ship — group 🆕 *New in Phase 3*
+Compatibility matcher. Scores are deterministic per pair per UTC day
+(the same pair re-shipped tomorrow gets a fresh roll), built from a hash
+of both user ids + today's date (40–95%), +5 when the pair shares a
+known-fact keyword. Members with `/privacy set ship off` refuse with
+"one of them has ship privacy on ♡".
+
+**/ship match** — ship two members. `user1` (member, required) · `user2`
+(member, optional, defaults to you)
+- **Permissions:** any user · **Cooldown:** 1 / 60s per user
+- Example: `/ship match user1:@volc user2:@diva` → "꒰ა 💕 ໒꒱ voldiva"
+  with `compatibility: **87%** ❤️❤️…` + an AI-written poetic reason
+  ("the vibe"), user1's avatar as thumbnail, and footer "requested by …"
+- Self-ships get a soft refusal.
+
+**/ship history** — someone's top 5 recent ships, sorted by score
+(*ephemeral*). `user` (member, optional). Saves every match to the
+`ship_history` table.
+
+> Note: Discord doesn't allow a slash command to be both a bare command
+> and a group, so the pair shipper lives at `/ship match` (same pattern
+> as `/confess text`).
+
+### /achievements — group 🆕 *New in Phase 3*
+Passive badge system — 15 achievements across five rarities (common →
+legendary). Unlocks DM the member a rarity-colored card. The /profile
+card shows your `achievements: n/15 ✦` count.
+
+**/achievements show** — everything a user has unlocked, grouped by
+rarity (legendary first) with a `▰▰▱▱` progress bar. `user` (optional,
+defaults to you) · `public` (optional, default off = *ephemeral*)
+- Example: `/achievements show user:@diva`
+
+**/achievements list** — ALL possible achievements; locked ones render
+as `emoji ??? — ??? 🔒` so there's still something to chase
+(*ephemeral*).
+
+Tracked automatically: first message 🌱 · 100 messages 💬 · 1000 messages
+📜 · level 10 ⭐ / 25 🌟 / 50 ✨ · night owl 🌙 (active 12am–4am UTC) ·
+early bird ☀️ (5am–8am UTC) · 7/30/100-day daily streak 🔥💎👑 · first
+boost 💜 · 50 reactions on one message 💖 · first confession 🤫.
+
+### /color — group 🆕 *New in Phase 3*
+Personal color roles. The bot needs **Manage Roles**; user roles sit
+just above @everyone.
+
+**/color set** — set your color. `hex` (required, `#RRGGBB` or `RRGGBB`)
+- **Permissions:** any user (bot: Manage Roles) · **Cooldown:** 24h per
+  user per change
+- Example: `/color set hex:#FFC0CB` → creates/edits the role "🎨 your-name"
+  and replies with the color as the embed preview
+
+**/color remove** — delete your color role (and the server role)
+**/color show** — someone's current color. `user` (optional)
+**/color cleanup** — sweep empty 🎨 roles + stale rows. **Owner or
+Manage Roles** (also runs automatically every 24h)
+
 ### /birthday — group
 **/birthday set** — set your birthday (month + day). Parameters: `month`
 (int 1-12), `day` (int). Example: `/birthday set month:3 day:14`
@@ -520,6 +577,30 @@ Roles** · `role` (required). Example: `/autorole set role:@newbie`
 Example: `/selfroles setup category:pronouns role1:@she/her role2:@he/him role3:@they/them`
 → a button panel; clicking toggles the role.
 
+### /nick — group 🆕 *New in Phase 3*
+Nickname request system with mod review.
+
+**/nick config** — set the review channel + options. **Manage Guild** ·
+`channel` (required) · `auto_approve` (optional, default off) · `cooldown`
+(optional, hours, default 24, max 168)
+- Example: `/nick config channel:#nick-review cooldown:12`
+
+**/nick request** — request a nickname change (2–32 chars). `new`
+(required)
+- **Permissions:** any user · **Cooldown:** 24h (or the configured
+  hours) between requests of ANY status
+- With auto_approve on, the nickname is applied instantly; otherwise the
+  request posts to the review channel with ✓ Approve / ✗ Deny buttons
+  (restart-safe, `nick:` custom ids). Deny opens a reason modal and DMs
+  the requester "your nickname request was denied. reason: … ♡".
+
+**/nick pending** — list pending requests with fresh approve/deny
+buttons. **Manage Guild** (*ephemeral*)
+**/nick my** — your request history with statuses. (*ephemeral*)
+
+Role-hierarchy failures (their top role above the bot's) are reported
+to the reviewer instead of raising.
+
 ### /rules — group
 **/rules set** — set the server rules (newlines = list items). **Manage
 Guild** · `text` (required)
@@ -614,6 +695,31 @@ used by `/time for`). `timezone` (required)
 - Example: `/time set timezone:America/New_York` → "✅ your timezone has
   been set to **America/New_York** (current time: 03:45 PM) ♡"
 
+### /capsule — group 🆕 *New in Phase 3*
+Time capsules — seal a message now, aurelia delivers it later.
+
+**/capsule create** — seal one. `message` (string, required, max 2000
+chars) · `unlock` (string, required: `1h`, `3d`, `1w`, `1m`, `6m`, `1y`,
+stacked `1y6m` — **`m` means MONTH here**, minutes are `min`) · `public`
+(optional, default private)
+- **Permissions:** any user · range: 1 hour … 5 years
+- Private capsules DM you when they unlock; public ones post back into
+  the channel where they were sealed
+- Example: `/capsule create message:remember when we were all obsessed
+  with this? unlock:1y public:True` → "🕰️ your capsule will unlock in
+  1 year on **Sep 07, 2027 · 07:45 utc** ✦"
+
+**/capsule list** — your pending capsules: id, type, unlock countdown,
+first 40 chars (*ephemeral*, soonest first)
+**/capsule delete** — remove one pending capsule (confirmation button;
+only the creator). `id` (int, required)
+**/capsule opened** — your last 10 unlocked capsules (*ephemeral*)
+
+Delivery: a 5-minute background loop. DMs closed or a deleted channel
+are logged and skipped — the capsule still marks unlocked (no retries,
+no spam). Unlocked cards show the original message, the author mention,
+and "sealed {date} · unlocked today ✦".
+
 ### /weather
 Get current weather for a city (OpenWeather-style embed).
 - **Permissions:** any user
@@ -682,6 +788,32 @@ Show a user's avatar (full-size).
 ---
 
 ## Settings & Configuration
+
+### /privacy — group 🆕 *New in Phase 3*
+Per-user data controls. Opt-outs are enforced at the source: chat history
+isn't saved for memory-opted-out members, their messages stay out of /vibe
+and /recap transcripts, fact extraction skips them, and /ship refuses to
+ship them. Reads are cached 120s so hot paths stay cheap.
+
+**/privacy show** — your five opt-out preferences (*ephemeral*)
+
+**/privacy set** — toggle one feature (or all). `feature` (choice:
+memory / vibe check / recap / ship / fact extraction / all) · `enabled`
+(bool, required — `True` allows the feature, `False` opts out)
+- Example: `/privacy set feature:recap enabled:False` → "✅ **recap** is
+  off — i'll skip your data for it ♡"
+
+**/privacy delete** — erase EVERYTHING stored about you, across every
+server and every table: facts · conversation memory · profile · levels
+& XP · warnings · daily streaks · fortunes · time capsules ·
+achievements · color roles (the Discord roles too) · nickname requests ·
+ships · privacy settings. Double confirmation: a danger button, then
+typing **DELETE** into a modal. The final reply counts the records
+removed. (*ephemeral*)
+
+**/privacy export** — everything aurelia knows about you as a JSON file
+attachment (facts, profile, levels, streaks, capsules, achievements,
+warnings, privacy row). (*ephemeral*)
 
 ### /log — group *(Manage Channels)*
 Log event configuration — message deletes/edits, member join/leave,
@@ -896,6 +1028,9 @@ Two prefix systems:
 | Role buttons | /selfroles panels | Toggle roles by category (pronouns, notifications…) |
 | **I Agree** button | /rules agree panel | Grants the configured agreement role |
 | **Confirm / Cancel** buttons | AI mod intents, /mod nuke, /owner leave, /welcome reset | Two-step confirmation for destructive actions |
+| 🗑️ **delete it / keep it** buttons 🆕 | /capsule delete | Two-step confirmation before a capsule is destroyed |
+| ✓ **Approve** / ✗ **Deny with Reason** buttons 🆕 | /nick request review channel, /nick pending | Approve applies the nickname; deny opens a reason modal — both DM the requester (persistent, restart-safe) |
+| 🗑️ **delete everything** button 🆕 | /privacy delete | Opens the typed-DELETE final confirmation modal |
 | 🎉 reaction | welcome messages | Decorative greeting flourish |
 
 ---
@@ -946,7 +1081,9 @@ Default: `🎉 {user} just reached level {level}! ✦`
 | /mod timeout · mute · unmute · warnings · antispam · config | Moderate Members / Mute Members |
 | /mod purge · antilink | Manage Messages |
 | /mod nuke · slowmode · lock · unlock · /voice | Manage Channels |
-| /aiautomod (all) · /leveling config · /giveaway start/end/reroll · /starboard (all) · /confess setup · /invites set · /welcome (all) · /onboarding (all) · /proactive (all) · /rules set/agree_role · /autorole set/remove · /selfroles setup · /birthday channel · /custom add/remove · /bump remind · /prefix set/remove · /qotd (all) · /anniversary (all) · /botinfo | Manage Guild (or the noted role/permission) |
+| /aiautomod (all) · /leveling config · /giveaway start/end/reroll · /starboard (all) · /confess setup · /invites set · /welcome (all) · /onboarding (all) · /proactive (all) · /rules set/agree_role · /autorole set/remove · /selfroles setup · /birthday channel · /custom add/remove · /bump remind · /prefix set/remove · /qotd (all) · /anniversary (all) · /botinfo · /nick config · /nick pending | Manage Guild (or the noted role/permission) |
+| /color cleanup 🆕 | bot owner OR Manage Roles |
+| /color set/remove/show · /ship · /capsule · /achievements · /nick request · /nick my · /privacy (all) | any user (bot needs Manage Roles for /color set) |
 | /log (all) | Manage Channels |
 | /moderate via @mention (`@Aurelia ban …`) | matching mod permission, the /adminrole role, server owner, or bot owner |
 | /memory show (other users) | staff (Manage Messages / Manage Guild / server owner) |
@@ -960,6 +1097,9 @@ Default: `🎉 {user} just reached level {level}! ✦`
 
 | Command | Cooldown |
 |---|---|
+| /ship match 🆕 | 1 / 60s · per user |
+| /color set 🆕 | 24h per user (from last change) |
+| /nick request 🆕 | 24h default (configurable 1-168h) · per user |
 | /daily 🆕 | 1 / 5s per user (one claim per UTC day) |
 | /vibe 🆕 | 1 / 5 min · per channel |
 | /askstars 🆕 | 1 / 60s · per user |
@@ -979,22 +1119,29 @@ Default: `🎉 {user} just reached level {level}! ✦`
 
 | Category | Commands |
 |---|---|
-| Top-level tree entries | 63 (36 commands + 27 groups) — was 58 before Phase 2 |
+| Top-level tree entries | 69 (36 commands + 33 groups) — was 63 before Phase 3 |
 | Hybrid commands (main.py) | 3 |
-| Subcommands (all groups, incl. nested) | 108 |
-| **Total invocable slash commands** | **147** (144 cog + 3 hybrid; 132 before Phase 2) |
+| Subcommands (all groups, incl. nested) | 128 |
+| **Total invocable slash commands** | **167** (164 cog + 3 hybrid; 147 before Phase 3) |
 | Prefix text commands | 25+ routes |
 | Natural-language @mention intents | 30+ |
 | New in Phase 1 | /vibe · /pick · /askstars · /fortune |
 | New in Phase 2 | /daily · /qotd · /anniversary · /remind · /time |
+| New in Phase 3 | /ship · /capsule · /achievements · /color · /nick · /privacy (6 groups, 20 commands) |
 
-Discord's hard limit is 100 **top-level** commands — Aurelia is at 63.
+Discord's hard limit is 100 **top-level** commands — Aurelia is at 69.
 
 **Supabase migration (Phase 2):** run the `PHASE 2 (ENGAGEMENT CORE)` SQL
 block at the top of `utils/db.py` — it adds `repeat_interval` to
 `reminders` and creates `daily_streaks`, `qotd_settings`, `qotd_queue`, and
 `anniversary_settings`. Until then, all five features fall back to local
 JSON files automatically.
+
+**Supabase migration (Phase 3):** run the `PHASE 3 (SOCIAL & IDENTITY
+SYSTEMS)` SQL block at the top of `utils/db.py` — it creates
+`ship_history`, `time_capsules`, `user_achievements`, `message_counts`,
+`user_color_roles`, `nick_requests`, `nick_settings`, and `user_privacy`.
+Until then, all six features fall back to local JSON files automatically.
 
 
 

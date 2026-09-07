@@ -385,6 +385,104 @@ CREATE TABLE server_personality (
 -- );
 -- GRANT ALL ON public.anniversary_settings TO anon;
 -- ALTER TABLE public.anniversary_settings DISABLE ROW LEVEL SECURITY;
+--
+-- PHASE 3 (SOCIAL & IDENTITY SYSTEMS) — ship, time capsules,
+-- achievements, message counts, custom color roles, nickname
+-- requests, and privacy controls. Run in the Supabase SQL editor;
+-- as with every other phase, each helper below also has a JSON-file
+-- fallback so the features work even before these tables exist:
+--
+-- CREATE TABLE IF NOT EXISTS ship_history (
+--   id BIGSERIAL PRIMARY KEY,
+--   guild_id TEXT NOT NULL,
+--   user1_id TEXT NOT NULL,
+--   user2_id TEXT NOT NULL,
+--   score INT,
+--   reason TEXT,
+--   created_at TEXT
+-- );
+-- GRANT ALL ON public.ship_history TO anon;
+-- ALTER TABLE public.ship_history DISABLE ROW LEVEL SECURITY;
+--
+-- CREATE TABLE IF NOT EXISTS time_capsules (
+--   id BIGSERIAL PRIMARY KEY,
+--   guild_id TEXT NOT NULL,
+--   channel_id TEXT,
+--   user_id TEXT NOT NULL,
+--   message TEXT,
+--   unlock_time FLOAT NOT NULL,
+--   is_public BOOLEAN DEFAULT FALSE,
+--   unlocked BOOLEAN DEFAULT FALSE,
+--   created_at TEXT
+-- );
+-- GRANT ALL ON public.time_capsules TO anon;
+-- ALTER TABLE public.time_capsules DISABLE ROW LEVEL SECURITY;
+--
+-- CREATE TABLE IF NOT EXISTS user_achievements (
+--   id BIGSERIAL PRIMARY KEY,
+--   guild_id TEXT NOT NULL,
+--   user_id TEXT NOT NULL,
+--   achievement_key TEXT NOT NULL,
+--   unlocked_at TEXT
+-- );
+-- GRANT ALL ON public.user_achievements TO anon;
+-- ALTER TABLE public.user_achievements DISABLE ROW LEVEL SECURITY;
+--
+-- CREATE TABLE IF NOT EXISTS message_counts (
+--   guild_id TEXT NOT NULL,
+--   user_id TEXT NOT NULL,
+--   message_count INT DEFAULT 0,
+--   PRIMARY KEY (guild_id, user_id)
+-- );
+-- GRANT ALL ON public.message_counts TO anon;
+-- ALTER TABLE public.message_counts DISABLE ROW LEVEL SECURITY;
+--
+-- CREATE TABLE IF NOT EXISTS user_color_roles (
+--   guild_id TEXT NOT NULL,
+--   user_id TEXT NOT NULL,
+--   role_id TEXT,
+--   hex_color TEXT,
+--   last_changed TEXT,
+--   PRIMARY KEY (guild_id, user_id)
+-- );
+-- GRANT ALL ON public.user_color_roles TO anon;
+-- ALTER TABLE public.user_color_roles DISABLE ROW LEVEL SECURITY;
+--
+-- CREATE TABLE IF NOT EXISTS nick_requests (
+--   id BIGSERIAL PRIMARY KEY,
+--   guild_id TEXT NOT NULL,
+--   user_id TEXT NOT NULL,
+--   current_nick TEXT,
+--   requested_nick TEXT,
+--   status TEXT DEFAULT 'pending',
+--   reviewer_id TEXT,
+--   reason TEXT,
+--   created_at TEXT,
+--   resolved_at TEXT
+-- );
+-- GRANT ALL ON public.nick_requests TO anon;
+-- ALTER TABLE public.nick_requests DISABLE ROW LEVEL SECURITY;
+--
+-- CREATE TABLE IF NOT EXISTS nick_settings (
+--   guild_id TEXT PRIMARY KEY,
+--   channel_id TEXT,
+--   auto_approve BOOLEAN DEFAULT FALSE,
+--   cooldown_hours INT DEFAULT 24
+-- );
+-- GRANT ALL ON public.nick_settings TO anon;
+-- ALTER TABLE public.nick_settings DISABLE ROW LEVEL SECURITY;
+--
+-- CREATE TABLE IF NOT EXISTS user_privacy (
+--   user_id TEXT PRIMARY KEY,
+--   memory_optout BOOLEAN DEFAULT FALSE,
+--   vibe_optout BOOLEAN DEFAULT FALSE,
+--   recap_optout BOOLEAN DEFAULT FALSE,
+--   ship_optout BOOLEAN DEFAULT FALSE,
+--   fact_extraction_optout BOOLEAN DEFAULT FALSE,
+--   updated_at TEXT
+-- );
+-- GRANT ALL ON public.user_privacy TO anon;
+-- ALTER TABLE public.user_privacy DISABLE ROW LEVEL SECURITY;
 """
 import asyncio
 import functools
@@ -635,6 +733,42 @@ _TABLE_COLUMNS = {
     # PHASE 2 (ENGAGEMENT CORE) — member anniversaries (/anniversary)
     "anniversary_settings": {
         "guild_id", "channel_id", "enabled", "last_run_date",
+    },
+    # PHASE 3 (SOCIAL & IDENTITY SYSTEMS) — /ship match history
+    "ship_history": {
+        "id", "guild_id", "user1_id", "user2_id", "score", "reason",
+        "created_at",
+    },
+    # PHASE 3 — /capsule time capsules
+    "time_capsules": {
+        "id", "guild_id", "channel_id", "user_id", "message",
+        "unlock_time", "is_public", "unlocked", "created_at",
+    },
+    # PHASE 3 — /achievements unlocked badges
+    "user_achievements": {
+        "id", "guild_id", "user_id", "achievement_key", "unlocked_at",
+    },
+    # PHASE 3 — message counts for the 100/1000-message achievements
+    "message_counts": {
+        "guild_id", "user_id", "message_count",
+    },
+    # PHASE 3 — /color custom color roles
+    "user_color_roles": {
+        "guild_id", "user_id", "role_id", "hex_color", "last_changed",
+    },
+    # PHASE 3 — /nick nickname request queue
+    "nick_requests": {
+        "id", "guild_id", "user_id", "current_nick", "requested_nick",
+        "status", "reviewer_id", "reason", "created_at", "resolved_at",
+    },
+    # PHASE 3 — /nick review configuration
+    "nick_settings": {
+        "guild_id", "channel_id", "auto_approve", "cooldown_hours",
+    },
+    # PHASE 3 — /privacy per-user opt-outs
+    "user_privacy": {
+        "user_id", "memory_optout", "vibe_optout", "recap_optout",
+        "ship_optout", "fact_extraction_optout", "updated_at",
     },
 }
 
@@ -2657,3 +2791,1141 @@ async def set_anniversary_settings_async(guild_id: str, payload: dict):
     clean = {k: v for k, v in current.items()
              if k in _TABLE_COLUMNS[_ANNIVERSARY_TABLE] or k == "guild_id"}
     await set_guild_setting_async(int(guild_id), _ANNIVERSARY_TABLE, clean)
+
+
+# ════════════════════════════════════════════════════════════════
+# PHASE 3 (SOCIAL & IDENTITY SYSTEMS)
+# Ship history (/ship), time capsules (/capsule), achievements
+# (/achievements), message counts, custom color roles (/color),
+# nickname requests (/nick), and privacy controls (/privacy).
+# Every helper has a Supabase path and a JSON-file fallback so the
+# features work before the PHASE 3 migration SQL above has been run.
+# ════════════════════════════════════════════════════════════════
+
+# ─── PHASE 3 / PART 1 — ship history (/ship) ─────────────────────
+
+_SHIP_HISTORY_JSON = "data/ship_history.json"
+
+
+def _json_ship_rows(guild_id: str) -> list:
+    data = _read_json(_SHIP_HISTORY_JSON)
+    rows = data.get(str(guild_id), [])
+    return rows if isinstance(rows, list) else []
+
+
+async def save_ship_async(guild_id: str, user1_id: str, user2_id: str,
+                          score: int, reason: str):
+    """PHASE 3 / PART 1 — record a ship result for a guild."""
+    from datetime import datetime as _dt
+    payload = {
+        "guild_id": str(guild_id),
+        "user1_id": str(user1_id),
+        "user2_id": str(user2_id),
+        "score": int(score),
+        "reason": str(reason or "")[:500],
+        "created_at": _dt.utcnow().isoformat(),
+    }
+    sb = get_supabase()
+    if sb:
+        try:
+            await asyncio.to_thread(
+                lambda: sb.table("ship_history").insert(payload).execute()
+            )
+            return
+        except Exception as e:
+            error_key = "save_ship"
+            if error_key not in _supabase_error_logged:
+                logger.error(f"[DB] save_ship error: {e}")
+                _supabase_error_logged.add(error_key)
+    data = _read_json(_SHIP_HISTORY_JSON)
+    rows = data.get(str(guild_id), [])
+    if not isinstance(rows, list):
+        rows = []
+    payload["id"] = max(
+        (int(r.get("id", 0)) for r in rows if isinstance(r, dict)),
+        default=0,
+    ) + 1
+    rows.append(payload)
+    data[str(guild_id)] = rows
+    _write_json(_SHIP_HISTORY_JSON, data)
+
+
+async def get_ship_history_async(guild_id: str, user_id: str,
+                                 limit: int = 5) -> list:
+    """PHASE 3 / PART 1 — the user's most recent ships (involving them
+    on either side), newest first."""
+    sb = get_supabase()
+    if sb:
+        try:
+            def _fetch():
+                return sb.table("ship_history").select("*").eq(
+                    "guild_id", str(guild_id)
+                ).or_(
+                    f"user1_id.eq.{user_id},user2_id.eq.{user_id}"
+                ).order("id", desc=True).limit(limit).execute()
+            result = await asyncio.to_thread(_fetch)
+            return (result.data or []) if result else []
+        except Exception as e:
+            error_key = "get_ship_history"
+            if error_key not in _supabase_error_logged:
+                logger.error(f"[DB] get_ship_history error: {e}")
+                _supabase_error_logged.add(error_key)
+    rows = _json_ship_rows(guild_id)
+    uid = str(user_id)
+    mine = [
+        r for r in rows
+        if isinstance(r, dict) and uid in (str(r.get("user1_id")),
+                                           str(r.get("user2_id")))
+    ]
+    mine.reverse()  # newest first (rows are appended oldest-first)
+    return mine[:limit]
+
+
+# ─── PHASE 3 / PART 2 — time capsules (/capsule) ──────────────────
+
+_TIME_CAPSULES_JSON = "data/time_capsules.json"
+
+
+def _json_capsules() -> dict:
+    data = _read_json(_TIME_CAPSULES_JSON)
+    return data if isinstance(data, dict) else {}
+
+
+async def create_capsule_async(guild_id: str, channel_id, user_id: str,
+                               message: str, unlock_time: float,
+                               is_public: bool):
+    """PHASE 3 / PART 2 — store a capsule; returns its id (int on
+    Supabase, int client-side on the JSON fallback)."""
+    from datetime import datetime as _dt
+    payload = {
+        "guild_id": str(guild_id),
+        "channel_id": str(channel_id) if channel_id else None,
+        "user_id": str(user_id),
+        "message": str(message)[:2000],
+        "unlock_time": float(unlock_time),
+        "is_public": bool(is_public),
+        "unlocked": False,
+        "created_at": _dt.utcnow().isoformat(),
+    }
+    sb = get_supabase()
+    if sb:
+        try:
+            def _insert():
+                return sb.table("time_capsules").insert(payload).execute()
+            result = await asyncio.to_thread(_insert)
+            if result and result.data:
+                return result.data[0].get("id")
+            return None
+        except Exception as e:
+            error_key = "create_capsule"
+            if error_key not in _supabase_error_logged:
+                logger.error(f"[DB] create_capsule error: {e}")
+                _supabase_error_logged.add(error_key)
+    data = _json_capsules()
+    next_id = max(
+        (int(k) for k in data.keys() if str(k).isdigit()), default=0
+    ) + 1
+    payload["id"] = next_id
+    data[str(next_id)] = payload
+    _write_json(_TIME_CAPSULES_JSON, data)
+    return next_id
+
+
+async def get_user_capsules_async(user_id: str, unlocked: bool = False,
+                                  limit: int = 20) -> list:
+    """PHASE 3 / PART 2 — a user's capsules, sorted by unlock time
+    ascending (earliest first)."""
+    sb = get_supabase()
+    if sb:
+        try:
+            def _fetch():
+                return sb.table("time_capsules").select("*").eq(
+                    "user_id", str(user_id)
+                ).eq("unlocked", bool(unlocked)).order(
+                    "unlock_time", desc=False
+                ).limit(limit).execute()
+            result = await asyncio.to_thread(_fetch)
+            return (result.data or []) if result else []
+        except Exception as e:
+            error_key = "get_user_capsules"
+            if error_key not in _supabase_error_logged:
+                logger.error(f"[DB] get_user_capsules error: {e}")
+                _supabase_error_logged.add(error_key)
+    uid = str(user_id)
+    rows = [
+        r for r in _json_capsules().values()
+        if isinstance(r, dict) and str(r.get("user_id")) == uid
+        and bool(r.get("unlocked")) == bool(unlocked)
+    ]
+    rows.sort(key=lambda r: float(r.get("unlock_time", 0) or 0))
+    return rows[:limit]
+
+
+async def get_due_capsules_async() -> list:
+    """PHASE 3 / PART 2 — every capsule with unlocked=False and
+    unlock_time <= now, across all guilds (the 5-minute loop's work
+    list)."""
+    import time as _time
+    now = float(_time.time())
+    sb = get_supabase()
+    if sb:
+        try:
+            def _fetch():
+                return sb.table("time_capsules").select("*").eq(
+                    "unlocked", False
+                ).lte("unlock_time", now).order(
+                    "unlock_time", desc=False
+                ).limit(100).execute()
+            result = await asyncio.to_thread(_fetch)
+            return (result.data or []) if result else []
+        except Exception as e:
+            error_key = "get_due_capsules"
+            if error_key not in _supabase_error_logged:
+                logger.error(f"[DB] get_due_capsules error: {e}")
+                _supabase_error_logged.add(error_key)
+    rows = [
+        r for r in _json_capsules().values()
+        if isinstance(r, dict) and not r.get("unlocked")
+        and float(r.get("unlock_time", 0) or 0) <= now
+    ]
+    rows.sort(key=lambda r: float(r.get("unlock_time", 0) or 0))
+    return rows
+
+
+async def mark_capsule_unlocked_async(capsule_id):
+    """PHASE 3 / PART 2 — flip a capsule to unlocked=True (terminal
+    state, so a failed DM/channel send never retries forever)."""
+    sb = get_supabase()
+    if sb:
+        try:
+            await asyncio.to_thread(
+                lambda: sb.table("time_capsules").update(
+                    {"unlocked": True}
+                ).eq("id", capsule_id).execute()
+            )
+            return True
+        except Exception as e:
+            error_key = "mark_capsule_unlocked"
+            if error_key not in _supabase_error_logged:
+                logger.error(f"[DB] mark_capsule_unlocked error: {e}")
+                _supabase_error_logged.add(error_key)
+    data = _json_capsules()
+    row = data.get(str(capsule_id))
+    if isinstance(row, dict):
+        row["unlocked"] = True
+        _write_json(_TIME_CAPSULES_JSON, data)
+        return True
+    return False
+
+
+async def delete_capsule_async(capsule_id, user_id: str) -> bool:
+    """PHASE 3 / PART 2 — remove a PENDING capsule; only its creator
+    can delete. Returns True when a row was removed."""
+    sb = get_supabase()
+    if sb:
+        try:
+            def _run():
+                existing = sb.table("time_capsules").select("id").eq(
+                    "id", capsule_id
+                ).eq("user_id", str(user_id)).eq("unlocked", False).execute()
+                if not existing.data:
+                    return False
+                sb.table("time_capsules").delete().eq(
+                    "id", capsule_id
+                ).execute()
+                return True
+            return await asyncio.to_thread(_run)
+        except Exception as e:
+            error_key = "delete_capsule"
+            if error_key not in _supabase_error_logged:
+                logger.error(f"[DB] delete_capsule error: {e}")
+                _supabase_error_logged.add(error_key)
+            return False
+    data = _json_capsules()
+    row = data.get(str(capsule_id))
+    if (isinstance(row, dict) and str(row.get("user_id")) == str(user_id)
+            and not row.get("unlocked")):
+        del data[str(capsule_id)]
+        _write_json(_TIME_CAPSULES_JSON, data)
+        return True
+    return False
+
+
+# ─── PHASE 3 / PART 3 — achievements + message counts ─────────────
+
+_USER_ACHIEVEMENTS_JSON = "data/user_achievements.json"
+_MESSAGE_COUNTS_JSON = "data/message_counts.json"
+
+
+def _json_achievement_rows(guild_id: str, user_id: str) -> list:
+    data = _read_json(_USER_ACHIEVEMENTS_JSON)
+    rows = data.get(f"{guild_id}_{user_id}", [])
+    return rows if isinstance(rows, list) else []
+
+
+async def unlock_achievement_async(guild_id: str, user_id: str,
+                                   achievement_key: str) -> bool:
+    """PHASE 3 / PART 3 — unlock an achievement.
+
+    Returns True when this call NEWLY unlocked it (first time), False
+    when the user already had it. Look-before-insert makes it
+    idempotent even if two listeners race."""
+    from datetime import datetime as _dt
+    sb = get_supabase()
+    if sb:
+        try:
+            def _run():
+                existing = sb.table("user_achievements").select("id").eq(
+                    "guild_id", str(guild_id)
+                ).eq("user_id", str(user_id)).eq(
+                    "achievement_key", achievement_key
+                ).execute()
+                if existing.data:
+                    return False
+                sb.table("user_achievements").insert({
+                    "guild_id": str(guild_id),
+                    "user_id": str(user_id),
+                    "achievement_key": achievement_key,
+                    "unlocked_at": _dt.utcnow().isoformat(),
+                }).execute()
+                return True
+            return await asyncio.to_thread(_run)
+        except Exception as e:
+            error_key = "unlock_achievement"
+            if error_key not in _supabase_error_logged:
+                logger.error(f"[DB] unlock_achievement error: {e}")
+                _supabase_error_logged.add(error_key)
+            return False
+    data = _read_json(_USER_ACHIEVEMENTS_JSON)
+    key = f"{guild_id}_{user_id}"
+    rows = data.get(key, [])
+    if not isinstance(rows, list):
+        rows = []
+    if any(isinstance(r, dict) and r.get("achievement_key") == achievement_key
+           for r in rows):
+        return False
+    rows.append({
+        "achievement_key": achievement_key,
+        "unlocked_at": _dt.utcnow().isoformat(),
+    })
+    data[key] = rows
+    _write_json(_USER_ACHIEVEMENTS_JSON, data)
+    return True
+
+
+async def get_user_achievements_async(guild_id: str, user_id: str) -> list:
+    """PHASE 3 / PART 3 — all achievements a user has unlocked in a
+    guild: [{"achievement_key", "unlocked_at"}]."""
+    sb = get_supabase()
+    if sb:
+        try:
+            def _fetch():
+                return sb.table("user_achievements").select(
+                    "achievement_key,unlocked_at"
+                ).eq("guild_id", str(guild_id)).eq(
+                    "user_id", str(user_id)
+                ).order("id", desc=False).execute()
+            result = await asyncio.to_thread(_fetch)
+            return (result.data or []) if result else []
+        except Exception as e:
+            error_key = "get_user_achievements"
+            if error_key not in _supabase_error_logged:
+                logger.error(f"[DB] get_user_achievements error: {e}")
+                _supabase_error_logged.add(error_key)
+    return _json_achievement_rows(guild_id, user_id)
+
+
+async def get_message_count_async(guild_id, user_id) -> int:
+    """PHASE 3 / PART 3 — a user's stored message count for a guild."""
+    sb = get_supabase()
+    if sb:
+        try:
+            def _fetch():
+                return sb.table("message_counts").select(
+                    "message_count"
+                ).eq("guild_id", str(guild_id)).eq(
+                    "user_id", str(user_id)
+                ).maybe_single().execute()
+            result = await asyncio.to_thread(_fetch)
+            if result and result.data:
+                return int(result.data.get("message_count", 0) or 0)
+            return 0
+        except Exception as e:
+            error_key = "get_message_count"
+            if error_key not in _supabase_error_logged:
+                logger.error(f"[DB] get_message_count error: {e}")
+                _supabase_error_logged.add(error_key)
+    data = _read_json(_MESSAGE_COUNTS_JSON)
+    try:
+        return int(data.get(f"{guild_id}_{user_id}", 0) or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+async def set_message_count_async(guild_id, user_id, count: int):
+    """PHASE 3 / PART 3 — persist a user's message count for a guild."""
+    sb = get_supabase()
+    if sb:
+        try:
+            await asyncio.to_thread(
+                lambda: sb.table("message_counts").upsert({
+                    "guild_id": str(guild_id),
+                    "user_id": str(user_id),
+                    "message_count": int(max(0, count)),
+                }).execute()
+            )
+            return
+        except Exception as e:
+            error_key = "set_message_count"
+            if error_key not in _supabase_error_logged:
+                logger.error(f"[DB] set_message_count error: {e}")
+                _supabase_error_logged.add(error_key)
+    data = _read_json(_MESSAGE_COUNTS_JSON)
+    data[f"{guild_id}_{user_id}"] = int(max(0, count))
+    _write_json(_MESSAGE_COUNTS_JSON, data)
+
+
+# ─── PHASE 3 / PART 4 — custom color roles (/color) ──────────────
+
+_USER_COLOR_ROLES_JSON = "data/user_color_roles.json"
+
+
+def _json_color_role(guild_id: str, user_id: str) -> dict | None:
+    data = _read_json(_USER_COLOR_ROLES_JSON)
+    row = data.get(f"{guild_id}_{user_id}")
+    return row if isinstance(row, dict) else None
+
+
+def _json_all_color_roles(guild_id: str) -> list:
+    data = _read_json(_USER_COLOR_ROLES_JSON)
+    prefix = f"{guild_id}_"
+    return [
+        dict(r, user_id=k[len(prefix):])
+        for k, r in data.items()
+        if isinstance(k, str) and k.startswith(prefix)
+        and isinstance(r, dict)
+    ]
+
+
+async def get_user_color_role_async(guild_id, user_id) -> dict | None:
+    """PHASE 3 / PART 4 — the user's color-role row for a guild:
+    {"role_id", "hex_color", "last_changed"}, or None."""
+    sb = get_supabase()
+    if sb:
+        try:
+            def _fetch():
+                return sb.table("user_color_roles").select(
+                    "role_id,hex_color,last_changed"
+                ).eq("guild_id", str(guild_id)).eq(
+                    "user_id", str(user_id)
+                ).maybe_single().execute()
+            result = await asyncio.to_thread(_fetch)
+            if result and result.data:
+                return result.data
+            return _json_color_role(str(guild_id), str(user_id))
+        except Exception as e:
+            error_key = "get_user_color_role"
+            if error_key not in _supabase_error_logged:
+                logger.error(f"[DB] get_user_color_role error: {e}")
+                _supabase_error_logged.add(error_key)
+            return _json_color_role(str(guild_id), str(user_id))
+    return _json_color_role(str(guild_id), str(user_id))
+
+
+async def set_user_color_role_async(guild_id, user_id, role_id, hex_color: str):
+    """PHASE 3 / PART 4 — upsert the user's color-role row (stamps
+    last_changed with the current time for the 24h cooldown)."""
+    from datetime import datetime as _dt
+    payload = {
+        "guild_id": str(guild_id),
+        "user_id": str(user_id),
+        "role_id": str(role_id),
+        "hex_color": str(hex_color),
+        "last_changed": _dt.utcnow().isoformat(),
+    }
+    sb = get_supabase()
+    if sb:
+        try:
+            await asyncio.to_thread(
+                lambda: sb.table("user_color_roles").upsert(payload).execute()
+            )
+            return
+        except Exception as e:
+            error_key = "set_user_color_role"
+            if error_key not in _supabase_error_logged:
+                logger.error(f"[DB] set_user_color_role error: {e}")
+                _supabase_error_logged.add(error_key)
+    data = _read_json(_USER_COLOR_ROLES_JSON)
+    data[f"{guild_id}_{user_id}"] = {
+        "role_id": payload["role_id"],
+        "hex_color": payload["hex_color"],
+        "last_changed": payload["last_changed"],
+    }
+    _write_json(_USER_COLOR_ROLES_JSON, data)
+
+
+async def delete_user_color_role_async(guild_id, user_id) -> bool:
+    """PHASE 3 / PART 4 — remove the user's color-role row."""
+    sb = get_supabase()
+    if sb:
+        try:
+            await asyncio.to_thread(
+                lambda: sb.table("user_color_roles").delete().eq(
+                    "guild_id", str(guild_id)
+                ).eq("user_id", str(user_id)).execute()
+            )
+            return True
+        except Exception as e:
+            error_key = "delete_user_color_role"
+            if error_key not in _supabase_error_logged:
+                logger.error(f"[DB] delete_user_color_role error: {e}")
+                _supabase_error_logged.add(error_key)
+    data = _read_json(_USER_COLOR_ROLES_JSON)
+    key = f"{guild_id}_{user_id}"
+    if key in data:
+        del data[key]
+        _write_json(_USER_COLOR_ROLES_JSON, data)
+        return True
+    return False
+
+
+async def get_guild_color_roles_async(guild_id) -> list:
+    """PHASE 3 / PART 4 — every color-role row for a guild (for
+    /color cleanup stale-entry sweeps)."""
+    sb = get_supabase()
+    if sb:
+        try:
+            def _fetch():
+                return sb.table("user_color_roles").select(
+                    "user_id,role_id,hex_color,last_changed"
+                ).eq("guild_id", str(guild_id)).execute()
+            result = await asyncio.to_thread(_fetch)
+            if result and result.data:
+                return result.data
+        except Exception as e:
+            error_key = "get_guild_color_roles"
+            if error_key not in _supabase_error_logged:
+                logger.error(f"[DB] get_guild_color_roles error: {e}")
+                _supabase_error_logged.add(error_key)
+    return _json_all_color_roles(str(guild_id))
+
+
+# ─── PHASE 3 / PART 5 — nickname requests (/nick) ────────────────
+
+_NICK_REQUESTS_JSON = "data/nick_requests.json"
+_NICK_SETTINGS_TABLE = "nick_settings"
+
+_NICK_SETTINGS_DEFAULTS = {
+    "channel_id": None,
+    "auto_approve": False,
+    "cooldown_hours": 24,
+}
+
+
+async def get_nick_settings_async(guild_id) -> dict:
+    """PHASE 3 / PART 5 — nick review settings with defaults filled."""
+    raw = await get_guild_setting_async(int(guild_id), _NICK_SETTINGS_TABLE)
+    settings = dict(raw) if isinstance(raw, dict) else {}
+    for key, default in _NICK_SETTINGS_DEFAULTS.items():
+        settings.setdefault(key, default)
+    return settings
+
+
+async def set_nick_settings_async(guild_id, payload: dict):
+    """PHASE 3 / PART 5 — save (merge) nick review settings."""
+    current = await get_nick_settings_async(guild_id)
+    current.update(payload if isinstance(payload, dict) else {})
+    clean = {k: v for k, v in current.items()
+             if k in _TABLE_COLUMNS[_NICK_SETTINGS_TABLE] or k == "guild_id"}
+    await set_guild_setting_async(int(guild_id), _NICK_SETTINGS_TABLE, clean)
+
+
+def _json_nick_rows(guild_id) -> list:
+    data = _read_json(_NICK_REQUESTS_JSON)
+    rows = data.get(str(guild_id), [])
+    return rows if isinstance(rows, list) else []
+
+
+def _json_save_nick_rows(guild_id, rows: list):
+    data = _read_json(_NICK_REQUESTS_JSON)
+    data[str(guild_id)] = rows
+    _write_json(_NICK_REQUESTS_JSON, data)
+
+
+async def create_nick_request_async(guild_id, user_id, current: str,
+                                    requested: str):
+    """PHASE 3 / PART 5 — store a pending nickname request; returns id."""
+    from datetime import datetime as _dt
+    payload = {
+        "guild_id": str(guild_id),
+        "user_id": str(user_id),
+        "current_nick": str(current or "")[:64],
+        "requested_nick": str(requested)[:32],
+        "status": "pending",
+        "reviewer_id": None,
+        "reason": None,
+        "created_at": _dt.utcnow().isoformat(),
+        "resolved_at": None,
+    }
+    sb = get_supabase()
+    if sb:
+        try:
+            def _insert():
+                return sb.table("nick_requests").insert(payload).execute()
+            result = await asyncio.to_thread(_insert)
+            if result and result.data:
+                return result.data[0].get("id")
+            return None
+        except Exception as e:
+            error_key = "create_nick_request"
+            if error_key not in _supabase_error_logged:
+                logger.error(f"[DB] create_nick_request error: {e}")
+                _supabase_error_logged.add(error_key)
+    rows = _json_nick_rows(guild_id)
+    next_id = max(
+        (int(r.get("id", 0)) for r in rows if isinstance(r, dict)),
+        default=0,
+    ) + 1
+    payload["id"] = next_id
+    rows.append(payload)
+    _json_save_nick_rows(guild_id, rows)
+    return next_id
+
+
+async def get_pending_nick_requests_async(guild_id) -> list:
+    """PHASE 3 / PART 5 — this guild's pending requests, oldest first."""
+    sb = get_supabase()
+    if sb:
+        try:
+            def _fetch():
+                return sb.table("nick_requests").select("*").eq(
+                    "guild_id", str(guild_id)
+                ).eq("status", "pending").order(
+                    "id", desc=False
+                ).limit(25).execute()
+            result = await asyncio.to_thread(_fetch)
+            return (result.data or []) if result else []
+        except Exception as e:
+            error_key = "get_pending_nick_requests"
+            if error_key not in _supabase_error_logged:
+                logger.error(f"[DB] get_pending_nick_requests error: {e}")
+                _supabase_error_logged.add(error_key)
+    return [r for r in _json_nick_rows(guild_id)
+            if isinstance(r, dict) and r.get("status") == "pending"]
+
+
+async def get_nick_request_async(request_id) -> dict | None:
+    """PHASE 3 / PART 5 — one request by id (button handlers)."""
+    sb = get_supabase()
+    if sb:
+        try:
+            def _fetch():
+                return sb.table("nick_requests").select("*").eq(
+                    "id", request_id
+                ).maybe_single().execute()
+            result = await asyncio.to_thread(_fetch)
+            return result.data if (result and result.data) else None
+        except Exception as e:
+            error_key = "get_nick_request"
+            if error_key not in _supabase_error_logged:
+                logger.error(f"[DB] get_nick_request error: {e}")
+                _supabase_error_logged.add(error_key)
+            return None
+    for guild_rows in _read_json(_NICK_REQUESTS_JSON).values():
+        if not isinstance(guild_rows, list):
+            continue
+        for r in guild_rows:
+            if (isinstance(r, dict)
+                    and str(r.get("id")) == str(request_id)):
+                return r
+    return None
+
+
+async def update_nick_request_async(request_id, status: str,
+                                    reviewer_id, reason: str = ""):
+    """PHASE 3 / PART 5 — mark a request approved/denied and stamp who
+    reviewed it, when, and why."""
+    from datetime import datetime as _dt
+    payload = {
+        "status": str(status),
+        "reviewer_id": str(reviewer_id) if reviewer_id else None,
+        "reason": (str(reason)[:200] if reason else None),
+        "resolved_at": _dt.utcnow().isoformat(),
+    }
+    sb = get_supabase()
+    if sb:
+        try:
+            await asyncio.to_thread(
+                lambda: sb.table("nick_requests").update(
+                    payload
+                ).eq("id", request_id).execute()
+            )
+            return True
+        except Exception as e:
+            error_key = "update_nick_request"
+            if error_key not in _supabase_error_logged:
+                logger.error(f"[DB] update_nick_request error: {e}")
+                _supabase_error_logged.add(error_key)
+            return False
+    data = _read_json(_NICK_REQUESTS_JSON)
+    found = False
+    for guild_rows in data.values():
+        if not isinstance(guild_rows, list):
+            continue
+        for r in guild_rows:
+            if (isinstance(r, dict)
+                    and str(r.get("id")) == str(request_id)):
+                r.update(payload)
+                found = True
+    if found:
+        _write_json(_NICK_REQUESTS_JSON, data)
+    return found
+
+
+async def get_user_nick_requests_async(guild_id, user_id,
+                                       limit: int = 10) -> list:
+    """PHASE 3 / PART 5 — a user's requests in a guild, newest first
+    (also drives the request cooldown check)."""
+    sb = get_supabase()
+    if sb:
+        try:
+            def _fetch():
+                return sb.table("nick_requests").select("*").eq(
+                    "guild_id", str(guild_id)
+                ).eq("user_id", str(user_id)).order(
+                    "id", desc=True
+                ).limit(limit).execute()
+            result = await asyncio.to_thread(_fetch)
+            return (result.data or []) if result else []
+        except Exception as e:
+            error_key = "get_user_nick_requests"
+            if error_key not in _supabase_error_logged:
+                logger.error(f"[DB] get_user_nick_requests error: {e}")
+                _supabase_error_logged.add(error_key)
+    uid = str(user_id)
+    rows = [
+        r for r in _json_nick_rows(guild_id)
+        if isinstance(r, dict) and str(r.get("user_id")) == uid
+    ]
+    rows.reverse()  # newest first
+    return rows[:limit]
+
+
+# ─── PHASE 3 / PART 6 — privacy controls (/privacy) ──────────────
+
+_USER_PRIVACY_JSON = "data/user_privacy.json"
+
+_PRIVACY_FEATURES = (
+    "memory", "vibe", "recap", "ship", "fact_extraction",
+)
+
+_PRIVACY_DEFAULTS = {
+    "memory_optout": False,
+    "vibe_optout": False,
+    "recap_optout": False,
+    "ship_optout": False,
+    "fact_extraction_optout": False,
+}
+
+
+async def get_user_privacy_async(user_id) -> dict:
+    """PHASE 3 / PART 6 — the user's privacy row with all five opt-out
+    booleans filled (defaults: everything allowed).
+
+    Results are cached for 120s (shared TTLCache) so hot paths like
+    /vibe and /recap can check every message author without a REST
+    round-trip each; set_user_privacy_async invalidates on write."""
+    key = f"priv:{user_id}"
+    cached = cache.get_sync(key)
+    if cached is not None and isinstance(cached, dict):
+        return dict(cached)
+    row = None
+    sb = get_supabase()
+    if sb:
+        try:
+            def _fetch():
+                return sb.table("user_privacy").select(
+                    "memory_optout,vibe_optout,recap_optout,"
+                    "ship_optout,fact_extraction_optout,updated_at"
+                ).eq("user_id", str(user_id)).maybe_single().execute()
+            result = await asyncio.to_thread(_fetch)
+            row = result.data if (result and result.data) else None
+        except Exception as e:
+            error_key = "get_user_privacy"
+            if error_key not in _supabase_error_logged:
+                logger.error(f"[DB] get_user_privacy error: {e}")
+                _supabase_error_logged.add(error_key)
+            row = None
+    if not row:
+        data = _read_json(_USER_PRIVACY_JSON)
+        row = data.get(str(user_id))
+        if not isinstance(row, dict):
+            row = {}
+    settings = dict(_PRIVACY_DEFAULTS)
+    for col in _PRIVACY_DEFAULTS:
+        settings[col] = bool(row.get(col, False))
+    settings["updated_at"] = row.get("updated_at") or ""
+    cache.set_sync(key, dict(settings), ttl=120)
+    return settings
+
+
+async def set_user_privacy_async(user_id, feature: str, enabled: bool):
+    """PHASE 3 / PART 6 — set one feature's opt-out (or all five when
+    feature='all').
+
+    `enabled=True` means the feature is ALLOWED (opt-out False);
+    `enabled=False` opts the user out. Returns the saved row."""
+    from datetime import datetime as _dt
+    current = await get_user_privacy_async(user_id)
+    features = _PRIVACY_FEATURES if feature == "all" else (feature,)
+    for f in features:
+        col = f"{f}_optout"
+        if col in _PRIVACY_DEFAULTS:
+            current[col] = not bool(enabled)
+    current["updated_at"] = _dt.utcnow().isoformat()
+    payload = {
+        "user_id": str(user_id),
+        "memory_optout": bool(current["memory_optout"]),
+        "vibe_optout": bool(current["vibe_optout"]),
+        "recap_optout": bool(current["recap_optout"]),
+        "ship_optout": bool(current["ship_optout"]),
+        "fact_extraction_optout": bool(current["fact_extraction_optout"]),
+        "updated_at": current["updated_at"],
+    }
+    sb = get_supabase()
+    saved = False
+    if sb:
+        try:
+            await asyncio.to_thread(
+                lambda: sb.table("user_privacy").upsert(payload).execute()
+            )
+            saved = True
+        except Exception as e:
+            error_key = "set_user_privacy"
+            if error_key not in _supabase_error_logged:
+                logger.error(f"[DB] set_user_privacy error: {e}")
+                _supabase_error_logged.add(error_key)
+    if not saved:
+        data = _read_json(_USER_PRIVACY_JSON)
+        data[str(user_id)] = payload
+        _write_json(_USER_PRIVACY_JSON, data)
+    cache.invalidate_sync(f"priv:{user_id}")
+    return current
+
+
+def _privacy_purge_json(user_id: str) -> dict:
+    """JSON-fallback side of delete_all_user_data_async. Returns the
+    same counts shape as the Supabase path."""
+    uid = str(user_id)
+    counts = {}
+
+    def _purge_keyed(path: str, out_key: str, idx: int = 1) -> int:
+        data = _read_json(path)
+        removed = 0
+        for k in list(data.keys()):
+            parts = str(k).split("_")
+            if len(parts) > idx and parts[idx] == uid:
+                del data[k]
+                removed += 1
+        if removed:
+            _write_json(path, data)
+        counts[out_key] = removed
+        return removed
+
+    _purge_keyed("data/user_memory.json", "facts")
+    _purge_keyed("data/conversation_memory.json", "conversation_memory")
+    _purge_keyed("data/user_levels.json", "levels")
+    _purge_keyed("data/daily_streaks.json", "daily_streaks")
+    _purge_keyed("data/user_achievements.json", "achievements")
+    _purge_keyed("data/user_color_roles.json", "color_roles")
+    _purge_keyed("data/message_counts.json", "message_counts")
+
+    # profile
+    data = _read_json("data/user_profiles.json")
+    if uid in data:
+        del data[uid]
+        _write_json("data/user_profiles.json", data)
+        counts["profile"] = 1
+    else:
+        counts["profile"] = 0
+
+    # privacy row
+    data = _read_json(_USER_PRIVACY_JSON)
+    if uid in data:
+        del data[uid]
+        _write_json(_USER_PRIVACY_JSON, data)
+        counts["privacy"] = 1
+    else:
+        counts["privacy"] = 0
+
+    # warnings (nested guild -> user)
+    data = _read_json("data/warnings.json")
+    removed = 0
+    for g in list(data.keys()):
+        users = data.get(g)
+        if isinstance(users, dict) and uid in users:
+            removed += len(users[uid]) if isinstance(users[uid], list) else 1
+            del users[uid]
+    if removed:
+        _write_json("data/warnings.json", data)
+    counts["warnings"] = removed
+
+    # time capsules (keyed by capsule id)
+    data = _read_json(_TIME_CAPSULES_JSON)
+    before = len(data)
+    data = {k: v for k, v in data.items()
+            if not (isinstance(v, dict) and str(v.get("user_id")) == uid)}
+    if len(data) != before:
+        _write_json(_TIME_CAPSULES_JSON, data)
+    counts["capsules"] = before - len(data)
+
+    # nick requests (per-guild lists)
+    data = _read_json(_NICK_REQUESTS_JSON)
+    removed = 0
+    for g in list(data.keys()):
+        rows = data.get(g)
+        if not isinstance(rows, list):
+            continue
+        keep = [r for r in rows
+                if not (isinstance(r, dict)
+                        and str(r.get("user_id")) == uid)]
+        removed += len(rows) - len(keep)
+        data[g] = keep
+    if removed:
+        _write_json(_NICK_REQUESTS_JSON, data)
+    counts["nick_requests"] = removed
+
+    # ship history (per-guild lists, either side)
+    data = _read_json(_SHIP_HISTORY_JSON)
+    removed = 0
+    for g in list(data.keys()):
+        rows = data.get(g)
+        if not isinstance(rows, list):
+            continue
+        keep = [r for r in rows
+                if not (isinstance(r, dict)
+                        and uid in (str(r.get("user1_id")),
+                                    str(r.get("user2_id"))))]
+        removed += len(rows) - len(keep)
+        data[g] = keep
+    if removed:
+        _write_json(_SHIP_HISTORY_JSON, data)
+    counts["ships"] = removed
+
+    return counts
+
+
+def _sb_purge(table: str, where: list) -> int:
+    """Count-then-delete rows matching all eq filters. 0 when nothing
+    matched, -1 when Supabase is unavailable (caller falls back)."""
+    sb = get_supabase()
+    if not sb:
+        return -1
+    q = sb.table(table).select("*")
+    for col, val in where:
+        q = q.eq(col, val)
+    rows = q.execute().data or []
+    if not rows:
+        return 0
+    qd = sb.table(table).delete()
+    for col, val in where:
+        qd = qd.eq(col, val)
+    qd.execute()
+    return len(rows)
+
+
+async def delete_all_user_data_async(user_id) -> dict:
+    """PHASE 3 / PART 6 — GDPR-style purge of every row the user owns
+    across all tables, across all guilds. Returns a {label: count} dict.
+
+    Supabase first; any failure (or no Supabase) runs the JSON purge
+    so the user always gets a real deletion. Discord-side artifacts
+    (color roles) are deleted by the /privacy cog BEFORE this call."""
+    uid = str(user_id)
+    counts = {}
+
+    async def _purge(label: str, table: str, where: list):
+        try:
+            n = await asyncio.to_thread(_sb_purge, table, where)
+        except Exception as e:
+            logger.error(f"[DB] purge {table} failed: {e}")
+            n = -1
+        if n >= 0:
+            counts[label] = n
+
+    await _purge("facts", "user_memory", [("user_id", uid)])
+    await _purge("conversation_memory", "conversation_memory",
+                 [("user_id", uid)])
+    await _purge("profile", "user_profiles", [("user_id", uid)])
+    await _purge("levels", "user_levels", [("user_id", uid)])
+    await _purge("warnings", "warnings", [("user_id", uid)])
+    await _purge("daily_streaks", "daily_streaks", [("user_id", uid)])
+    await _purge("capsules", "time_capsules", [("user_id", uid)])
+    await _purge("achievements", "user_achievements", [("user_id", uid)])
+    await _purge("color_roles", "user_color_roles", [("user_id", uid)])
+    await _purge("nick_requests", "nick_requests", [("user_id", uid)])
+    await _purge("privacy", "user_privacy", [("user_id", uid)])
+
+    # fortune_history (no JSON fallback for this table in db.py)
+    sb = get_supabase()
+    if sb:
+        try:
+            n = await asyncio.to_thread(
+                _sb_purge, "fortune_history", [("user_id", uid)]
+            )
+            if n >= 0:
+                counts["fortunes"] = n
+        except Exception:
+            pass
+
+    # ship_history needs an OR filter (either side of the ship)
+    if sb:
+        try:
+            def _purge_ship():
+                rows = sb.table("ship_history").select("id").or_(
+                    f"user1_id.eq.{uid},user2_id.eq.{uid}"
+                ).execute().data or []
+                if not rows:
+                    return 0
+                ids = [r["id"] for r in rows]
+                sb.table("ship_history").delete().in_("id", ids).execute()
+                return len(ids)
+            counts["ships"] = await asyncio.to_thread(_purge_ship)
+        except Exception as e:
+            logger.error(f"[DB] purge ship_history failed: {e}")
+
+    # message counts (achievement bookkeeping — purge for a clean slate)
+    await _purge("message_counts", "message_counts", [("user_id", uid)])
+
+    if not sb:
+        # No Supabase at all — the JSON purge is the real deletion.
+        return _privacy_purge_json(uid)
+
+    # Supabase path succeeded for the listed tables; still run the JSON
+    # purge so any fallback-stranded rows (from earlier outages) are
+    # wiped too — merged into the counts.
+    json_counts = await asyncio.to_thread(_privacy_purge_json, uid)
+    for k, v in json_counts.items():
+        counts[k] = counts.get(k, 0) + v
+    return counts
+
+
+async def export_user_data_async(user_id) -> dict:
+    """PHASE 3 / PART 6 — compile everything stored about a user into
+    one JSON-serializable dict (for /privacy export)."""
+    from datetime import datetime as _dt
+    uid = str(user_id)
+    export = {
+        "generated_at": _dt.utcnow().isoformat(),
+        "user_id": uid,
+    }
+    sb = get_supabase()
+
+    def _sb_select(table: str, where: list) -> list:
+        if not sb:
+            return []
+        q = sb.table(table).select("*")
+        for col, val in where:
+            q = q.eq(col, val)
+        return (q.execute().data or [])
+
+    async def _rows(label: str, table: str, where: list, json_fn):
+        try:
+            rows = await asyncio.to_thread(_sb_select, table, where)
+        except Exception:
+            rows = []
+        if not rows:
+            rows = await asyncio.to_thread(json_fn) if json_fn else []
+        export[label] = rows
+
+    def _json_facts():
+        data = _read_json("data/user_memory.json")
+        return [
+            {"guild_id": k.rsplit("_", 1)[0], "facts": v.get("facts", [])}
+            for k, v in data.items()
+            if isinstance(v, dict) and k.rsplit("_", 1)[-1] == uid
+        ]
+
+    def _json_conv():
+        data = _read_json("data/conversation_memory.json")
+        out = []
+        for k, entries in data.items():
+            parts = str(k).split("_")
+            if len(parts) >= 3 and parts[1] == uid and isinstance(entries, list):
+                out.append({
+                    "guild_id": parts[0], "channel_id": parts[2],
+                    "messages": entries,
+                })
+        return out
+
+    def _json_levels():
+        data = _read_json("data/user_levels.json")
+        return [
+            {"guild_id": k.rsplit("_", 1)[0], **{c: v.get(c, 0)
+                                                 for c in ("xp", "level")}}
+            for k, v in data.items()
+            if isinstance(v, dict) and k.rsplit("_", 1)[-1] == uid
+        ]
+
+    def _json_streaks():
+        data = _read_json("data/daily_streaks.json")
+        return [
+            {"guild_id": k.rsplit("_", 1)[0], **v}
+            for k, v in data.items()
+            if isinstance(v, dict) and k.rsplit("_", 1)[-1] == uid
+        ]
+
+    def _json_capsules_export():
+        # (deliberately NOT named _json_capsules — that would shadow
+        # the module-level helper and recurse forever)
+        return [
+            v for v in _json_capsules().values()
+            if isinstance(v, dict) and str(v.get("user_id")) == uid
+        ]
+
+    def _json_achievements():
+        # flat rows (same shape as the Supabase path): one dict per
+        # unlocked achievement, with its guild attached
+        data = _read_json(_USER_ACHIEVEMENTS_JSON)
+        out = []
+        for gk, rows in data.items():
+            if not isinstance(rows, list):
+                continue
+            if gk.rsplit("_", 1)[-1] != uid:
+                continue
+            for r in rows:
+                if isinstance(r, dict):
+                    out.append({"guild_id": gk.rsplit("_", 1)[0], **r})
+        return out
+
+    def _json_warnings():
+        data = _read_json("data/warnings.json")
+        out = []
+        for g, users in data.items():
+            if isinstance(users, dict) and uid in users:
+                out.append({"guild_id": g, "warnings": users[uid]})
+        return out
+
+    await _rows("facts", "user_memory", [("user_id", uid)], _json_facts)
+    await _rows("conversation_history", "conversation_memory",
+                [("user_id", uid)], _json_conv)
+    await _rows("levels", "user_levels", [("user_id", uid)], _json_levels)
+    await _rows("daily_streaks", "daily_streaks", [("user_id", uid)],
+                _json_streaks)
+    await _rows("time_capsules", "time_capsules", [("user_id", uid)],
+                _json_capsules_export)
+    await _rows("achievements", "user_achievements", [("user_id", uid)],
+                _json_achievements)
+    await _rows("warnings", "warnings", [("user_id", uid)], _json_warnings)
+
+    # profile + privacy (single rows)
+    try:
+        export["profile"] = await asyncio.to_thread(get_user_profile, uid)
+    except Exception:
+        export["profile"] = {}
+    try:
+        export["privacy"] = await get_user_privacy_async(uid)
+    except Exception:
+        export["privacy"] = dict(_PRIVACY_DEFAULTS)
+
+    return export

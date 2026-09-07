@@ -190,6 +190,16 @@ class Confess(commands.Cog):
         # Persist the incremented counter
         await self.save_config(interaction.guild.id, config)
 
+        # PHASE 3 / PART 3 — confession achievement hook.
+        try:
+            achievements = self.bot.get_cog("Achievements")
+            if achievements:
+                await achievements.unlock_confession(
+                    interaction.guild, member
+                )
+        except Exception as e:
+            logger.debug(f"[confess] achievement hook failed: {e}")
+
         try:
             await interaction.followup.send(
                 "✅ confession submitted anonymously.", ephemeral=True

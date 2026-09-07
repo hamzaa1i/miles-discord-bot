@@ -64,11 +64,28 @@ class FunExtras(commands.Cog):
         # timezone-aware — mixing the two raises TypeError.)
         cutoff = discord.utils.utcnow() - timedelta(hours=4)
         messages = []
+        # PHASE 3 / PART 6 — vibe privacy: members who opted out of
+        # vibe checks are skipped from the transcript entirely. The
+        # per-author privacy rows are served from a 120s cache inside
+        # utils.db, so repeated /vibe runs don't multiply REST calls.
+        _vibe_optouts: dict[int, bool] = {}
         async for msg in interaction.channel.history(limit=100):
             if msg.created_at < cutoff:
                 break  # history is newest-first: everything else is older
             if msg.author.bot or not msg.content:
                 continue
+            author_id = msg.author.id
+            if author_id not in _vibe_optouts:
+                try:
+                    from utils.db import get_user_privacy_async
+                    priv = await get_user_privacy_async(author_id)
+                    _vibe_optouts[author_id] = bool(
+                        priv and priv.get("vibe_optout")
+                    )
+                except Exception:
+                    _vibe_optouts[author_id] = False
+            if _vibe_optouts[author_id]:
+                continue  # their messages stay out of the vibe read
             messages.append(f"{msg.author.display_name}: {msg.content[:200]}")
             if len(messages) >= 20:
                 break

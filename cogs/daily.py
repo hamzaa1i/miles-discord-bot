@@ -138,6 +138,18 @@ class Daily(commands.Cog):
                     f"\n⭐ you leveled up to **level "
                     f"{xp_result['new_level']}**!"
                 )
+                # PHASE 3 / PART 3 — level achievement hook (10/25/50)
+                # for the /daily XP path (chat leveling has its own
+                # hook in cogs/leveling.py).
+                try:
+                    achievements = self.bot.get_cog("Achievements")
+                    if achievements:
+                        await achievements.check_level(
+                            interaction.guild, interaction.user,
+                            int(xp_result["new_level"]),
+                        )
+                except Exception as hook_e:
+                    logger.debug(f"[daily] level hook failed: {hook_e}")
         except Exception as e:
             # XP is best-effort — never block the claim itself.
             logger.error(f"[daily] xp award failed: {e}")
@@ -149,6 +161,16 @@ class Daily(commands.Cog):
             )
         except Exception as e:
             logger.error(f"[daily] streak save failed: {e}")
+
+        # PHASE 3 / PART 3 — streak achievement hook (7 / 30 / 100).
+        try:
+            achievements = self.bot.get_cog("Achievements")
+            if achievements:
+                await achievements.check_streak(
+                    interaction.guild, interaction.user, streak
+                )
+        except Exception as e:
+            logger.debug(f"[daily] achievement hook failed: {e}")
 
         embed = discord.Embed(
             title="꒰ა ♡ ໒꒱ daily reward",

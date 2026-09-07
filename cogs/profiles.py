@@ -85,6 +85,23 @@ class Profiles(commands.Cog):
             value=tz if tz else "_(not set)_",
             inline=True,
         )
+        # PHASE 3 / PART 3 — achievement count on the profile card.
+        ach_text = "—"
+        if interaction.guild:
+            try:
+                from cogs.achievements import ACHIEVEMENTS as _ALL_ACHIEVEMENTS
+                from utils.db import get_user_achievements_async
+                rows = await get_user_achievements_async(
+                    str(interaction.guild.id), str(target.id)
+                )
+                ach_text = f"{len(rows)}/{len(_ALL_ACHIEVEMENTS)} ✦"
+            except Exception:
+                ach_text = "—"
+        embed.add_field(
+            name="Achievements",
+            value=ach_text,
+            inline=True,
+        )
         embed.set_footer(text=f"User ID: {target.id}")
         await interaction.response.send_message(embed=embed)
 

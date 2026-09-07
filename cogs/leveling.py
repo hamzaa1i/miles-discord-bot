@@ -224,6 +224,16 @@ class Leveling(commands.Cog):
         template = config.get("level_up_message") or DEFAULT_LEVEL_UP_MESSAGE
         text = self.render_level_up_message(template, member, guild, level, total_xp)
 
+        # PHASE 3 / PART 3 — level achievement hook (10 / 25 / 50).
+        # Runs before the announcement so a failed DM never blocks it;
+        # wrapped so an achievement problem can never break level-ups.
+        try:
+            achievements = self.bot.get_cog("Achievements")
+            if achievements:
+                await achievements.check_level(guild, member, level)
+        except Exception as e:
+            logger.debug(f"[leveling] achievement hook failed: {e}")
+
         try:
             if mode == "none":
                 return  # announcements disabled

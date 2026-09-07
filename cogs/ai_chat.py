@@ -584,23 +584,40 @@ class AIChat(commands.Cog):
             "i'm here. what's on your mind?",
         }
         if ai_response and ai_response not in ERROR_RESPONSES and guild_id:
+            # PHASE 3 / PART 6 — privacy opt-outs, checked BEFORE any
+            # persistence or extraction happens:
+            #   * memory_optout          -> don't save conversation history
+            #   * fact_extraction_optout -> don't run fact extraction
+            privacy = None
             try:
-                from datetime import datetime as _dt
-                ts = _dt.utcnow().isoformat()
-                # P1 — async wrappers (thread-pool) for both writes
-                await save_conversation_message_async(guild_id, user_id, "user", clean_content, ts, channel_id=channel_id_val)
-                await save_conversation_message_async(guild_id, user_id, "assistant", ai_response, ts, channel_id=channel_id_val)
-            except Exception as e:
-                logger.error(f"[conversation_memory] save error: {e}")
+                from utils.db import get_user_privacy_async
+                privacy = await get_user_privacy_async(user_id)
+            except Exception:
+                privacy = None
+            memory_optout = bool(privacy and privacy.get("memory_optout"))
+            fact_optout = bool(
+                privacy and privacy.get("fact_extraction_optout")
+            )
+
+            if not memory_optout:
+                try:
+                    from datetime import datetime as _dt
+                    ts = _dt.utcnow().isoformat()
+                    # P1 — async wrappers (thread-pool) for both writes
+                    await save_conversation_message_async(guild_id, user_id, "user", clean_content, ts, channel_id=channel_id_val)
+                    await save_conversation_message_async(guild_id, user_id, "assistant", ai_response, ts, channel_id=channel_id_val)
+                except Exception as e:
+                    logger.error(f"[conversation_memory] save error: {e}")
 
             # PHASE 4 — AI long-term memory: fire-and-forget fact extraction.
             # Runs AFTER the response is saved so it never delays the reply.
-            asyncio.create_task(
-                self._maybe_extract_facts(
-                    guild_id, user_id, author_name or "someone",
-                    message, ai_response
+            if not fact_optout:
+                asyncio.create_task(
+                    self._maybe_extract_facts(
+                        guild_id, user_id, author_name or "someone",
+                        message, ai_response
+                    )
                 )
-            )
 
         return ai_response
 
