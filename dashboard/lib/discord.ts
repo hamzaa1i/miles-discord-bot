@@ -19,9 +19,68 @@ export function channelTypeEmoji(type: number): string {
   return '#';
 }
 
-/** Fetch a fresh state + fully-built Discord authorize URL. */
-export async function beginLogin(): Promise<{ url: string }> {
-  const res = await fetch('/api/auth/state', { cache: 'no-store' });
-  if (!res.ok) throw new Error('could not start login');
-  return res.json() as Promise<{ url: string }>;
+/** Thrown when /api/auth/state can't provide an authorize URL.
+ *  Carries the server's actual error code + detail (never generic). */
+export class LoginStartError extends Error {
+  status: number;
+  detail: string;
+
+  constructor(status: number, message: string, detail = '') {
+    super(message);
+    this.name = 'LoginStartError';
+    this.status = status;
+    this.detail = detail;
+  }
+}
+
+/**
+ * Fetch a fresh state + fully-built Discord authorize URL.
+ *
+ * The server route (/api/auth/state) returns structured errors:
+ *   { error: 'discord integration not configured', detail: '...' }  → 500
+ *   { error: 'server configuration incomplete', detail: '...' }     → 500
+ * Anything those routes say is surfaced verbatim through
+ * LoginStartError so the login page can show the real reason.
+ */
+export async function beginLogin(): Promise<{
+  url: string;
+  state: string;
+  origin: string;
+  warnings: string[];
+}> {
+  let res: Response;
+  try {
+    res = await fetch('/api/auth/state', { cache: 'no-store' });
+  } catch (e) {
+    // the fetch itself failed — network, ad blocker, function cold start
+    throw new LoginStartError(
+      0,
+      'network error',
+      e instanceof Error ? e.message : 'could not reach /api/auth/state',
+    );
+  }
+
+  if (!res.ok) {
+    let error = '';
+    let detail = '';
+    try {
+      const body = (await res.json()) as { error?: string; detail?: string };
+      error = typeof body.error === 'string' ? body.error : '';
+      detail = typeof body.detail === 'string' ? body.detail : '';
+    } catch {
+      // non-JSON body — fall through to the status text
+    }
+    throw new LoginStartError(
+      res.status,
+      error || `login service returned ${res.status}`,
+      detail,
+    );
+  }
+
+  return (await res.json()) as {
+    url: string;
+    state: string;
+    origin: string;
+    warnings: string[];
+  };
 }

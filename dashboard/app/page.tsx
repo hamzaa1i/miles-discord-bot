@@ -1,5 +1,7 @@
 import Link from 'next/link';
 
+import BotStatusCard from '@/components/BotStatusCard';
+
 const FEATURES = [
   { icon: '♡', title: 'welcome cards', desc: 'greet every soul with embeds, colors and live previews.' },
   { icon: '✩', title: 'leveling', desc: 'tune xp rates, level-up messages and role rewards.' },
@@ -33,18 +35,14 @@ export default function LandingPage() {
             the veloura command center — configure every feature of your
             discord server through the browser, no slash commands required.
           </p>
-          <div className="mt-10 flex flex-col items-center gap-4 sm:flex-row">
+
+          {/* live bot status — replaces the old raw-json "bot status" link */}
+          <BotStatusCard className="mt-8" />
+
+          <div className="mt-8">
             <Link href="/login" className="veloura-button-primary px-8 text-base">
               ✦ login with discord
             </Link>
-            <a
-              href="https://miles-discord-bot.onrender.com/health"
-              target="_blank"
-              rel="noreferrer"
-              className="veloura-button-ghost px-6 text-base"
-            >
-              bot status
-            </a>
           </div>
           <p className="mt-4 text-xs text-veloura-muted/70">
             only servers where you have <span className="text-veloura-pink">manage server</span> appear
@@ -53,13 +51,29 @@ export default function LandingPage() {
 
         {/* feature grid */}
         <section className="grid gap-4 pb-16 sm:grid-cols-2 lg:grid-cols-3" aria-label="dashboard features">
-          {FEATURES.map((f) => (
-            <div key={f.title} className="veloura-card p-5 transition hover:border-veloura-pink/40 hover:shadow-glow">
-              <div className="mb-3 text-2xl" aria-hidden>
-                {f.icon}
+          {FEATURES.map((f, i) => (
+            <div
+              key={f.title}
+              style={{ animationDelay: `${120 + i * 80}ms` }}
+              className="group animate-rise veloura-card relative p-5 transition-all duration-300 hover:-translate-y-1 hover:border-veloura-pink/40 hover:shadow-glow"
+            >
+              {/* soft gradient wash on hover */}
+              <div
+                aria-hidden
+                className="pointer-events-none absolute inset-0 rounded-card bg-gradient-to-br from-veloura-pink/0 via-veloura-lavender/0 to-veloura-pink/0 opacity-0 transition-opacity duration-300 group-hover:from-veloura-pink/[0.06] group-hover:via-veloura-lavender/[0.04] group-hover:to-transparent group-hover:opacity-100"
+              />
+              <div className="relative">
+                <div
+                  aria-hidden
+                  className="mb-3 flex h-10 w-10 items-center justify-center rounded-[12px] bg-veloura-card-hover text-xl transition-all duration-300 group-hover:scale-110 group-hover:border group-hover:border-veloura-pink/30 group-hover:shadow-glow"
+                >
+                  {f.icon}
+                </div>
+                <h2 className="font-heading text-lg text-veloura-text transition-colors duration-300 group-hover:text-veloura-lavender">
+                  {f.title}
+                </h2>
+                <p className="mt-1.5 text-sm leading-relaxed text-veloura-muted">{f.desc}</p>
               </div>
-              <h2 className="font-heading text-lg text-veloura-text">{f.title}</h2>
-              <p className="mt-1.5 text-sm leading-relaxed text-veloura-muted">{f.desc}</p>
             </div>
           ))}
         </section>

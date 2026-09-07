@@ -2,7 +2,32 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { beginLogin } from '@/lib/discord';
+import { beginLogin, LoginStartError } from '@/lib/discord';
+
+const DEV = process.env.NODE_ENV === 'development';
+
+/**
+ * Turn a LoginStartError into a message a human actually wants to read.
+ * Only the truly unknown case falls back to the generic text.
+ */
+function friendlyError(e: unknown): string {
+  if (e instanceof LoginStartError) {
+    switch (e.message) {
+      case 'discord integration not configured':
+        return 'discord integration not configured ♡ — ask the bot owner to set NEXT_PUBLIC_DISCORD_CLIENT_ID';
+      case 'server configuration incomplete':
+        return 'server configuration incomplete — please contact the bot owner ♡';
+      case 'network error':
+        return `aurelia couldn't connect right now ♡ (error: ${e.detail || 'network'})`;
+      default: {
+        const detail = e.detail ? ` — ${e.detail}` : '';
+        return `aurelia couldn't connect right now ♡ (error: ${e.message}${detail})`;
+      }
+    }
+  }
+  if (e instanceof Error && e.message) return `aurelia couldn't connect right now ♡ (error: ${e.message})`;
+  return 'could not start login ♡';
+}
 
 export default function LoginPage() {
   const router = useRouter();
@@ -20,13 +45,35 @@ export default function LoginPage() {
   }, [router]);
 
   async function login() {
+    // the OAuth state round-trips through a cookie — without cookies the
+    // flow can never complete, so check up front with a clear message
+    if (typeof navigator !== 'undefined' && !navigator.cookieEnabled) {
+      setError('cookies are disabled — aurelia needs them to remember you ♡');
+      return;
+    }
+
     setBusy(true);
     setError(null);
     try {
-      const { url } = await beginLogin();
+      const { url, origin, warnings } = await beginLogin();
+
+      if (DEV) {
+        // eslint-disable-next-line no-console
+        console.debug('[aurelia login] debug info', {
+          nextauthUrl: origin,
+          cookiesEnabled: navigator.cookieEnabled,
+          warnings,
+          authorizeUrl: url,
+        });
+      }
+
       window.location.href = url;
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'could not start the login flow');
+      if (DEV) {
+        // eslint-disable-next-line no-console
+        console.error('[aurelia login] login could not start — full error object:', e);
+      }
+      setError(friendlyError(e));
       setBusy(false);
     }
   }
@@ -58,9 +105,16 @@ export default function LoginPage() {
         </button>
 
         {error && (
-          <p className="mt-4 rounded-[12px] border border-veloura-danger/30 bg-veloura-danger/10 px-4 py-3 text-sm text-veloura-danger">
-            {error}
-          </p>
+          <div className="mt-4 rounded-[12px] border border-veloura-danger/30 bg-veloura-danger/10 px-4 py-3">
+            <p className="text-sm leading-relaxed text-veloura-danger">{error}</p>
+            <button
+              onClick={login}
+              disabled={busy}
+              className="veloura-button-ghost mt-3 w-full text-sm"
+            >
+              ✧ try again
+            </button>
+          </div>
         )}
 
         <p className="mt-6 text-xs text-veloura-muted/60">

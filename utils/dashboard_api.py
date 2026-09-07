@@ -1311,6 +1311,28 @@ def owner_action(action):
 # ─── registration hook (called from main.py) ────────────────────────
 def init_dashboard_api(app):
     app.register_blueprint(dashboard_bp)
+
+    # ── CORS for the public health endpoints ──────────────────────
+    # `/health` and `/stats` live on the main Flask app (main.py), NOT
+    # on this blueprint, so the blueprint's after_request CORS hook
+    # never runs for them. The dashboard's landing-page status card
+    # fetches GET /health cross-origin from the browser every 30s,
+    # so these two public read-only metrics routes need the SAME
+    # origin allow-list. App-level hook, additive only — no bot
+    # behavior change, no rate limiting implications (the limiter
+    # only guards /api/dashboard/* via require_api).
+    @app.after_request
+    def _public_metrics_cors(resp):
+        if request.path in ("/health", "/stats"):
+            origin = request.headers.get("Origin", "")
+            if origin and origin in _ALLOWED_ORIGINS:
+                resp.headers["Access-Control-Allow-Origin"] = origin
+                resp.headers["Vary"] = "Origin"
+                resp.headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
+                resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
+                resp.headers["Access-Control-Max-Age"] = "300"
+        return resp
+
     logger.info(
         "✅ Dashboard API registered under /api/dashboard (CORS: %s)",
         ", ".join(sorted(_ALLOWED_ORIGINS)) or "dev (localhost)",

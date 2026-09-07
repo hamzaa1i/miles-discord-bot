@@ -57,7 +57,11 @@ commands in the UI. To force a refresh:
 A companion Next.js dashboard lives in [`dashboard/`](./dashboard/README.md) —
 server owners can configure every feature (welcome cards, leveling, QOTD,
 moderation, giveaways, custom commands, …) through a browser at
-`https://aurelia.vercel.app` instead of slash commands.
+`<YOUR_DASHBOARD_URL>` instead of slash commands.
+
+> **the domain is never hardcoded** — change it by updating env vars only:
+> `DASHBOARD_URL` (Render), `NEXTAUTH_URL` (Vercel) and the Discord OAuth
+> redirect (Developer Portal). No code changes needed, ever.
 
 - **Auth** — Discord OAuth2 (`identify` + `guilds`), token in an httpOnly cookie
 - **API** — `/api/dashboard/*` endpoints served by this same Flask app
@@ -69,16 +73,16 @@ moderation, giveaways, custom commands, …) through a browser at
 ### Deploying the dashboard (Vercel, free)
 
 1. Discord Developer Portal → your application → **OAuth2**:
-   - add redirect `https://aurelia.vercel.app/oauth/callback`
+   - add redirect `<YOUR_DASHBOARD_URL>/oauth/callback`
    - add redirect `http://localhost:3000/oauth/callback` (for local dev)
    - copy the **Client ID** and **Client Secret**
 2. Vercel → import this repo → set **Root Directory = `dashboard`**
 3. Vercel env vars (see `dashboard/README.md` for the full table):
-   `NEXT_PUBLIC_API_URL=https://miles-discord-bot.onrender.com`,
+   `NEXT_PUBLIC_API_URL=<YOUR_BOT_API_URL>`,
    `API_BASE_URL` (same), `NEXT_PUBLIC_DISCORD_CLIENT_ID`,
    `DISCORD_CLIENT_SECRET`, `NEXTAUTH_URL`, `NEXTAUTH_SECRET`
 4. On **Render**, add env vars so the API trusts the dashboard origin:
-   `DASHBOARD_URL=https://aurelia.vercel.app`, `DISCORD_CLIENT_ID`,
+   `DASHBOARD_URL=<YOUR_DASHBOARD_URL>`, `DISCORD_CLIENT_ID`,
    `DISCORD_CLIENT_SECRET`,
    `OAUTH_REDIRECT_URI=https://miles-discord-bot.onrender.com/api/dashboard/oauth/callback`
 5. Run the `dashboard_audit` SQL block (bottom of

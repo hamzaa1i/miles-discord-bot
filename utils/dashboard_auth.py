@@ -38,6 +38,7 @@ Implementation notes
 import hashlib
 import json
 import logging
+import os
 import threading
 import time
 import urllib.error
@@ -48,6 +49,16 @@ logger = logging.getLogger('cyn.dashboard_auth')
 
 DISCORD_API = "https://discord.com/api/v10"
 _HTTP_TIMEOUT = 10
+
+# Dashboard origin (env-driven — NEVER hardcoded, so changing the deployed
+# domain only requires updating DASHBOARD_URL on Render). Used only for the
+# descriptive User-Agent sent to the Discord API.
+DASHBOARD_URL = (os.getenv("DASHBOARD_URL") or "").rstrip("/")
+
+
+def _user_agent() -> str:
+    """Identify this integration to Discord without a hardcoded domain."""
+    return f"AureliaDashboard ({DASHBOARD_URL})" if DASHBOARD_URL else "AureliaDashboard"
 
 # MANAGE_GUILD is permission bit 0x20 (1 << 5).
 PERM_MANAGE_GUILD = 1 << 5
@@ -81,7 +92,7 @@ def _discord_get(path: str, token: str) -> Optional[dict | list]:
         url,
         headers={
             "Authorization": f"Bearer {token}",
-            "User-Agent": "AureliaDashboard (https://aurelia.vercel.app)",
+            "User-Agent": _user_agent(),
         },
         method="GET",
     )

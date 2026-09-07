@@ -43,6 +43,7 @@ const config: Config = {
         'fade-in': 'fadeIn 0.35s ease-out',
         'float-slow': 'floatSlow 7s ease-in-out infinite',
         'pulse-soft': 'pulseSoft 2.4s ease-in-out infinite',
+        rise: 'rise 0.5s ease-out both',
       },
       keyframes: {
         fadeIn: {
@@ -56,6 +57,10 @@ const config: Config = {
         pulseSoft: {
           '0%, 100%': { opacity: '1' },
           '50%': { opacity: '0.55' },
+        },
+        rise: {
+          '0%': { opacity: '0', transform: 'translateY(14px)' },
+          '100%': { opacity: '1', transform: 'translateY(0)' },
         },
       },
     },

@@ -77,7 +77,7 @@ and Aurelia is a member.
 
 > **Discord OAuth setup (one-time):** Developer Portal → your application →
 > **OAuth2** → *Redirects* → add `http://localhost:3000/oauth/callback`
-> (and later `https://aurelia.vercel.app/oauth/callback`). Copy the
+> (and `<YOUR_DASHBOARD_URL>/oauth/callback` once deployed). Copy the
 > **Client ID** and **Client Secret** into your env files. The bot's own token
 > is unchanged — this uses the same *application*, only its OAuth side.
 
@@ -92,7 +92,7 @@ and Aurelia is a member.
    API_BASE_URL            = https://miles-discord-bot.onrender.com   (same, server-side)
    NEXT_PUBLIC_DISCORD_CLIENT_ID = <application id>
    DISCORD_CLIENT_SECRET   = <client secret>       (server-side only)
-   NEXTAUTH_URL            = https://aurelia.vercel.app      (or your domain)
+   NEXTAUTH_URL            = <YOUR_DASHBOARD_URL>      (your Vercel domain)
    NEXTAUTH_SECRET         = <openssl rand -hex 32>
    NEXT_PUBLIC_SUPABASE_URL       = <optional — realtime>
    NEXT_PUBLIC_SUPABASE_ANON_KEY  = <optional — realtime>
@@ -103,7 +103,7 @@ Then on **Render** (the bot), add these environment variables so the Flask
 API trusts your new dashboard origin:
 
 ```
-DASHBOARD_URL           = https://aurelia.vercel.app
+DASHBOARD_URL           = <YOUR_DASHBOARD_URL>
 DISCORD_CLIENT_ID       = <application id>
 DISCORD_CLIENT_SECRET   = <client secret>
 OAUTH_REDIRECT_URI      = https://miles-discord-bot.onrender.com/api/dashboard/oauth/callback
@@ -114,7 +114,11 @@ OAUTH_REDIRECT_URI      = https://miles-discord-bot.onrender.com/api/dashboard/o
 Next.js route handlers and does not need it.
 
 4. In the Discord Developer Portal, add your production redirect:
-   `https://aurelia.vercel.app/oauth/callback`.
+   `<YOUR_DASHBOARD_URL>/oauth/callback`.
+
+> **changing domains later:** the domain is never hardcoded in the code —
+> update `NEXTAUTH_URL` (Vercel), `DASHBOARD_URL` (Render) and the Discord
+> OAuth redirect (Developer Portal), redeploy, done. No code changes needed.
 
 ## custom domain
 
@@ -179,7 +183,7 @@ npm run lint    # eslint
 
 $0. Vercel free tier (hobby), Render free tier (already running the bot),
 Supabase free tier (already storing the data), the default Vercel domain
-(`aurelia.vercel.app`) or ~$10/yr if you buy `aurelia.bot`.
+(`<your-project>.vercel.app`) or ~$10/yr if you buy `aurelia.bot`.
 
 ## project layout
 

@@ -112,3 +112,29 @@ input[type='range']::-moz-range-thumb {
 .twinkle:nth-child(3) {
   animation-delay: 2.1s;
 }
+
+/* ── status dot soft glow (BotStatusCard) ───────────────────── */
+/* currentColor picks up the phase color (green / yellow / red) */
+@keyframes pulseGlow {
+  0%,
+  100% {
+    opacity: 0.95;
+    box-shadow: 0 0 4px 0 currentColor;
+  }
+  50% {
+    opacity: 0.65;
+    box-shadow: 0 0 12px 2px currentColor;
+  }
+}
+.pulse-glow {
+  animation: pulseGlow 2.4s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pulse-glow,
+  .twinkle,
+  .animate-float-slow,
+  .animate-rise {
+    animation: none !important;
+  }
+}
