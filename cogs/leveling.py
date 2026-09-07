@@ -238,6 +238,13 @@ class Leveling(commands.Cog):
             if mode == "none":
                 return  # announcements disabled
             if mode == "dm":
+                # PHASE N.1 / PART 8 — the level-up DM is a passive
+                # (unsolicited) notification: gate on the shared
+                # /toggledms preference. The level-up itself (XP/role)
+                # already happened; only the DM is skipped.
+                from utils.db import user_allows_passive_dms
+                if not user_allows_passive_dms(member.id):
+                    return
                 await member.send(text)
                 return
             if mode == "configured":

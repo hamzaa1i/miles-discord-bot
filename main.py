@@ -449,14 +449,16 @@ class CynBot(commands.Bot):
         # done by this point). We just copy to each guild and sync per-guild.
         # Do NOT call clear_commands or bare sync() — those wipe the tree.
         if not getattr(self, 'synced', False):
-            # Debug: count commands in tree BEFORE sync to confirm non-zero
-            all_cmds = list(self.tree.get_commands())
-            total = sum(
-                len(g.commands) if hasattr(g, 'commands') else 1
-                for g in all_cmds
+            # PHASE N.1 / PART 12 — canonical command counting (the ONE
+            # helper, same numbers everywhere: startup log, /botinfo,
+            # public stats, docs surfaces, tests).
+            from utils.command_counts import count_commands_runtime, format_command_summary
+            counts = count_commands_runtime(self)
+            print(f"[Debug] Commands ready to sync: {format_command_summary(counts)}")
+            logger.info(
+                f"[Debug] Commands ready to sync: "
+                f"{format_command_summary(counts)}"
             )
-            print(f"[Debug] Commands ready to sync: {len(all_cmds)} groups/commands, {total} total")
-            logger.info(f"[Debug] Commands ready to sync: {len(all_cmds)} groups/commands, {total} total")
 
             success = 0
             failed = 0
@@ -487,12 +489,10 @@ class CynBot(commands.Bot):
             result = await call_ai_fast([
                 {"role": "user", "content": "say ok"}
             ])
-            active_cogs = len(self.cogs)
-            all_cmds = list(self.tree.get_commands())
-            total_cmds = sum(
-                len(g.commands) if hasattr(g, 'commands') else 1
-                for g in all_cmds
+            from utils.command_counts import (
+                count_commands_runtime, format_command_summary,
             )
+            counts = count_commands_runtime(self)
             snap = router_status()
             provider_states = ", ".join(
                 f"{n}={p.get('state')}"
@@ -500,12 +500,16 @@ class CynBot(commands.Bot):
             )
             print(f"✅ AI route working: {result[:50]}")
             print(f"✅ AI providers: {provider_states}")
-            print(f"✅ Active cogs loaded: {active_cogs}")
-            print(f"✅ Commands in tree: {len(all_cmds)} groups, {total_cmds} total")
+            print(f"✅ Active cogs loaded: {counts['cogs']}")
+            print(f"✅ Commands in tree: {counts['top_level']} groups/commands, "
+                  f"{counts['total_invokable']} total invokable")
             logger.info(f"✅ AI route working: {result[:50]}")
             logger.info(f"✅ AI providers: {provider_states}")
-            logger.info(f"✅ Active cogs loaded: {active_cogs}")
-            logger.info(f"[STARTUP] Commands in tree: {len(all_cmds)} groups, {total_cmds} total")
+            logger.info(f"✅ Active cogs loaded: {counts['cogs']}")
+            logger.info(
+                f"[STARTUP] Commands in tree: {counts['top_level']} "
+                f"groups/commands, {counts['total_invokable']} total invokable"
+            )
         except Exception as e:
             print(f"❌ AI route test failed: {type(e).__name__}: {e}")
             logger.error(f"❌ AI route test failed: {type(e).__name__}: {e}")
@@ -628,67 +632,65 @@ async def on_interaction(interaction: discord.Interaction):
 
 
 # FIX 6 (part 2) — global slash-command error handler
+#
+# PHASE N.1 / PART 7 — DOUBLE-RESPONSE FIX. discord.py 2.7.1 invokes
+# BOTH the command-local error handler AND this global tree error
+# handler for the same AppCommandError (verified in
+# discord/app_commands/tree.py `_call`:
+#     await command._invoke_error_handlers(interaction, e)
+#     await self.on_error(interaction, e)
+# ). The /recap cooldown produced TWO ephemeral replies in production:
+# "slow down — try again in 48s." (cogs/recap.py local handler) AND
+# "⏱️ Slow down. Try again in 48.9s." (this handler's bare-except →
+# followup.send fallback firing after the local handler already
+# responded).
+#
+# Ownership rule: a command with its own @command.error handler OWNS
+# the user-facing response for its errors. This global handler only
+# speaks when NOBODY has responded yet — `interaction.response.is_done()`
+# is checked FIRST in every branch, and the followup fallback is only
+# used when the response was NOT already consumed by a local handler.
 @bot.tree.error
 async def on_app_command_error(
     interaction: discord.Interaction,
     error: app_commands.AppCommandError
 ):
+    # PHASE N.1 — a local error handler already answered: say nothing
+    # (one owner per handled error). Log only.
+    if interaction.response.is_done():
+        logger.debug(
+            f"[app-cmd error] already handled locally: "
+            f"{type(error).__name__} for /{getattr(interaction.command, 'name', '?')}"
+        )
+        return
+
+    async def _reply_once(content: str):
+        """Send exactly ONE response: response first, followup fallback
+        only if the initial response raced a completion elsewhere."""
+        try:
+            await interaction.response.send_message(content, ephemeral=True)
+        except discord.InteractionResponded:
+            # someone responded between the is_done() check and now —
+            # do NOT duplicate; drop the message entirely.
+            return
+        except Exception:
+            try:
+                await interaction.followup.send(content, ephemeral=True)
+            except Exception:
+                pass
+
     if isinstance(error, app_commands.MissingPermissions):
-        try:
-            await interaction.response.send_message(
-                "❌ You don't have permission to use this command.",
-                ephemeral=True
-            )
-        except:
-            try:
-                await interaction.followup.send(
-                    "❌ You don't have permission to use this command.",
-                    ephemeral=True
-                )
-            except:
-                pass
+        await _reply_once("❌ You don't have permission to use this command.")
     elif isinstance(error, app_commands.CommandOnCooldown):
-        try:
-            await interaction.response.send_message(
-                f"⏱️ Slow down. Try again in {error.retry_after:.1f}s.",
-                ephemeral=True
-            )
-        except:
-            try:
-                await interaction.followup.send(
-                    f"⏱️ Slow down. Try again in {error.retry_after:.1f}s.",
-                    ephemeral=True
-                )
-            except:
-                pass
+        await _reply_once(
+            f"⏱️ Slow down. Try again in {error.retry_after:.1f}s."
+        )
     elif isinstance(error, app_commands.BotMissingPermissions):
-        try:
-            await interaction.response.send_message(
-                "❌ I don't have permission to do that here.",
-                ephemeral=True
-            )
-        except:
-            try:
-                await interaction.followup.send(
-                    "❌ I don't have permission to do that here.",
-                    ephemeral=True
-                )
-            except:
-                pass
+        await _reply_once("❌ I don't have permission to do that here.")
     else:
-        try:
-            await interaction.response.send_message(
-                f"❌ Something went wrong: {str(error)}{SUPPORT_HINT}",
-                ephemeral=True
-            )
-        except:
-            try:
-                await interaction.followup.send(
-                    f"❌ Something went wrong: {str(error)}{SUPPORT_HINT}",
-                    ephemeral=True
-                )
-            except:
-                pass
+        await _reply_once(
+            f"❌ Something went wrong: {str(error)}{SUPPORT_HINT}"
+        )
         raise error
 
 
@@ -780,6 +782,16 @@ async def botinfo(ctx):
     except Exception:
         storage_str = "JSON files"
 
+    # PHASE N.1 / PART 12 — canonical command counts (same helper as
+    # the startup log, public stats and the docs surfaces).
+    try:
+        from utils.command_counts import (
+            count_commands_runtime, format_command_summary,
+        )
+        counts_str = format_command_summary(count_commands_runtime(bot))
+    except Exception:
+        counts_str = "command counts unavailable"
+
     # FIX 3 (live) — sleek, minimalist system-status card. The old embed
     # had 12 noisy emoji fields; the new one is three clean rows.
     embed = discord.Embed(title="✦ aurelia — system status", color=0x2b2d31)
@@ -812,6 +824,7 @@ async def botinfo(ctx):
         ),
         inline=False,
     )
+    embed.add_field(name="Commands", value=counts_str, inline=False)
     embed.set_footer(text="aurelia — built by volc")
     await ctx.send(embed=embed)
 

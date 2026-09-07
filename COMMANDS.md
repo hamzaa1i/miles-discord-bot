@@ -500,7 +500,12 @@ Example: `/invites show user:@diva` → "**diva** has invited **12** members
 to **veloura**. ✩"
 **/invites set** — set a user's count manually. **Manage Guild** · `user`
 (required), `count` (int, required)
-**/invite_leaderboard** — top 10 inviters. Example: `/invite_leaderboard`
+
+### /invite_leaderboard 🆕 *New in Phase 2*
+Top 10 inviters in this server, as an aesthetic leaderboard card.
+Example: `/invite_leaderboard` → "top inviters ✦ — 1. diva (12), 2. …"
+- **Permissions:** everyone
+- **Cooldown:** none
 
 ### /welcome — group *(Manage Guild)*
 Welcome & goodbye configuration — 13 settings through one command.
@@ -532,7 +537,19 @@ welcome). Example: `/welcome test type:dm`
 **/welcome reset** — reset ALL welcome settings to defaults (with a confirm
 button).
 
-Related: **/toggledms** — toggle whether Aurelia may DM you (any user).
+Related: **/toggledms** — global passive-DM switch, entry directly below.
+
+### /toggledms 🆕 *Phase N.1 — global passive-DM switch*
+Toggle unsolicited ("passive") aurelia DMs: achievement unlocks,
+level-up notifications, welcome/join rewards, welcomer coin rewards,
+onboarding panels and economy safe-mode notices. Turning passive DMs
+off NEVER blocks the underlying events — achievements still unlock and
+save, level-ups still happen — and DMs you explicitly ask for (modmail
+threads, your own reminders, private time capsules, `/welcome test
+type:dm`, `/privacy export`) always arrive.
+Example: `/toggledms` → "passive aurelia DMs are now **off**. …"
+- **Permissions:** everyone (only affects YOUR inbox)
+- **Cooldown:** none
 
 ### /onboarding — group *(Manage Guild)*
 DM onboarding with role buttons for new members.

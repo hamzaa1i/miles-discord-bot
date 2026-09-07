@@ -97,6 +97,16 @@ class Onboarding(commands.Cog):
     @commands.Cog.listener()
     async def on_member_join(self, member: discord.Member):
         try:
+            # PHASE N.1 / PART 8 — the auto-sent join panel is a passive
+            # DM: respect /toggledms. (/onboarding restart at line ~334
+            # is an EXPLICIT user action and is NOT gated.)
+            from utils.db import user_allows_passive_dms
+            if not user_allows_passive_dms(member.id):
+                logger.info(
+                    f"[onboarding] {member.id} has passive DMs off — "
+                    f"skipping join panel"
+                )
+                return
             cfg = await self._get_config(member.guild.id)
             if not cfg.get('enabled') or not cfg.get('roles'):
                 return

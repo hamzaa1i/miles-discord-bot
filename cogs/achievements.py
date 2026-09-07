@@ -283,6 +283,18 @@ class Achievements(commands.Cog):
                 color=RARITY_COLORS.get(meta["rarity"], 0xB0BEC5),
             )
             embed.set_footer(text="see all of them with /achievements show")
+            # PHASE N.1 / PART 8 — the unlock itself (DB write above) is
+            # NEVER suppressed; only the unsolicited DM is. Live bug:
+            # "achievement unlocked — first steps" DMs arrived despite
+            # /toggledms off, because this site never checked the shared
+            # preference. Explicit flows (/achievements show) are channel
+            # responses and stay untouched.
+            if not _db.user_allows_passive_dms(member.id):
+                logger.info(
+                    f"[achievements] {member.id} unlocked "
+                    f"'{achievement_key}' — passive DMs off, skipped notify"
+                )
+                return True
             try:
                 await member.send(embed=embed)
             except (discord.Forbidden, discord.HTTPException):

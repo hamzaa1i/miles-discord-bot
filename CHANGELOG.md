@@ -7,6 +7,29 @@ api mirror lives at `GET /api/changelog`, the rss feed at
 `/changelog.rss`, and the pretty page at [/changelog](/changelog).
 
 
+## [v1.1.1] — 2026-09-08
+
+> highlights: phase n.1 live repair — ai output safety (the glm meta-leak can never reach discord) · gemini afc disabled on ordinary generation · honest provider health states (configured ≠ healthy) · one-response cooldown fix · /toggledms governs every passive dm · time-capsule 22007 timestamp fix · canonical command counts
+
+phase n.1 — the live-reliability pass. real production traffic exposed six bugs in the freshly deployed multi-provider core; this release traces each one to root cause and fixes it without new features, without a dashboard redesign, without touching phase n's architecture.
+
+### fixes
+- **ai output safety (p0):** the exact glm-5.2 meta-reasoning leak that reached discord ("we must not start two responses with same word; …") is now sanitized to empty and triggers provider failover — layered: reasoning-tag strip → leading meta-paragraph removal → sentence-level planning-language removal → last-chance high-confidence meta check → facade final guard before any cog sees text. legitimate prose that merely mentions "we should…" survives untouched
+- **success accounting:** http 200 with only hidden reasoning/meta output is a sanitization_empty failure — counted, failed over, never reported green
+- gemini: automatic function calling explicitly disabled on every ordinary text generation (root cause of the "afc is enabled with max remote calls: 10" + "direct use of afc … not recommended" startup warnings); verified against google-genai 2.22.0's should_disable_afc path
+- mistral: error classification uses the sdk’s numeric status_code (verified against mistralai 2.9.4) — 401→auth, 404→model_unavailable, 400→bad_request so cooldowns and status cards stop mislabeling request-shape errors
+- all four provider adapters: 400 (request shape) is bad_request, only real 404/decommissioned signals are model_unavailable; sanitized failure telemetry logs category + numeric status, never error bodies
+- duplicate cooldown responses: discord.py 2.7.1 calls both the command-local and global tree error handlers — the global handler now checks interaction.response.is_done() first, so a handled /recap cooldown produces exactly one ephemeral reply (was two)
+- time capsules: supabase boundary now converts unix epoch floats ↔ iso-8601 utc (postgres 22007 root cause — the live table column is timestamptz while inserts sent raw floats); json fallback keeps the legacy float format, existing rows keep working, no sql migration required
+- /toggledms is now the global passive-dm switch: achievement unlocks (still saved!), level-up dm announcements, onboarding join panels, welcome/join rewards and welcomer coin rewards respect it; explicitly requested dm flows (modmail, reminders, private capsules, /welcome test dm, /privacy export) are never gated
+
+### improvements
+- provider health states are honest: unconfigured · unknown · healthy · degraded · cooldown · auth_error · model_unavailable — "healthy" requires a real successful request; configured-but-unverified shows "unknown"
+- /owner ai_status + dashboard ai engine card show the sanitized last failure category per provider and the new state vocabulary
+- command counts canonicalized: 46 cogs · 73 top-level commands/groups · 169 total invokable paths (discord 100-limit headroom 27) — same helper feeds the startup log, /botinfo, /api/public/stats, the docs/landing copy (168→169) and tests
+- live provider diagnostic: scripts/test_ai_providers_live.py (env-gated AURELIA_ALLOW_LIVE_AI_TESTS=true, one 3-word probe per provider, sanitized output only — never run at startup or in test suites)
+- 45 new phase n.1 regression tests (scripts/test_phase_n1.py) including the exact production leak string, failover accounting, cooldown single-response, passive-dm gating and the capsule lifecycle
+
 ## [v1.1.0] — 2026-09-07
 
 > highlights: multi-provider ai router with four-provider failover · privacy-aware sensitive routing · persistent provider telemetry + /owner ai_status · auth-aware site navigation everywhere · private-source preparation

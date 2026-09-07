@@ -410,11 +410,16 @@ CREATE TABLE server_personality (
 --   channel_id TEXT,
 --   user_id TEXT NOT NULL,
 --   message TEXT,
---   unlock_time FLOAT NOT NULL,
+--   unlock_time TIMESTAMPTZ NOT NULL,
 --   is_public BOOLEAN DEFAULT FALSE,
 --   unlocked BOOLEAN DEFAULT FALSE,
 --   created_at TEXT
 -- );
+-- PHASE N.1: unlock_time is TIMESTAMPTZ (this matches the LIVE production
+-- table — the schema comment previously said FLOAT, which is what caused
+-- the 22007 epoch-float insert failures). The Python boundary converts
+-- epoch floats <-> ISO-8601 UTC strings automatically (see
+-- _capsule_iso / _normalize_capsule_row); the JSON fallback keeps floats.
 -- GRANT ALL ON public.time_capsules TO anon;
 -- ALTER TABLE public.time_capsules DISABLE ROW LEVEL SECURITY;
 --
@@ -659,6 +664,52 @@ def _write_json(path: str, data: dict):
     _os.makedirs(dirname, exist_ok=True)
     with open(path, "w") as f:
         json.dump(data, f, indent=2)
+
+
+# ─── PHASE N.1 / PART 8 — passive DM preference (/toggledms) ──────
+#
+# ONE shared gate for every UNSOLICITED (passive) DM aurelia sends:
+# achievement unlocks, level-up DMs, welcome/join rewards, welcomer
+# coin rewards, onboarding panels, economy safe-mode notices.
+# Explicitly user-requested DM flows are NOT gated (modmail, /welcome
+# test type:dm, user-created reminders, private time-capsule delivery,
+# /privacy export, /owner dm).
+#
+# Storage: the same data/dm_prefs.json the /toggledms command has
+# always used (welcome cog), so EXISTING stored preferences keep
+# working — no migration, no Supabase table, no SQL. Default is
+# allow=True (Part 9: no silent flips of stored preferences; users
+# opt OUT with /toggledms and that is universally respected).
+
+_DM_PREFS_JSON = "data/dm_prefs.json"
+
+
+def user_allows_passive_dms(user_id) -> bool:
+    """True when unsolicited aurelia DMs are allowed for this user.
+
+    Default True (opt-out model, unchanged from the original /toggledms
+    behavior). Reads data/dm_prefs.json; never raises — a broken/missing
+    file means "allow" (same failure mode as before, and a missing file
+    must never break a level-up or achievement unlock).
+    """
+    try:
+        data = _read_json(_DM_PREFS_JSON)
+        prefs = data.get(str(user_id))
+        if isinstance(prefs, dict):
+            return bool(prefs.get("dms_enabled", True))
+        # legacy/malformed row — default allow
+        return True
+    except Exception:
+        return True
+
+
+def set_user_allows_passive_dms(user_id, allow: bool) -> None:
+    """Store a user's passive-DM preference (the /toggledms writer)."""
+    data = _read_json(_DM_PREFS_JSON)
+    if not isinstance(data, dict):
+        data = {}
+    data[str(user_id)] = {"dms_enabled": bool(allow)}
+    _write_json(_DM_PREFS_JSON, data)
 
 
 # ─── Guild settings (welcome, logs, autorole, bot config) ──────
@@ -2929,11 +2980,75 @@ def _json_capsules() -> dict:
     return data if isinstance(data, dict) else {}
 
 
+# ─── PHASE N.1 / PART 10 — Supabase TIMESTAMPTZ boundary ──────────
+#
+# ROOT CAUSE of the production Postgres 22007 ("invalid input syntax
+# for type timestamp with time zone: 1788796983.7098389"): the live
+# Supabase time_capsules table stores unlock_time as TIMESTAMPTZ
+# (that is how the table was actually created in the Supabase editor),
+# while create_capsule_async inserted raw Unix epoch FLOATS and
+# get_due_capsules_async compared against a float — every Supabase
+# capsule operation failed with 22007 and silently fell back to JSON.
+#
+# FIX: standardize on ISO-8601 UTC strings AT THE SUPABASE BOUNDARY.
+# Epoch floats are converted on the way in (write) and on the way out
+# (read) via _normalize_capsule_row, so every consumer (the cog, the
+# delivery loop) keeps working with plain floats. The JSON fallback
+# format is unchanged (floats), so existing local rows keep working
+# with zero migration. Render-side note: no SQL migration is required —
+# Postgres accepts ISO-8601 for TIMESTAMPTZ directly.
+
+def _capsule_iso(unlock_time) -> str:
+    """Epoch float -> ISO-8601 UTC string (the Supabase write format)."""
+    from datetime import datetime as _dt
+    from datetime import timezone as _tz
+    return _dt.fromtimestamp(float(unlock_time), tz=_tz.utc).isoformat()
+
+
+def _capsule_epoch(value) -> float:
+    """ISO-8601 string | numeric | None -> epoch float (never raises)."""
+    if value is None:
+        return 0.0
+    if isinstance(value, (int, float)):
+        return float(value)
+    try:
+        from datetime import datetime as _dt
+        text = str(value).strip()
+        # Supabase may return "2026-09-08T12:34:56.789+00:00" (parseable
+        # directly) or a date-only value; fromisoformat handles both on
+        # 3.11+. A trailing 'Z' needs swapping to +00:00 pre-3.11 — do it
+        # defensively anyway.
+        if text.endswith("Z"):
+            text = text[:-1] + "+00:00"
+        dt = _dt.fromisoformat(text)
+        if dt.tzinfo is None:
+            from datetime import timezone as _tz
+            dt = dt.replace(tzinfo=_tz.utc)
+        return dt.timestamp()
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _normalize_capsule_row(row) -> dict:
+    """One capsule row with unlock_time as an epoch float, whatever the
+    storage layer returned (ISO string from Supabase, float from JSON)."""
+    if not isinstance(row, dict):
+        return row
+    out = dict(row)
+    out["unlock_time"] = _capsule_epoch(row.get("unlock_time"))
+    return out
+
+
 async def create_capsule_async(guild_id: str, channel_id, user_id: str,
                                message: str, unlock_time: float,
                                is_public: bool):
     """PHASE 3 / PART 2 — store a capsule; returns its id (int on
-    Supabase, int client-side on the JSON fallback)."""
+    Supabase, int client-side on the JSON fallback).
+
+    PHASE N.1: `unlock_time` is written to Supabase as an ISO-8601 UTC
+    string (TIMESTAMPTZ-compatible — fixes the 22007 insert failures);
+    the JSON fallback keeps the legacy epoch-float format.
+    """
     from datetime import datetime as _dt
     payload = {
         "guild_id": str(guild_id),
@@ -2949,7 +3064,10 @@ async def create_capsule_async(guild_id: str, channel_id, user_id: str,
     if sb:
         try:
             def _insert():
-                return sb.table("time_capsules").insert(payload).execute()
+                return sb.table("time_capsules").insert({
+                    **payload,
+                    "unlock_time": _capsule_iso(unlock_time),
+                }).execute()
             result = await asyncio.to_thread(_insert)
             if result and result.data:
                 return result.data[0].get("id")
@@ -2972,7 +3090,9 @@ async def create_capsule_async(guild_id: str, channel_id, user_id: str,
 async def get_user_capsules_async(user_id: str, unlocked: bool = False,
                                   limit: int = 20) -> list:
     """PHASE 3 / PART 2 — a user's capsules, sorted by unlock time
-    ascending (earliest first)."""
+    ascending (earliest first). Rows are normalized: unlock_time is an
+    epoch float whether the row came from Supabase (ISO string) or the
+    JSON fallback (float)."""
     sb = get_supabase()
     if sb:
         try:
@@ -2983,7 +3103,9 @@ async def get_user_capsules_async(user_id: str, unlocked: bool = False,
                     "unlock_time", desc=False
                 ).limit(limit).execute()
             result = await asyncio.to_thread(_fetch)
-            return (result.data or []) if result else []
+            if result and result.data:
+                return [_normalize_capsule_row(r) for r in result.data]
+            return []
         except Exception as e:
             error_key = "get_user_capsules"
             if error_key not in _supabase_error_logged:
@@ -3002,25 +3124,35 @@ async def get_user_capsules_async(user_id: str, unlocked: bool = False,
 async def get_due_capsules_async() -> list:
     """PHASE 3 / PART 2 — every capsule with unlocked=False and
     unlock_time <= now, across all guilds (the 5-minute loop's work
-    list)."""
-    import time as _time
-    now = float(_time.time())
+    list).
+
+    PHASE N.1: the Supabase comparison uses an ISO-8601 UTC string
+    (`.lte("unlock_time", iso_now)`) — the old float comparison was the
+    22007 that broke the due query. JSON fallback unchanged (floats).
+    """
+    from datetime import datetime as _dt
+    from datetime import timezone as _tz
+    now_iso = _dt.now(_tz.utc).isoformat()
     sb = get_supabase()
     if sb:
         try:
             def _fetch():
                 return sb.table("time_capsules").select("*").eq(
                     "unlocked", False
-                ).lte("unlock_time", now).order(
+                ).lte("unlock_time", now_iso).order(
                     "unlock_time", desc=False
                 ).limit(100).execute()
             result = await asyncio.to_thread(_fetch)
-            return (result.data or []) if result else []
+            if result and result.data:
+                return [_normalize_capsule_row(r) for r in result.data]
+            return []
         except Exception as e:
             error_key = "get_due_capsules"
             if error_key not in _supabase_error_logged:
                 logger.error(f"[DB] get_due_capsules error: {e}")
                 _supabase_error_logged.add(error_key)
+    import time as _time
+    now = float(_time.time())
     rows = [
         r for r in _json_capsules().values()
         if isinstance(r, dict) and not r.get("unlocked")

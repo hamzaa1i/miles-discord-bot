@@ -12,7 +12,7 @@ import { pageMetadata } from '@/lib/seo';
 export const metadata = pageMetadata({
   title: 'commands',
   description:
-    'every aurelia command — all 168, with permissions, cooldowns, parameters and examples, filterable by category.',
+    'every aurelia command — all 169, with permissions, cooldowns, parameters and examples, filterable by category.',
   path: '/docs/commands',
 });
 

@@ -1,11 +1,20 @@
 'use client';
 
 /**
- * components/AiEngineCard.tsx — PHASE N (Part 16).
+ * components/AiEngineCard.tsx — PHASE N (Part 16), hardened PHASE N.1.
  *
  * "AI engine" section for the guild dashboard's AI page: current route
  * diagram, provider status, model names, request counts today, GLM
  * budget meter and the sensitive-routing privacy note.
+ *
+ * PHASE N.1 — canonical provider states (same vocabulary as the Python
+ * router's ProviderHealth.state() and /owner ai_status):
+ *   unconfigured · unknown · healthy · degraded · cooldown ·
+ *   auth_error · model_unavailable
+ * "healthy" requires a real successful request — a configured-but-
+ * unverified provider shows "unknown", never green. Provider rows also
+ * show the sanitized last failure category (rate_limit, auth, … — never
+ * raw error bodies).
  *
  * Data comes from GET /api/dashboard/ai/status through the same-origin
  * proxy (bearer cookie, server-side only — no keys ever reach this
@@ -20,10 +29,19 @@ import { api, ApiRequestError } from '@/lib/api';
 
 interface ProviderStatus {
   configured: boolean;
-  state: 'healthy' | 'cooldown' | 'degraded' | 'misconfigured' | 'unconfigured';
+  state:
+    | 'healthy'
+    | 'unknown'
+    | 'cooldown'
+    | 'degraded'
+    | 'auth_error'
+    | 'model_unavailable'
+    | 'unconfigured'
+    | string;
   models: Record<string, string>;
   today: { requests: number; successes: number; failures: number };
   last_error_category: string | null;
+  last_error_status: number | null;
   cooldown_seconds_left: number;
   cooldown_reason: string;
 }
@@ -50,10 +68,23 @@ const PROVIDER_LABELS: Record<string, string> = {
 
 const STATE_TONES: Record<string, 'success' | 'warning' | 'danger' | 'muted' | 'lavender'> = {
   healthy: 'success',
+  unknown: 'muted',
   cooldown: 'warning',
   degraded: 'warning',
-  misconfigured: 'danger',
+  auth_error: 'danger',
+  model_unavailable: 'danger',
   unconfigured: 'muted',
+};
+
+/** compact human label for canonical router states */
+const STATE_LABELS: Record<string, string> = {
+  unconfigured: 'off',
+  unknown: 'unverified',
+  healthy: 'healthy',
+  cooldown: 'cooldown',
+  degraded: 'degraded',
+  auth_error: 'auth error',
+  model_unavailable: 'model gone',
 };
 
 const PROFILE_LABELS: { key: string; label: string; desc: string }[] = [
@@ -146,7 +177,17 @@ export function AiEngineCard() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <CardTitle icon="moon">ai engine</CardTitle>
         <div className="flex items-center gap-2">
-          <Badge tone={status.ai_status === 'operational' ? 'success' : status.ai_status === 'degraded' ? 'warning' : 'danger'}>
+          <Badge
+            tone={
+              status.ai_status === 'operational'
+                ? 'success'
+                : status.ai_status === 'degraded'
+                  ? 'warning'
+                  : status.ai_status === 'unknown'
+                    ? 'muted'
+                    : 'danger'
+            }
+          >
             {status.ai_status}
           </Badge>
           {!status.router_enabled && <Badge tone="muted">groq-only mode</Badge>}
@@ -180,11 +221,19 @@ export function AiEngineCard() {
           >
             <span className="w-20 shrink-0 text-veloura-text">{PROVIDER_LABELS[name] ?? name}</span>
             <Badge tone={STATE_TONES[p.state] ?? 'muted'}>
-              {p.state === 'unconfigured' ? 'off' : p.state}
+              {STATE_LABELS[p.state] ?? p.state}
             </Badge>
             {p.configured && p.today.requests > 0 && (
               <span className="text-xs text-veloura-muted">
                 {p.today.requests} req today · {p.today.successes}✓ / {p.today.failures}✗
+              </span>
+            )}
+            {p.configured && p.today.failures > 0 && p.last_error_category && (
+              <span
+                className="text-xs text-veloura-muted/70"
+                title={p.last_error_status ? `http ${p.last_error_status}` : undefined}
+              >
+                last: {p.last_error_category}
               </span>
             )}
             {p.cooldown_seconds_left > 0 && (

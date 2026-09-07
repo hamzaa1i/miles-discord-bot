@@ -15,9 +15,22 @@ Thinking controls:
   * reasoning_level "low"  -> ThinkingConfig(thinking_level=LOW)  (routine chat)
   * reasoning_level "high" -> ThinkingConfig(thinking_level=HIGH) (hard fallback)
 
+PHASE N.1 / PART 2 — AUTOMATIC FUNCTION CALLING IS EXPLICITLY DISABLED:
+`GenerateContentConfig(automatic_function_calling=
+AutomaticFunctionCallingConfig(disable=True))` on EVERY ordinary text
+generation. Root cause of the production log noise ("AFC is enabled with
+max remote calls: 10" + "Direct use of automatic function calling (AFC)
+in AsyncModels.generate_content is not recommended"): google-genai
+defaults AFC to ENABLED on the async models path even when no tools are
+attached, which routes the call through the AFC loop instead of the
+plain `_generate_content` request. With `disable=True` the SDK's
+`should_disable_afc()` predicate short-circuits to the plain request —
+no AFC loop, no warnings. Verified against google-genai 2.22.0
+(`_extra_utils.should_disable_afc` + `models.AsyncModels.generate_content`).
+
 NO external grounding: the Google search / web tools are never enabled —
 aurelia must not unexpectedly search the internet just because Gemini
-supports it.
+supports it. No `tools` are ever attached to ordinary generation.
 
 SENSITIVE routing: this adapter is never called for sensitive requests
 unless AI_ALLOW_GEMINI_SENSITIVE=true — the ROUTER enforces that; the
@@ -25,6 +38,7 @@ adapter itself is transport-only.
 """
 import asyncio
 import logging
+import re
 import time
 
 from ai_providers.base import AIProvider
@@ -46,31 +60,61 @@ _ROLE_MAP = {"system": None, "user": "user", "assistant": "model", "tool": "user
 
 
 def _classify_error(exc: Exception) -> AIRequestError:
-    """Map a google-genai exception to a normalized AIRequestError."""
+    """Map a google-genai exception to a normalized AIRequestError.
+
+    Phase N.1: uses the numeric HTTP status from the SDK's own exception
+    classes (`google.genai.errors.ClientError/ServerError.code`) when
+    present — string sniffing is only the fallback. 400 (request shape)
+    is BAD_REQUEST, NOT MODEL_UNAVAILABLE; only real 404/not-found/
+    decommissioned/unsupported-model signals are MODEL_UNAVAILABLE, so
+    cooldowns and the owner status card stop lying about "model gone".
+    `message` stays INTERNAL (bounded, never logged verbatim in
+    production); telemetry uses category + status_code only.
+    """
+    status_code = None
+    code = getattr(exc, "code", None)
+    if isinstance(code, int):
+        status_code = code
     text = f"{type(exc).__name__}: {exc}".lower()
-    retry_after = None
-    if "429" in text or "resource_exhausted" in text or "rate" in text:
+    if status_code is None:
+        m = re.search(r"\b(4\d\d|5\d\d)\b", text)
+        if m:
+            status_code = int(m.group(1))
+
+    if status_code == 429 or "resource_exhausted" in text or "rate" in text:
         # google-genai surfaces RetryInfo ("429s" retry delay) inside the
         # message; extract a plain seconds number when present.
-        import re as _re
-        m = _re.search(r"(\d+(?:\.\d+)?)s", text)
+        retry_after = None
+        m = re.search(r"(\d+(?:\.\d+)?)s", text)
         if m:
             try:
                 retry_after = float(m.group(1))
             except ValueError:
                 retry_after = None
-        return AIRequestError(AIFailureCategory.RATE_LIMIT, text[:300], retry_after)
-    if "401" in text or "403" in text or "unauthenticated" in text or "permission" in text:
-        return AIRequestError(AIFailureCategory.AUTH, text[:300])
-    if "404" in text or "not found" in text or "model" in text and ("400" in text or "unsupported" in text):
-        return AIRequestError(AIFailureCategory.MODEL_UNAVAILABLE, text[:300])
-    if "400" in text or "invalid" in text:
-        return AIRequestError(AIFailureCategory.MODEL_UNAVAILABLE, text[:300])
+        return AIRequestError(AIFailureCategory.RATE_LIMIT, text[:300],
+                              retry_after, status_code=429)
+    if status_code in (401, 403) or "unauthenticated" in text \
+            or "permission" in text:
+        return AIRequestError(AIFailureCategory.AUTH, text[:300],
+                              status_code=status_code or 401)
+    if status_code == 404 or "not found" in text or "not_found" in text \
+            or "decommissioned" in text or "model_not_found" in text \
+            or ("model" in text and "unsupported" in text):
+        return AIRequestError(AIFailureCategory.MODEL_UNAVAILABLE, text[:300],
+                              status_code=status_code or 404)
+    if status_code == 400 or "invalid_argument" in text \
+            or "bad request" in text:
+        return AIRequestError(AIFailureCategory.BAD_REQUEST, text[:300],
+                              status_code=400)
     if "timeout" in text or "deadline" in text:
         return AIRequestError(AIFailureCategory.TIMEOUT, text[:300])
-    if "503" in text or "502" in text or "500" in text or "unavailable" in text or "overloaded" in text:
-        return AIRequestError(AIFailureCategory.SERVER_ERROR, text[:300])
-    return AIRequestError(AIFailureCategory.UNKNOWN, text[:300])
+    if status_code is not None and status_code >= 500 \
+            or "unavailable" in text or "overloaded" in text \
+            or "internal" in text:
+        return AIRequestError(AIFailureCategory.SERVER_ERROR, text[:300],
+                              status_code=status_code)
+    return AIRequestError(AIFailureCategory.UNKNOWN, text[:300],
+                          status_code=status_code)
 
 
 class GeminiProvider(AIProvider):
@@ -131,6 +175,22 @@ class GeminiProvider(AIProvider):
             except Exception:
                 thinking_cfg = None
 
+        # PHASE N.1 / PART 2 — explicitly disable automatic function
+        # calling on EVERY ordinary text generation. google-genai defaults
+        # AFC to enabled on the async models path even with no tools,
+        # which both logs the noisy AFC warnings and routes the call
+        # through the AFC loop. `disable=True` makes the SDK take the plain
+        # request path (see module docstring). `tools` is never set — no
+        # grounding, no function calling, nothing implicit.
+        afc_disable_cfg = None
+        if _gtypes is not None:
+            try:
+                afc_disable_cfg = _gtypes.AutomaticFunctionCallingConfig(
+                    disable=True,
+                )
+            except Exception:
+                afc_disable_cfg = None
+
         config_kwargs = {
             "temperature": max(0.0, min(2.0, float(temperature))),
             "max_output_tokens": int(max_tokens),
@@ -139,6 +199,8 @@ class GeminiProvider(AIProvider):
             config_kwargs["system_instruction"] = system_instruction
         if thinking_cfg is not None:
             config_kwargs["thinking_config"] = thinking_cfg
+        if afc_disable_cfg is not None:
+            config_kwargs["automatic_function_calling"] = afc_disable_cfg
         config = _gtypes.GenerateContentConfig(**config_kwargs)
 
         start = time.monotonic()
@@ -202,4 +264,5 @@ class GeminiProvider(AIProvider):
         )
 
     def model_ids(self) -> dict:
-        return {"chat": "gemini-3.7-flash"}
+        from utils import ai_config as cfg
+        return {"chat": cfg.GEMINI_CHAT_MODEL}

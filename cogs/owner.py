@@ -542,9 +542,15 @@ class Owner(commands.Cog):
             return
 
         # ── provider rows ──
+        # PHASE N.1 — canonical states: unconfigured / unknown / healthy /
+        # degraded / cooldown / auth_error / model_unavailable. Shows the
+        # sanitized last failure category (never raw error bodies) and
+        # cooldown seconds, e.g.:
+        #   🟠 Gemini · 8 req (2✓/6✗) · last: rate_limit · cooldown 29s
         _STATE_EMOJI = {
-            "healthy": "🟢", "cooldown": "🟠", "degraded": "🟠",
-            "misconfigured": "🔴", "unconfigured": "⚪",
+            "healthy": "🟢", "unknown": "⚪", "cooldown": "🟠",
+            "degraded": "🟠", "auth_error": "🔴",
+            "model_unavailable": "🔴", "unconfigured": "⚪",
         }
         rows = []
         for name in ("gemini", "mistral", "openrouter", "groq"):
@@ -562,20 +568,28 @@ class Owner(commands.Cog):
                 rows.append(
                     f"{emoji} **OpenRouter**   {used} / {cap} today{budget_note}"
                 )
+                continue
+            today = p.get("today", {})
+            note = ""
+            if state == "auth_error":
+                note = " · auth failed — check api key"
+            elif state == "model_unavailable":
+                note = " · model unavailable"
+            elif state == "cooldown":
+                left = p.get("cooldown_seconds_left", 0)
+                reason = p.get("cooldown_reason", "")
+                note = f" · cooldown {left}s" + (f" ({reason})" if reason else "")
+            if p.get("configured"):
+                note += (
+                    f" · {today.get('requests', 0)} req today"
+                    f" ({today.get('successes', 0)}✓/{today.get('failures', 0)}✗)"
+                )
+                cat = p.get("last_error_category")
+                if cat and today.get("failures", 0):
+                    note += f" · last: {cat}"
             else:
-                today = p.get("today", {})
-                note = ""
-                if state == "misconfigured":
-                    note = " · check api key"
-                elif state == "cooldown":
-                    left = p.get("cooldown_seconds_left", 0)
-                    note = f" · cooldown {left}s"
-                if p.get("configured"):
-                    note += (
-                        f" · {today.get('requests', 0)} req today"
-                        f" ({today.get('successes', 0)}✓/{today.get('failures', 0)}✗)"
-                    )
-                rows.append(f"{emoji} **{name.title()}**{note}")
+                note = " · not configured (key missing)"
+            rows.append(f"{emoji} **{name.title()}**{note}")
 
         # ── route chains (compact: provider → provider → ...) ──
         routes = snap.get("routes", {})
@@ -591,6 +605,8 @@ class Owner(commands.Cog):
             description=(
                 f"router: {'enabled' if snap.get('router_enabled') else 'groq-only (legacy)'}"
                 f" · status: **{snap.get('ai_status', 'unknown')}**"
+                f"\nstates: 🟢 healthy · ⚪ unknown/unconfigured · "
+                f"🟠 cooldown/degraded · 🔴 auth/model"
             ),
             color=0x1a1a2e,
             timestamp=datetime.now(timezone.utc),

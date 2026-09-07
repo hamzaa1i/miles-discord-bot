@@ -2,7 +2,7 @@
  * components/site/CommandGrid.tsx — PHASE M PART 1 §5.
  *
  * Interactive command showcase: a grid of popular commands with hover
- * micro-interactions, linking into the full 168-command reference at
+ * micro-interactions, linking into the full 169-command reference at
  * /docs/commands. Pure CSS hover (no client js) + native tooltips.
  */
 

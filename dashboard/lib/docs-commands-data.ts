@@ -477,10 +477,21 @@ export const DOCS_COMMANDS: DocsCategory[] = [
         isGroup: true,
         permission: '',
         isNew: false,
-        description: 'Invite tracking (who invited whom, via invite-code diffing). **/invites show** — your (or someone\'s) invite count. \`user\` (optional) Example: \`/invites show user:@diva\` → "**diva** has invited **12** members to **veloura**. ✩" **/invites set** — set a user\'s count manually. **Manage Guild** · \`user\` (required), \`count\` (int, required) **/invite_leaderboard** — top 10 inviters. Example: \`/invite_leaderboard\`',
+        description: 'Invite tracking (who invited whom, via invite-code diffing). **/invites show** — your (or someone\'s) invite count. \`user\` (optional) Example: \`/invites show user:@diva\` → "**diva** has invited **12** members to **veloura**. ✩" **/invites set** — set a user\'s count manually. **Manage Guild** · \`user\` (required), \`count\` (int, required)',
         params: [],
         examples: [],
         other: [],
+        subcommands: [],
+      },
+      {
+        name: '/invite_leaderboard',
+        isGroup: false,
+        permission: '',
+        isNew: true,
+        description: 'Top 10 inviters in this server, as an aesthetic leaderboard card. Example: \`/invite_leaderboard\` → "top inviters ✦ — 1. diva (12), 2. …"',
+        params: [],
+        examples: [],
+        other: ['**Cooldown:** none'],
         subcommands: [],
       },
       {
@@ -488,10 +499,21 @@ export const DOCS_COMMANDS: DocsCategory[] = [
         isGroup: true,
         permission: 'Manage Guild',
         isNew: false,
-        description: 'Welcome & goodbye configuration — 13 settings through one command. **/welcome config** — configure any setting. Parameters: \`color\` · \`image\` · \`title\` · \`thumbnail\` · \`footer\` · \`dm\` · \`toggle\` · \`goodbye_channel\` · \`goodbye_message\` · \`goodbye_toggle\` (\`reset\` clears style settings) Examples: \`\`\` /welcome config setting:channel channel:#welcome /welcome config setting:message value:welcome {user} to {server} ♡ /welcome config setting:color value:#FFB6C1 /welcome config setting:embed_mode value:hybrid /welcome config setting:dm value:hey {user.name}, welcome to {server}! /welcome config setting:toggle value:on /welcome config setting:goodbye_message value:see you {user.name} ✦ \`\`\` Example response: "✅ welcome message updated" (+ preview). **/welcome test** — preview welcome / goodbye / DM. \`type\` (choice, default welcome). Example: \`/welcome test type:dm\` **/welcome show** — rich overview card of the current config. **/welcome tags** — every variable you can use in welcome messages. **/welcome reset** — reset ALL welcome settings to defaults (with a confirm button). Related: **/toggledms** — toggle whether Aurelia may DM you (any user).',
+        description: 'Welcome & goodbye configuration — 13 settings through one command. **/welcome config** — configure any setting. Parameters: \`color\` · \`image\` · \`title\` · \`thumbnail\` · \`footer\` · \`dm\` · \`toggle\` · \`goodbye_channel\` · \`goodbye_message\` · \`goodbye_toggle\` (\`reset\` clears style settings) Examples: \`\`\` /welcome config setting:channel channel:#welcome /welcome config setting:message value:welcome {user} to {server} ♡ /welcome config setting:color value:#FFB6C1 /welcome config setting:embed_mode value:hybrid /welcome config setting:dm value:hey {user.name}, welcome to {server}! /welcome config setting:toggle value:on /welcome config setting:goodbye_message value:see you {user.name} ✦ \`\`\` Example response: "✅ welcome message updated" (+ preview). **/welcome test** — preview welcome / goodbye / DM. \`type\` (choice, default welcome). Example: \`/welcome test type:dm\` **/welcome show** — rich overview card of the current config. **/welcome tags** — every variable you can use in welcome messages. **/welcome reset** — reset ALL welcome settings to defaults (with a confirm button). Related: **/toggledms** — global passive-DM switch, entry directly below.',
         params: [],
         examples: [],
         other: ['\`setting\` (choice, required): \`channel\` · \`message\` · \`embed_mode\` ·', '\`value\` (string, optional): text / mode / hex color / URL / \`on\`/\`off\`', '\`channel\` (optional — for the channel settings)'],
+        subcommands: [],
+      },
+      {
+        name: '/toggledms',
+        isGroup: false,
+        permission: '',
+        isNew: true,
+        description: 'Toggle unsolicited ("passive") aurelia DMs: achievement unlocks, level-up notifications, welcome/join rewards, welcomer coin rewards, onboarding panels and economy safe-mode notices. Turning passive DMs off NEVER blocks the underlying events — achievements still unlock and save, level-ups still happen — and DMs you explicitly ask for (modmail threads, your own reminders, private time capsules, \`/welcome test type:dm\`, \`/privacy export\`) always arrive. Example: \`/toggledms\` → "passive aurelia DMs are now **off**. …"',
+        params: [],
+        examples: [],
+        other: ['**Cooldown:** none'],
         subcommands: [],
       },
       {
@@ -973,4 +995,4 @@ export const DOCS_COMMANDS: DocsCategory[] = [
   },
 ];
 
-export const DOCS_COMMAND_COUNT = 70;
+export const DOCS_COMMAND_COUNT = 72;

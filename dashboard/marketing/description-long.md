@@ -19,7 +19,7 @@ when it should, full server event logging and a searchable case history.
 leaderboard, daily streak rewards, the question of the day with answer
 threads, giveaways with realtime entry counts, a starboard, anonymous
 confessions, ship compatibility, achievements, polls, custom commands
-and more — 168 commands across 46 modules.
+and more — 169 commands across 46 modules.
 
 **a dashboard as pretty as your server.** 34 module pages wrapped in
 veloura: live discord channel/role pickers, one-click live actions

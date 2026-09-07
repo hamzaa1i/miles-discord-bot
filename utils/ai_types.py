@@ -38,11 +38,22 @@ class AIProfile(str, Enum):
 
 
 class AIFailureCategory(str, Enum):
-    """Normalized failure classification (Phase N Part 12).
+    """Normalized failure classification (Phase N Part 12, hardened N.1).
 
     Providers raise AIRequestError with one of these; the router decides
     failover/cooldown policy from the category instead of parsing
     provider-specific error strings everywhere.
+
+    Phase N.1 additions:
+      * BAD_REQUEST        — 400 that is a REQUEST-SHAPE error, not a
+                             missing model (distinguished from
+                             MODEL_UNAVAILABLE so cooldowns and the owner
+                             status card stop lying about "model gone")
+      * SANITIZATION_EMPTY — HTTP 200, response parsed, but the visible
+                             text was entirely hidden reasoning / meta
+                             output and sanitization removed all of it.
+                             The router counts this as a FAILURE, never a
+                             success (Part 6).
     """
 
     UNCONFIGURED = "unconfigured"          # missing API key — skip, not "broken"
@@ -50,9 +61,11 @@ class AIFailureCategory(str, Enum):
     RATE_LIMIT = "rate_limit"              # 429 — cooldown + fail over
     TIMEOUT = "timeout"                    # request deadline exceeded
     SERVER_ERROR = "server_error"          # 5xx
-    MODEL_UNAVAILABLE = "model_unavailable"  # 400 / 404 / decommissioned
+    MODEL_UNAVAILABLE = "model_unavailable"  # 404 / decommissioned model id
+    BAD_REQUEST = "bad_request"            # 400 request-shape error
     INVALID_RESPONSE = "invalid_response"  # malformed / unparseable payload
     EMPTY_RESPONSE = "empty_response"      # 200 OK but no visible text
+    SANITIZATION_EMPTY = "sanitization_empty"  # 200 + only meta/CoT survived
     BUDGET_EXHAUSTED = "budget_exhausted"  # OpenRouter daily soft budget
     UNKNOWN = "unknown"
 
@@ -62,12 +75,22 @@ class AIRequestError(Exception):
 
     `retry_after` is honored when a provider returns one (429), otherwise
     the router applies its own defaults.
+
+    Phase N.1: `status_code` carries the sanitized numeric HTTP status
+    (429, 401, ...) for telemetry/logging. The `message` is for
+    INTERNAL exception text only — it must NEVER be logged verbatim in
+    production (provider bodies can echo request fragments) and never
+    appears in status snapshots. Logs use category + status_code.
     """
 
     def __init__(self, category: AIFailureCategory, message: str = "",
-                 retry_after: Optional[float] = None):
+                 retry_after: Optional[float] = None,
+                 status_code: Optional[int] = None):
         self.category = category
         self.retry_after = retry_after
+        self.status_code = status_code
+        # keep message bounded so an accidental log can't dump a body
+        self._message = str(message)[:300]
         super().__init__(message or category.value)
 
 

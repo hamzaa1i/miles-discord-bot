@@ -37,7 +37,18 @@ _RETRY_RE = re.compile(r"try again in (\d+m[\d.]+s|\d+\.\d+s|\d+s)", re.IGNORECA
 
 
 def _classify_error(exc: Exception) -> AIRequestError:
+    """Map a groq SDK exception to a normalized AIRequestError.
+
+    Phase N.1: 400 (request shape, e.g. a bad parameter) is BAD_REQUEST,
+    NOT MODEL_UNAVAILABLE — only 404 / model_not_found / decommissioned
+    signals are MODEL_UNAVAILABLE, so breaker policy and the owner
+    status card stop mislabeling request-shape errors as "model gone".
+    """
     text = f"{type(exc).__name__}: {exc}".lower()
+    status_code = None
+    m = re.search(r"\b(4\d\d|5\d\d)\b", text)
+    if m:
+        status_code = int(m.group(1))
     retry_after = None
     if "429" in text or "rate limit" in text or "rate_limit" in text \
             or "ratelimit" in text or "too many requests" in text:
@@ -51,19 +62,26 @@ def _classify_error(exc: Exception) -> AIRequestError:
                     retry_after = float(unit.rstrip("s"))
             except ValueError:
                 retry_after = None
-        return AIRequestError(AIFailureCategory.RATE_LIMIT, text[:300], retry_after)
+        return AIRequestError(AIFailureCategory.RATE_LIMIT, text[:300],
+                              retry_after, status_code=429)
     if "401" in text or "403" in text or "invalid api key" in text or "unauthorized" in text:
-        return AIRequestError(AIFailureCategory.AUTH, text[:300])
+        return AIRequestError(AIFailureCategory.AUTH, text[:300],
+                              status_code=status_code or 401)
     if "404" in text or "model_not_found" in text or "model not found" in text \
-            or "does not exist" in text or "decommissioned" in text or "not_available" in text:
-        return AIRequestError(AIFailureCategory.MODEL_UNAVAILABLE, text[:300])
-    if "400" in text:
-        return AIRequestError(AIFailureCategory.MODEL_UNAVAILABLE, text[:300])
+            or "does not exist" in text or "decommissioned" in text \
+            or "not_available" in text:
+        return AIRequestError(AIFailureCategory.MODEL_UNAVAILABLE, text[:300],
+                              status_code=status_code or 404)
+    if "400" in text or "bad request" in text or "invalid_request" in text:
+        return AIRequestError(AIFailureCategory.BAD_REQUEST, text[:300],
+                              status_code=400)
     if "timeout" in text or "timed out" in text:
         return AIRequestError(AIFailureCategory.TIMEOUT, text[:300])
     if "503" in text or "502" in text or "504" in text or "500" in text or "service unavailable" in text:
-        return AIRequestError(AIFailureCategory.SERVER_ERROR, text[:300])
-    return AIRequestError(AIFailureCategory.UNKNOWN, text[:300])
+        return AIRequestError(AIFailureCategory.SERVER_ERROR, text[:300],
+                              status_code=status_code)
+    return AIRequestError(AIFailureCategory.UNKNOWN, text[:300],
+                          status_code=status_code)
 
 
 class GroqProvider(AIProvider):

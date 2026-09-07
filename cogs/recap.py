@@ -231,11 +231,20 @@ class Recap(commands.Cog):
     @recap.error
     async def recap_error(self, interaction: discord.Interaction,
                           error: app_commands.AppCommandError):
+        # PHASE N.1 / PART 7 — this LOCAL handler is the single owner of
+        # /recap error responses. discord.py also forwards the error to
+        # the global tree handler afterwards, but that one checks
+        # `interaction.response.is_done()` and stays silent — exactly one
+        # ephemeral reply reaches the user.
         if isinstance(error, app_commands.CommandOnCooldown):
-            await interaction.response.send_message(
-                f"slow down — try again in {int(error.retry_after)}s.",
-                ephemeral=True,
-            )
+            msg = f"slow down — try again in {int(error.retry_after)}s."
+            try:
+                if interaction.response.is_done():
+                    await interaction.followup.send(msg, ephemeral=True)
+                else:
+                    await interaction.response.send_message(msg, ephemeral=True)
+            except Exception:
+                pass
         else:
             logger.error(f"[recap] command error: {error}")
             if not interaction.response.is_done():

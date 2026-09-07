@@ -50,6 +50,7 @@ from utils.ai_sanitize import (  # noqa: F401
     strip_cot_preambles,
     strip_reasoning_tags,
     is_empty_content,
+    is_meta_reasoning_text,
     EMPTY_CONTENT_MARK,
     DISCORD_CHAR_CAP,
 )
@@ -161,7 +162,16 @@ async def call_ai_profile(
 ) -> str:
     """NEW explicit-profile entry point (Phase N). Routes through the
     multi-provider chain and returns the sanitized text, or one of the
-    legacy graceful error strings when every provider failed."""
+    legacy graceful error strings when every provider failed.
+
+    PHASE N.1 / PART 5 — FINAL OUTPUT SAFETY GUARD: the router already
+    sanitized every provider result (and failed over on meta-only
+    output), but the facade re-checks the text at the boundary before
+    ANY cog receives it. If the text still trips the meta-reasoning
+    detector (defense in depth against a sanitizer regression), it is
+    NOT sent to Discord — the caller gets the legacy graceful fallback
+    line instead and the event is logged with a category.
+    """
     if not messages:
         logger.warning("[AI] empty messages list, skipping")
         return "something broke. try again."
@@ -182,15 +192,25 @@ async def call_ai_profile(
         )
         if not result.text:
             return _EMPTY_CONTENT_FALLBACK
+
+        # ── PHASE N.1 PART 5: the final guard ──
+        guarded = _final_output_guard(result.text, profile)
+        if guarded is not None:
+            return guarded
+
         return result.text
     except AIRoutingError as e:
         if e.rate_limited:
             return _RATE_LIMIT_ERROR
         # every provider answered but with no visible content — the
         # legacy empty-content marker (ai_chat randomizes it into a
-        # graceful line; its ERROR_RESPONSES set matches this exactly)
+        # graceful line; its ERROR_RESPONSES set matches this exactly).
+        # PHASE N.1: SANITIZATION_EMPTY (HTTP 200, only meta/CoT output)
+        # joins the same graceful branch — a provider whose entire
+        # response was hidden reasoning counts as no usable content.
         if e.categories and all(
-            c in (AIFailureCategory.EMPTY_RESPONSE,)
+            c in (AIFailureCategory.EMPTY_RESPONSE,
+                  AIFailureCategory.SANITIZATION_EMPTY)
             for c in e.categories
         ):
             return _EMPTY_CONTENT_FALLBACK
@@ -199,6 +219,37 @@ async def call_ai_profile(
     except Exception as e:
         logger.error(f"[AI] unexpected router error: {type(e).__name__}: {e}")
         return _GENERIC_ERROR
+
+
+def _final_output_guard(text: str, profile) -> str | None:
+    """PHASE N.1 / PART 5 — the LAST check before text reaches a cog.
+
+    Re-runs the sanitizer (idempotent) and the conservative
+    meta-reasoning detector. Returns the replacement fallback string
+    when the text must NOT be shown, or None when the text is clean and
+    the caller should return it as-is. Only ultra-high-confidence
+    markers trip the meta detector (see utils/ai_sanitize) — normal
+    casual replies pass untouched.
+    """
+    try:
+        resanitized = sanitize_output(text)
+        if is_empty_content(resanitized):
+            logger.warning(
+                "[AI] final guard: router text empty after re-sanitize "
+                f"(profile={getattr(profile, 'value', profile)}) — fallback"
+            )
+            return _EMPTY_CONTENT_FALLBACK
+        if is_meta_reasoning_text(resanitized):
+            logger.warning(
+                "[AI] final guard: meta-reasoning detected at facade "
+                f"boundary (profile={getattr(profile, 'value', profile)}) "
+                f"({len(resanitized)} chars) — replaced with fallback"
+            )
+            return _EMPTY_CONTENT_FALLBACK
+        return None
+    except Exception as e:
+        logger.error(f"[AI] final guard error: {type(e).__name__}: {e}")
+        return _EMPTY_CONTENT_FALLBACK
 
 
 async def call_ai(

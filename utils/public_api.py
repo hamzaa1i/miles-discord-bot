@@ -327,6 +327,16 @@ def _collect_stats() -> dict:
     except Exception:
         ai_status = "starting"
 
+    # PHASE N.1 / PART 12 — canonical command counts (the same helper
+    # the startup log, /botinfo and the docs surfaces use, so every
+    # public number agrees: 46 cogs / 73 top-level / 169 invokable).
+    command_counts = {}
+    try:
+        from utils.command_counts import count_commands_static
+        command_counts = count_commands_static()
+    except Exception:
+        command_counts = {}
+
     return {
         "status": "ok" if ready else "starting",
         "version": BOT_VERSION,
@@ -339,6 +349,11 @@ def _collect_stats() -> dict:
         "avg_response_ms": avg_response,
         "commands_used_today": _commands_today(),
         "top_commands": _top_commands(),
+        "command_counts": {
+            "cogs": command_counts.get("cogs", 0),
+            "top_level": command_counts.get("top_level", 0),
+            "total_invokable": command_counts.get("total_invokable", 0),
+        },
         "fun_stats": {
             "total_xp": _sum_column("user_levels", "xp"),
             "warnings_issued": _count_rows("warnings"),

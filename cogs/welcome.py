@@ -91,7 +91,9 @@ class Welcome(commands.Cog):
         self.bot = bot
         self.db = Database('data/welcome.json')
         self.economy_db = Database('data/economy.json')
-        self.dm_prefs_db = Database('data/dm_prefs.json')
+        # PHASE N.1 — dm prefs now live in the shared utils.db helpers
+        # (user_allows_passive_dms / set_user_allows_passive_dms) over
+        # the same data/dm_prefs.json; no local store here anymore.
         self.pending_welcomes = {}
         self.safe_mode_notified = set()
         # PHASE 2 / PART 6 — guild_id -> set of member ids that have
@@ -140,14 +142,22 @@ class Welcome(commands.Cog):
         return config
 
     def wants_dms(self, user_id: int) -> bool:
-        prefs = self.dm_prefs_db.get(str(user_id), {'dms_enabled': True})
-        return prefs.get('dms_enabled', True)
+        """PHASE N.1 / PART 8 — thin delegate to the ONE shared passive-DM
+        preference (utils.db.user_allows_passive_dms). Every cog now
+        consults the same data/dm_prefs.json store /toggledms writes,
+        so turning DMs off is respected globally (achievements,
+        level-ups, onboarding, welcome rewards) — not just in this cog.
+        """
+        from utils.db import user_allows_passive_dms
+        return user_allows_passive_dms(user_id)
 
     def disable_dms(self, user_id: int):
-        self.dm_prefs_db.set(str(user_id), {'dms_enabled': False})
+        from utils.db import set_user_allows_passive_dms
+        set_user_allows_passive_dms(user_id, False)
 
     def enable_dms(self, user_id: int):
-        self.dm_prefs_db.set(str(user_id), {'dms_enabled': True})
+        from utils.db import set_user_allows_passive_dms
+        set_user_allows_passive_dms(user_id, True)
 
     def get_economy_data(self, user_id: int) -> dict:
         return self.economy_db.get(str(user_id), {
@@ -431,15 +441,24 @@ class Welcome(commands.Cog):
             logger.debug("[welcome] welcome not enabled for this guild")
 
         # FIX 3 — Send custom DM message if configured (uses _replace_variables)
+        # PHASE N.1 / PART 8 — the on-join custom DM is unsolicited: gate
+        # it on the shared passive-DM preference (the join-reward DM below
+        # already was). /welcome test type:dm stays ungated (explicit).
         dm_msg = config.get('dm_message', '')
         if dm_msg and dm_msg.lower() != 'off':
-            try:
-                dm_text = self._replace_variables(dm_msg, member, member.guild)
-                await member.send(dm_text[:2000])
-            except discord.Forbidden:
-                pass
-            except Exception:
-                pass
+            if not self.wants_dms(member.id):
+                logger.info(
+                    f"[welcome] {member.id} has passive DMs off — "
+                    f"skipping configured welcome DM"
+                )
+            else:
+                try:
+                    dm_text = self._replace_variables(dm_msg, member, member.guild)
+                    await member.send(dm_text[:2000])
+                except discord.Forbidden:
+                    pass
+                except Exception:
+                    pass
 
         # Pending welcome (for welcomer rewards)
         self.pending_welcomes[member.id] = {
@@ -606,15 +625,39 @@ class Welcome(commands.Cog):
             logger.info(f"[welcome] goodbye message sent to #{channel.name}")
 
     # ==================== STANDALONE COMMAND ====================
-    @app_commands.command(name="toggledms", description="Toggle DMs from aurelia")
+    # PHASE N.1 / PART 8 — /toggledms is now the GLOBAL passive-DM
+    # switch (wording updated): "passive aurelia DMs" covers achievement
+    # unlocks, level-ups, join/onboarding panels and reward notices.
+    # Explicitly requested DMs (modmail threads, /welcome test dm, your
+    # own reminders, private time capsules, /privacy export) still
+    # arrive either way. Default stays allow; no stored preference is
+    # ever flipped silently (Part 9).
+    @app_commands.command(name="toggledms", description="Toggle passive DMs from aurelia")
     async def toggledms(self, interaction: discord.Interaction):
-        prefs = self.dm_prefs_db.get(str(interaction.user.id), {'dms_enabled': True})
-        if prefs.get('dms_enabled', True):
-            self.disable_dms(interaction.user.id); status, detail = "disabled", "you'll only get important DMs"
+        from utils.db import user_allows_passive_dms, set_user_allows_passive_dms
+        if user_allows_passive_dms(interaction.user.id):
+            set_user_allows_passive_dms(interaction.user.id, False)
+            status, detail = (
+                "off",
+                "no more unsolicited aurelia DMs — achievements still "
+                "unlock, level-ups still happen, you just won't be DM'd "
+                "about them. DMs you ask for (modmail, reminders, time "
+                "capsules) still arrive",
+            )
         else:
-            self.enable_dms(interaction.user.id); status, detail = "enabled", "you'll get welcome rewards and notifications"
+            set_user_allows_passive_dms(interaction.user.id, True)
+            status, detail = (
+                "on",
+                "you'll get welcome rewards, level-ups and achievement "
+                "notifications in your DMs again",
+            )
         await interaction.response.send_message(
-            embed=discord.Embed(description=f"DMs from aurelia are now **{status}**. {detail}.", color=COLOR_CONFIG), ephemeral=True)
+            embed=discord.Embed(
+                description=f"passive aurelia DMs are now **{status}**. {detail}.",
+                color=COLOR_CONFIG,
+            ),
+            ephemeral=True,
+        )
 
     # ==================== WELCOME GROUP (FIX 3 consolidation) ====================
     # The PART 2 rework split configuration across 17 subcommands

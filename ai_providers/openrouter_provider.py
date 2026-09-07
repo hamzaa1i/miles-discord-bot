@@ -39,6 +39,15 @@ _RETRY_RE = re.compile(r"(\d+(?:\.\d+)?)\s*s", re.IGNORECASE)
 
 
 def _classify_error(status: int, body: str) -> AIRequestError:
+    """OpenRouter REST status -> normalized AIRequestError.
+
+    Phase N.1: 400 (request shape) is BAD_REQUEST; 404 stays
+    MODEL_UNAVAILABLE (unknown/deprecated model slug). 402 is OpenRouter's
+    payment-required signal — mapped to BUDGET_EXHAUSTED so the owner
+    card can show the real story instead of a generic failure.
+    `body` is INTERNAL only (bounded inside AIRequestError); telemetry
+    uses category + status_code.
+    """
     text = f"openrouter http {status}: {body}".lower()
     retry_after = None
     if status == 429:
@@ -48,14 +57,25 @@ def _classify_error(status: int, body: str) -> AIRequestError:
                 retry_after = float(m.group(1))
             except ValueError:
                 retry_after = None
-        return AIRequestError(AIFailureCategory.RATE_LIMIT, text[:300], retry_after)
+        return AIRequestError(AIFailureCategory.RATE_LIMIT, text[:300],
+                              retry_after, status_code=429)
     if status in (401, 403):
-        return AIRequestError(AIFailureCategory.AUTH, text[:300])
-    if status in (400, 404):
-        return AIRequestError(AIFailureCategory.MODEL_UNAVAILABLE, text[:300])
+        return AIRequestError(AIFailureCategory.AUTH, text[:300],
+                              status_code=status)
+    if status == 402:
+        return AIRequestError(AIFailureCategory.BUDGET_EXHAUSTED,
+                              text[:300], status_code=402)
+    if status == 404:
+        return AIRequestError(AIFailureCategory.MODEL_UNAVAILABLE,
+                              text[:300], status_code=404)
+    if status == 400:
+        return AIRequestError(AIFailureCategory.BAD_REQUEST, text[:300],
+                              status_code=400)
     if status >= 500:
-        return AIRequestError(AIFailureCategory.SERVER_ERROR, text[:300])
-    return AIRequestError(AIFailureCategory.INVALID_RESPONSE, text[:300])
+        return AIRequestError(AIFailureCategory.SERVER_ERROR, text[:300],
+                              status_code=status)
+    return AIRequestError(AIFailureCategory.INVALID_RESPONSE, text[:300],
+                          status_code=status)
 
 
 class OpenRouterProvider(AIProvider):
@@ -172,4 +192,5 @@ class OpenRouterProvider(AIProvider):
         self._session = None
 
     def model_ids(self) -> dict:
-        return {"reasoning": "z-ai/glm-5.2:free"}
+        from utils import ai_config as cfg
+        return {"reasoning": cfg.OPENROUTER_REASONING_MODEL}

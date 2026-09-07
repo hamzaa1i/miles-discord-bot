@@ -46,27 +46,58 @@ _RETRY_RE = re.compile(r"(\d+(?:\.\d+)?)\s*s", re.IGNORECASE)
 
 
 def _classify_error(exc: Exception) -> AIRequestError:
+    """Map a mistralai SDK exception to a normalized AIRequestError.
+
+    Phase N.1: the mistralai 2.x SDK raises
+    `mistralai.client.errors.sdkerror.SDKError` with a numeric
+    `status_code` attribute (verified against mistralai 2.9.4:
+    str(exc) == "API error occurred: Status 401. Body: {...}").
+    The numeric status is authoritative — string sniffing is only the
+    fallback for exceptions raised client-side (timeouts, connection
+    resets). 400 (request shape) is BAD_REQUEST, not MODEL_UNAVAILABLE;
+    only 404 / unknown-model / decommissioned signals are
+    MODEL_UNAVAILABLE so the status card stops mislabeling request-shape
+    errors as "model gone".
+    """
+    status_code = getattr(exc, "status_code", None)
+    if not isinstance(status_code, int):
+        status_code = None
     text = f"{type(exc).__name__}: {exc}".lower()
-    retry_after = None
-    if "429" in text or "rate" in text:
+    if status_code is None:
+        m = re.search(r"status (\d{3})", text)
+        if m:
+            status_code = int(m.group(1))
+
+    if status_code == 429 or "rate limit" in text or "429" in text:
+        retry_after = None
         m = _RETRY_RE.search(text)
         if m:
             try:
                 retry_after = float(m.group(1))
             except ValueError:
                 retry_after = None
-        return AIRequestError(AIFailureCategory.RATE_LIMIT, text[:300], retry_after)
-    if "401" in text or "403" in text or "unauthorized" in text or "forbidden" in text:
-        return AIRequestError(AIFailureCategory.AUTH, text[:300])
-    if "404" in text or "not found" in text or "unknown model" in text or "model" in text and "400" in text:
-        return AIRequestError(AIFailureCategory.MODEL_UNAVAILABLE, text[:300])
-    if "400" in text:
-        return AIRequestError(AIFailureCategory.MODEL_UNAVAILABLE, text[:300])
+        return AIRequestError(AIFailureCategory.RATE_LIMIT, text[:300],
+                              retry_after, status_code=429)
+    if status_code in (401, 403) or "unauthorized" in text \
+            or "forbidden" in text or "invalid api key" in text:
+        return AIRequestError(AIFailureCategory.AUTH, text[:300],
+                              status_code=status_code or 401)
+    if status_code == 404 or "not found" in text or "unknown model" in text \
+            or "model_not_found" in text or "decommissioned" in text \
+            or ("model" in text and "not" in text):
+        return AIRequestError(AIFailureCategory.MODEL_UNAVAILABLE, text[:300],
+                              status_code=status_code or 404)
+    if status_code == 400 or "bad request" in text:
+        return AIRequestError(AIFailureCategory.BAD_REQUEST, text[:300],
+                              status_code=400)
     if "timeout" in text or "timed out" in text:
         return AIRequestError(AIFailureCategory.TIMEOUT, text[:300])
-    if "5xx" in text or "500" in text or "502" in text or "503" in text or "504" in text or "service unavailable" in text:
-        return AIRequestError(AIFailureCategory.SERVER_ERROR, text[:300])
-    return AIRequestError(AIFailureCategory.UNKNOWN, text[:300])
+    if status_code is not None and status_code >= 500 \
+            or "service unavailable" in text or "5xx" in text:
+        return AIRequestError(AIFailureCategory.SERVER_ERROR, text[:300],
+                              status_code=status_code)
+    return AIRequestError(AIFailureCategory.UNKNOWN, text[:300],
+                          status_code=status_code)
 
 
 class MistralProvider(AIProvider):
@@ -167,4 +198,5 @@ class MistralProvider(AIProvider):
         )
 
     def model_ids(self) -> dict:
-        return {"chat": "mistral-small-2603"}
+        from utils import ai_config as cfg
+        return {"chat": cfg.MISTRAL_MODEL}

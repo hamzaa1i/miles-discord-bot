@@ -34,6 +34,16 @@ Chains (spec Parts 2/10; model ids from utils/ai_config):
 Usage accounting privacy (Phase N Part 9): metadata only — provider,
 model, profile, counts, tokens, latency. NEVER prompts, responses,
 conversation text, moderation text or API keys.
+
+PHASE N.1 hardening (this revision):
+  * SANITIZATION_EMPTY — HTTP 200 with only meta/CoT output is a
+    FAILURE, counted and failed over (Part 6 success accounting).
+  * provider states: unconfigured / unknown / healthy / degraded /
+    cooldown / auth_error / model_unavailable. "healthy" requires a
+    real successful request; a configured-but-unverified provider is
+    "unknown" (Part 3: configured != healthy).
+  * sanitized failure telemetry: category + numeric status + latency
+    only — never exception bodies.
 """
 import asyncio
 import logging
@@ -86,6 +96,7 @@ class ProviderHealth:
     cooldown_until: float = 0.0          # monotonic clock
     cooldown_reason: str = ""
     last_error_category: str | None = None
+    last_error_status: int | None = None   # sanitized numeric HTTP status
     last_error_at: float | None = None   # epoch, for status display
     last_success_at: float | None = None # epoch
     total_calls: int = 0
@@ -93,15 +104,34 @@ class ProviderHealth:
     total_failures: int = 0
 
     def state(self, configured: bool) -> str:
+        """PHASE N.1 canonical health state. States:
+
+          unconfigured     no api key — skipped, never an error
+          auth_error       401/403 cooldown — key invalid/forbidden
+          model_unavailable 404/decommissioned cooldown — model id gone
+          cooldown         rate-limit / repeated-failure cooldown
+          degraded         breaker open (consecutive failures >= threshold)
+          healthy          a REAL request succeeded and nothing failed since
+          unknown          configured but never verified (fresh restart,
+                           or only soft failures so far)
+
+        "healthy" REQUIRES a successful live request (configured !=
+        healthy). A provider that merely has a key starts "unknown"
+        until it proves itself or lands in a cooldown/degraded state.
+        """
         if not configured:
             return "unconfigured"
         if self.cooldown_until > time.monotonic():
             if self.cooldown_reason.startswith("auth"):
-                return "misconfigured"
+                return "auth_error"
+            if self.cooldown_reason.startswith("model"):
+                return "model_unavailable"
             return "cooldown"
         if self.consecutive_failures >= cfg.BREAKER_FAILURE_THRESHOLD:
             return "degraded"
-        return "healthy"
+        if self.total_successes > 0 and self.consecutive_failures == 0:
+            return "healthy"
+        return "unknown"
 
 
 # ─── the router ─────────────────────────────────────────────────────
@@ -199,6 +229,7 @@ class AIRouter:
             h.total_calls += 1
             h.total_failures += 1
             h.last_error_category = err.category.value
+            h.last_error_status = err.status_code
             h.last_error_at = time.time()
             h.consecutive_failures += 1
 
@@ -214,12 +245,20 @@ class AIRouter:
                 h.cooldown_until = now_mono + cfg.MODEL_UNAVAILABLE_COOLDOWN
                 h.cooldown_reason = "model unavailable"
                 h.consecutive_failures = 0  # not a health signal for the provider
+            elif cat == AIFailureCategory.BAD_REQUEST:
+                # request-shape error: prompt-specific or code bug — a
+                # retry storm won't fix it, but it isn't the provider's
+                # health either. Short cooldown, breaker unaffected.
+                h.cooldown_until = now_mono + cfg.MODEL_UNAVAILABLE_COOLDOWN
+                h.cooldown_reason = "bad request (request shape)"
+                h.consecutive_failures = 0
             elif cat in (AIFailureCategory.SERVER_ERROR, AIFailureCategory.TIMEOUT):
                 if h.consecutive_failures >= cfg.BREAKER_FAILURE_THRESHOLD:
                     h.cooldown_until = now_mono + cfg.BREAKER_COOLDOWN_SECONDS
                     h.cooldown_reason = "degraded (repeated failures)"
             elif cat in (AIFailureCategory.INVALID_RESPONSE,
-                         AIFailureCategory.EMPTY_RESPONSE):
+                         AIFailureCategory.EMPTY_RESPONSE,
+                         AIFailureCategory.SANITIZATION_EMPTY):
                 # content-shaped failures: count, but need double the
                 # threshold before the breaker opens
                 if h.consecutive_failures >= cfg.BREAKER_FAILURE_THRESHOLD * 2:
@@ -415,12 +454,26 @@ class AIRouter:
                     timeout_seconds=timeout,
                 )
                 latency_ms = raw.latency_ms or (time.monotonic() - start) * 1000.0
+                raw_had_content = bool((raw.text or "").strip())
                 text = sanitize_output(raw.text)
 
+                # PHASE N.1 / PART 6 — success accounting: a provider
+                # call is a SUCCESS only when transport succeeded, the
+                # payload parsed, AND visible content survived
+                # sanitization. HTTP 200 with only hidden reasoning /
+                # meta output is a FAILURE (SANITIZATION_EMPTY), counted
+                # and failed over — never silently green.
                 if is_empty_content(text):
+                    cat = (AIFailureCategory.SANITIZATION_EMPTY
+                           if raw_had_content
+                           else AIFailureCategory.EMPTY_RESPONSE)
                     raise AIRequestError(
-                        AIFailureCategory.EMPTY_RESPONSE,
+                        cat,
+                        f"{step.provider} produced no visible content "
+                        f"after sanitization"
+                        if raw_had_content else
                         f"{step.provider} returned no visible content",
+                        status_code=200,
                     )
 
                 # ── success ──
@@ -459,9 +512,16 @@ class AIRouter:
                                     False, latency_ms, None, None)
                 categories.append(e.category)
                 failed_over_from.append(step.provider)
+                # PHASE N.1 — sanitized failure telemetry: category +
+                # numeric status only. NEVER the exception text (provider
+                # bodies can echo request fragments).
                 logger.warning(
-                    f"[router] {step.provider}:{step.model} failed "
-                    f"({e.category.value}) — failing over"
+                    f"[router] {step.provider}:{step.model} failure "
+                    f"category={e.category.value}"
+                    + (f" status={e.status_code}" if e.status_code else "")
+                    + (f" retry_after={e.retry_after:.0f}s"
+                       if e.retry_after else "")
+                    + f" ({latency_ms:.0f}ms) — failing over"
                 )
                 continue
 
@@ -526,6 +586,7 @@ class AIRouter:
                     },
                     "per_model": today,
                     "last_error_category": h.last_error_category,
+                    "last_error_status": h.last_error_status,
                     "last_success_at": h.last_success_at,
                     "cooldown_seconds_left": cooldown_left,
                     "cooldown_reason": h.cooldown_reason if cooldown_left else "",
@@ -541,17 +602,35 @@ class AIRouter:
                 ]
 
             configured = [n for n, p in providers.items() if p["configured"]]
+            # PHASE N.1 — "operational" requires at least one provider
+            # in the genuine "healthy" state (a real request succeeded
+            # recently and nothing failed since). "unknown" providers
+            # (key present, never verified) don't make the AI green, but
+            # they don't mark it down either.
             healthy = [n for n in configured if providers[n]["state"] == "healthy"]
             in_cooldown = [
                 n for n in configured
-                if providers[n]["state"] in ("cooldown", "misconfigured")
+                if providers[n]["state"] in (
+                    "cooldown", "auth_error", "model_unavailable",
+                    "degraded",
+                )
             ]
-            if not configured or (not healthy and not in_cooldown):
+            if not configured:
                 ai_status = "down"
-            elif in_cooldown:
-                ai_status = "degraded"
-            else:
+            elif healthy and not in_cooldown:
                 ai_status = "operational"
+            elif healthy and in_cooldown:
+                ai_status = "degraded"
+            elif in_cooldown:
+                # no healthy provider left: hard config/model errors mean
+                # the AI is effectively down; soft cooldowns mean degraded
+                ai_status = "down" if all(
+                    providers[n]["state"] in ("auth_error", "model_unavailable")
+                    for n in in_cooldown
+                ) else "degraded"
+            else:
+                # configured but nothing verified yet (fresh restart)
+                ai_status = "unknown"
 
             snapshot = {
                 "router_enabled": cfg.ROUTER_ENABLED,
