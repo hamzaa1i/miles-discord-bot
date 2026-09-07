@@ -1,11 +1,12 @@
 'use client';
 
-/** Fun & polls — usage guide for the delightfully useless. */
+/** Fun & games — usage guide for the delightfully useless. */
 
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { ModuleCard } from '@/components/ModuleCard';
 import { Card, CardTitle, Badge } from '@/components/ui/primitives';
+import { Icon } from '@/components/icons';
 
 const THINGS = [
   {
@@ -13,6 +14,8 @@ const THINGS = [
     title: 'polls',
     body: '/poll question + options — reactions 🇦..🇩 count the votes. ends with /poll end, by its creator or a mod.',
     tag: 'command-driven · no config',
+    link: 'polls',
+    linkLabel: 'see live polls →',
   },
   {
     icon: 'heart',
@@ -32,12 +35,15 @@ const THINGS = [
     body: '/remind create 2h water the plants — recurring daily/weekly/monthly. view and cancel yours on the reminders page.',
     tag: 'per-user · see reminders page',
     link: 'reminders',
+    linkLabel: 'manage your reminders →',
   },
   {
-    icon: 'gift',
+    icon: 'moon',
     title: 'daily & fortune',
     body: '/daily claims streak xp with milestone bonuses. /fortune draws the day\u2019s card — never twice the same.',
     tag: 'per-user',
+    link: 'vibe',
+    linkLabel: 'guide on the vibe page →',
   },
   {
     icon: 'scroll',
@@ -54,7 +60,7 @@ export default function FunPage() {
   return (
     <ModuleCard
       icon="sparkles"
-      title="fun & polls"
+      title="fun & games"
       description="the delightfully useful corners — all command-driven, zero config"
     >
       <div className="grid gap-4 sm:grid-cols-2">
@@ -65,9 +71,10 @@ export default function FunPage() {
             {t.link ? (
               <Link
                 href={`/servers/${gid}/${t.link}`}
-                className="mt-auto self-start text-xs text-veloura-lavender transition hover:text-veloura-pink"
+                className="mt-auto inline-flex items-center gap-1.5 self-start text-xs text-veloura-lavender transition hover:text-veloura-pink"
               >
-                manage your reminders →
+                {t.linkLabel}
+                <Icon name="chevronRight" size={13} />
               </Link>
             ) : (
               <Badge tone="muted" className="mt-auto self-start">

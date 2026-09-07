@@ -18,7 +18,7 @@ import { X } from 'lucide-react';
 
 function Shell({ guildId, children }: { guildId: string; children: React.ReactNode }) {
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const { overview, loading, error } = useGuild();
+  const { overview, loading, error, reloadOverview } = useGuild();
   const { user, logout } = useAuth();
 
   return (
@@ -104,13 +104,24 @@ function Shell({ guildId, children }: { guildId: string; children: React.ReactNo
             <p className="truncate font-heading text-base text-veloura-text">
               {loading ? '…' : overview?.name ?? 'server'}
             </p>
-            {!loading && !error && overview && (
+            {error ? (
+              <p className="flex items-center gap-2 text-[11px] text-veloura-danger">
+                <span className="min-w-0 truncate">{error}</span>
+                <button
+                  onClick={() => void reloadOverview()}
+                  disabled={loading}
+                  className="shrink-0 rounded-full border border-veloura-danger/40 px-2 py-0.5 text-[10px] uppercase tracking-wider text-veloura-danger transition hover:bg-veloura-danger/10 disabled:opacity-50"
+                  title="reload server info"
+                >
+                  retry
+                </button>
+              </p>
+            ) : !loading && overview ? (
               <p className="text-[11px] text-veloura-muted/70">
                 {overview.member_count?.toLocaleString() ?? '—'} members ·{' '}
                 {overview.boost_count > 0 ? `${overview.boost_count} boosts · ` : ''}aurelia ✦
               </p>
-            )}
-            {error && <p className="text-[11px] text-veloura-danger">{error}</p>}
+            ) : null}
           </div>
           {user && (
             <img

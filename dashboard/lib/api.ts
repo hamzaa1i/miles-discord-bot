@@ -106,6 +106,7 @@ import type {
   LevelReward,
   ManageableGuild,
   NickRequest,
+  PollRow,
   QotdQueueRow,
   ReminderRow,
   Settings,
@@ -217,4 +218,7 @@ export const endpoints = {
 
   deleteReminder: (id: string) =>
     api.delete<{ deleted: boolean }>(`/reminders/${encodeURIComponent(id)}`),
+
+  polls: (gid: string) =>
+    api.get<{ polls: PollRow[] }>(`/guild/${gid}/module/polls/data`),
 };

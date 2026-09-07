@@ -1,21 +1,17 @@
 'use client';
 
-/** Moderation — settings + searchable, paginated warnings with realtime. */
+/** Moderation — settings: log channel, admin role, thresholds, antilink.
+ * The warnings case history lives on its own /warnings page now. */
 
-import { useCallback, useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
+import Link from 'next/link';
 import { useModuleSettings } from '@/lib/useModuleSettings';
-import { endpoints, ApiRequestError } from '@/lib/api';
 import { ModuleCard } from '@/components/ModuleCard';
 import { SaveBar } from '@/components/SaveBar';
 import { ChannelPicker, RolePicker, ChannelMultiPicker } from '@/components/ChannelPicker';
-import { Card, CardTitle, Badge, Select, TextInput, LoadingCard, ErrorCard } from '@/components/ui/primitives';
-import { EmptyState, SectionHeading } from '@/components/EmptyState';
+import { Card, CardTitle, Select, TextInput, LoadingCard, ErrorCard } from '@/components/ui/primitives';
 import { useToast } from '@/components/ui/toast';
-import { useRealtime } from '@/lib/useRealtime';
-import { timeAgo } from '@/lib/format';
-import type { Settings, Warning } from '@/lib/types';
-import { Icon } from '@/components/icons';
+import type { Settings } from '@/lib/types';
 
 const DEFAULTS: Settings = {
   log_channel_id: null,
@@ -39,56 +35,12 @@ export default function ModerationPage() {
   const toast = useToast();
   const ms = useModuleSettings(gid, 'moderation', DEFAULTS);
 
-  const [warnings, setWarnings] = useState<Warning[] | null>(null);
-  const [total, setTotal] = useState(0);
-  const [page, setPage] = useState(1);
-  const [userFilter, setUserFilter] = useState('');
-  const [query, setQuery] = useState('');
-  const perPage = 20;
-
-  const loadWarnings = useCallback(
-    (p = page, user = query) => {
-      endpoints
-        .warnings(gid, p, perPage, user || undefined)
-        .then((r) => {
-          setWarnings(r.warnings);
-          setTotal(r.total);
-        })
-        .catch(() => setWarnings([]));
-    },
-    [gid, page, query],
-  );
-
-  useEffect(() => {
-    loadWarnings();
-  }, [loadWarnings]);
-
-  // realtime: new warnings pop in with a badge
-  const { live } = useRealtime(gid, 'warnings', () => {
-    setPage(1);
-    loadWarnings(1, query);
-    toast.push('new warning recorded ✧', 'info');
-  });
-
-  async function deleteWarning(w: Warning) {
-    const id = String(w.id ?? w.case_id ?? '');
-    try {
-      await endpoints.deleteData(gid, 'warnings', id);
-      setWarnings((ws) => (ws ?? []).filter((x) => String(x.id ?? x.case_id) !== id));
-      setTotal((t) => Math.max(0, t - 1));
-      toast.push('warning deleted', 'info');
-    } catch (e) {
-      toast.push(e instanceof ApiRequestError ? e.message : 'delete failed', 'error');
-    }
-  }
-
   if (ms.loading)
     return <LoadingCard label={ms.verifying ? 'verifying permissions…' : 'loading moderation config…'} />;
   if (ms.error && !ms.settings) return <ErrorCard message={ms.error} />;
   if (!ms.settings) return null;
 
   const s = ms.settings as Record<string, Settings[keyof Settings]>;
-  const pages = Math.max(1, Math.ceil(total / perPage));
 
   return (
     <>
@@ -178,6 +130,16 @@ export default function ModerationPage() {
             />
           </Card>
         </div>
+
+        <p className="mt-5 text-xs leading-relaxed text-veloura-muted/70">
+          the full warning history — searchable, paginated, live — lives on{' '}
+          <Link
+            href={`/servers/${gid}/warnings`}
+            className="text-veloura-lavender transition hover:text-veloura-pink"
+          >
+            the warnings page →
+          </Link>
+        </p>
       </ModuleCard>
 
       <SaveBar
@@ -190,108 +152,6 @@ export default function ModerationPage() {
         }}
         onRevert={ms.revert}
       />
-
-      <SectionHeading icon="scroll" right={live ? <Badge tone="success">realtime</Badge> : undefined}>
-        warnings <span className="text-sm text-veloura-muted">({total})</span>
-      </SectionHeading>
-      <Card id="warnings">
-        <div className="mb-4 flex flex-wrap gap-2">
-          <form
-            className="flex flex-1 gap-2"
-            onSubmit={(e) => {
-              e.preventDefault();
-              setPage(1);
-              loadWarnings(1, query);
-            }}
-          >
-            <TextInput
-              placeholder="filter by user id…"
-              value={query}
-              onChange={(e) => {
-                setQuery(e.target.value);
-                setUserFilter(e.target.value);
-              }}
-              aria-label="filter warnings by user id"
-            />
-            <button type="submit" className="veloura-button-ghost shrink-0 !min-h-[44px]">
-              search
-            </button>
-          </form>
-        </div>
-
-        {warnings === null ? (
-          <p className="text-sm text-veloura-muted">loading…</p>
-        ) : warnings.length === 0 ? (
-          <EmptyState
-            icon="sparkles"
-            title="no warnings found"
-            hint="a clean record — or none matching this filter"
-          />
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[560px] text-sm">
-              <thead>
-                <tr className="border-b border-veloura-border/60 text-left text-xs uppercase tracking-wider text-veloura-muted">
-                  <th className="pb-2 pr-4">user</th>
-                  <th className="pb-2 pr-4">reason</th>
-                  <th className="pb-2 pr-4">by</th>
-                  <th className="pb-2 pr-4">when</th>
-                  <th className="pb-2 text-right">remove</th>
-                </tr>
-              </thead>
-              <tbody>
-                {warnings.map((w, i) => (
-                  <tr key={String(w.id ?? w.case_id ?? i)} className="border-b border-veloura-border/30">
-                    <td className="py-3 pr-4">
-                      <span className="font-mono text-xs text-veloura-lavender">
-                        {w.user_id.slice(0, 10)}…
-                      </span>
-                    </td>
-                    <td className="max-w-[240px] truncate py-3 pr-4 text-veloura-text">
-                      {w.reason ?? '—'}
-                    </td>
-                    <td className="py-3 pr-4 text-xs text-veloura-muted">{w.mod_name ?? '—'}</td>
-                    <td className="py-3 pr-4 text-xs text-veloura-muted/70">
-                      {timeAgo(w.timestamp)}
-                    </td>
-                    <td className="py-3 text-right">
-                      <button
-                        onClick={() => deleteWarning(w)}
-                        className="flex h-11 w-11 items-center justify-center rounded-[10px] border border-veloura-danger/30 text-veloura-danger transition hover:bg-veloura-danger/10"
-                        aria-label="delete warning"
-                      >
-                        <Icon name="trash" size={15} />
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-
-        {pages > 1 && (
-          <div className="mt-4 flex items-center justify-between text-sm">
-            <button
-              onClick={() => setPage((p) => Math.max(1, p - 1))}
-              disabled={page <= 1}
-              className="veloura-button-ghost !min-h-[36px] px-3 text-xs"
-            >
-              ← prev
-            </button>
-            <span className="text-xs text-veloura-muted">
-              page {page} / {pages}
-            </span>
-            <button
-              onClick={() => setPage((p) => Math.min(pages, p + 1))}
-              disabled={page >= pages}
-              className="veloura-button-ghost !min-h-[36px] px-3 text-xs"
-            >
-              next →
-            </button>
-          </div>
-        )}
-      </Card>
     </>
   );
 }

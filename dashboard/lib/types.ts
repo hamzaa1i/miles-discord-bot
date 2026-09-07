@@ -193,6 +193,15 @@ export interface ReminderRow {
   created_at?: string | null;
 }
 
+export interface PollRow {
+  message_id: string;
+  channel_id: string;
+  question: string;
+  options: string[];
+  author_name: string;
+  end_time: number | null;
+}
+
 export interface AchievementBadge {
   key: string;
   name: string;

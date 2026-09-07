@@ -67,6 +67,7 @@ import urllib.parse
 import urllib.request
 from collections import deque
 from datetime import datetime, timedelta, timezone
+from functools import wraps
 
 from flask import Blueprint, g, jsonify, redirect, request
 from utils import db as _db
@@ -409,7 +410,6 @@ def _auth_error(code, msg):
 
 def require_api(fn):
     """Auth + rate limit + CSRF wrapper for user-level endpoints."""
-    from functools import wraps
 
     @wraps(fn)
     def wrapper(*args, **kwargs):
@@ -433,7 +433,13 @@ def require_api(fn):
             return fn(*args, **kwargs)
         except Exception as e:
             logger.error(f"[dashboard] {request.path} failed: {e}", exc_info=True)
-            return _auth_error(500, "internal error")
+            # Live-testing lesson: a bare "internal error" hides the actual
+            # cause (e.g. the Asset-serialization bug below shipped invisibly
+            # for a whole round). The dashboard audience is guild managers +
+            # the bot owner, so surfacing the exception type + message makes
+            # the next failure self-describing. Full trace stays in bot.log.
+            detail = f"{type(e).__name__}: {e}"[:200]
+            return _auth_error(500, f"internal error ({detail})")
     return wrapper
 
 
@@ -447,7 +453,6 @@ def require_guild_api(fn):
             timeout). The body carries retry:true; the dashboard retries
             after ~1s instead of showing a misleading permission error.
     """
-    from functools import wraps
 
     @wraps(fn)
     @require_api
@@ -480,7 +485,6 @@ def require_guild_api(fn):
 
 def require_owner_api(fn):
     """require_api + OWNER_ID match."""
-    from functools import wraps
 
     @wraps(fn)
     @require_api
@@ -630,11 +634,32 @@ def _usage_stats(guild_id) -> dict:
     }
 
 
+def _guild_icon_hash(guild):
+    """Raw icon hash string for the frontend (it builds CDN urls —
+    animated a_ icons need .gif, static ones .png).
+
+    discord.py 2.x's Guild.icon returns an Optional[Asset], NOT a string.
+    Flask's jsonify can't serialize Asset objects — putting `guild.icon`
+    straight into the response 500'd EVERY /overview call in live
+    testing, which surfaced as "internal error" banners across the whole
+    dashboard. Asset.key is the raw hash; this helper never raises.
+    """
+    try:
+        icon = guild.icon
+        if icon is None:
+            return None
+        if isinstance(icon, str):        # mocks / odd versions
+            return icon or None
+        return str(getattr(icon, "key", "") or "") or None
+    except Exception:
+        return None
+
+
 @dashboard_bp.route("/guild/<guild_id>/overview", methods=["GET"])
 @require_guild_api
 def guild_overview(guild_id):
     guild = g.guild
-    icon_hash = guild.icon  # raw hash — frontend builds the CDN url
+    icon_hash = _guild_icon_hash(guild)
     joined_at = None
     try:
         if guild.me and guild.me.joined_at:
@@ -1003,6 +1028,38 @@ def _data_qotd_queue(guild) -> dict:
     return {"queue": rows}
 
 
+def _data_polls(guild) -> dict:
+    """Active (not-yet-ended) polls for this guild, from data/polls.json.
+
+    Polls are command-driven (/poll create) — there is nothing to
+    configure, but managers want to see what's currently running. The
+    bot keeps every poll keyed by message id; ended ones are filtered
+    out here so the dashboard lists only live polls. Channel names are
+    resolved client-side from the picker resources.
+    """
+    rows = []
+    try:
+        data = _db._read_json("data/polls.json")
+        for mid, p in data.items():
+            if not isinstance(p, dict) or str(p.get("guild_id")) != str(guild.id):
+                continue
+            if p.get("ended"):
+                continue
+            options = p.get("options")
+            rows.append({
+                "message_id": str(mid),
+                "channel_id": str(p.get("channel_id", "") or ""),
+                "question": str(p.get("question", "")),
+                "options": options if isinstance(options, list) else [],
+                "author_name": str(p.get("author_name", "") or ""),
+                "end_time": p.get("end_time"),
+            })
+    except Exception as e:
+        logger.debug(f"[dashboard] polls read failed: {e}")
+    rows.sort(key=lambda p: str(p.get("message_id")), reverse=True)
+    return {"polls": rows[:25]}
+
+
 def _data_stats(guild) -> dict:
     sb = _db.get_supabase()
     since = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
@@ -1066,6 +1123,8 @@ def module_data(guild_id, module):
         return jsonify(_data_qotd_queue(g.guild))
     if module == "stats":
         return jsonify(_data_stats(g.guild))
+    if module == "polls":
+        return jsonify(_data_polls(g.guild))
     if module == "colors":
         rows = _run_async(_db.get_guild_color_roles_async(str(guild.id))) or []
         for r in rows:

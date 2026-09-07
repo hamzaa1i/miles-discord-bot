@@ -23,11 +23,11 @@ const FEATURE_ROUTES: Record<string, { label: string; href: string }> = {
   logging: { label: 'logging', href: 'logging' },
   confessions: { label: 'confessions', href: 'confessions' },
   proactive: { label: 'proactive', href: 'ai' },
-  onboarding: { label: 'onboarding', href: 'roles' },
+  onboarding: { label: 'onboarding', href: 'onboarding' },
   nick: { label: 'nickname requests', href: 'nick' },
   birthdays: { label: 'birthdays', href: 'birthdays' },
   custom_commands: { label: 'custom commands', href: 'custom-commands' },
-  self_roles: { label: 'self roles', href: 'roles' },
+  self_roles: { label: 'self roles', href: 'self-roles' },
   giveaways: { label: 'giveaways', href: 'giveaways' },
 };
 
@@ -70,9 +70,20 @@ export default function OverviewPage() {
     return (
       <Card className="border-veloura-danger/30">
         <p className="text-sm text-veloura-danger">✧ {error ?? 'could not load overview'}</p>
-        <button className="veloura-button-ghost mt-4" onClick={() => window.location.reload()}>
-          retry
-        </button>
+        <div className="mt-4 flex flex-wrap gap-2">
+          <button
+            className="veloura-button-ghost !min-h-[40px]"
+            onClick={() => void reloadOverview()}
+          >
+            retry
+          </button>
+          <button
+            className="veloura-button-ghost !min-h-[40px]"
+            onClick={() => window.location.reload()}
+          >
+            reload page
+          </button>
+        </div>
       </Card>
     );
   }

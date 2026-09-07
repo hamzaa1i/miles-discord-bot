@@ -59,7 +59,15 @@ class FakeMember:
 class FakeGuild:
     def __init__(self):
         self.id, self.name = int(GUILD_ID), "veloura lounge"
-        self.icon = None
+        # REGRESSION (live round 2): real discord.py 2.x Guild.icon is an
+        # Optional[Asset] — Assets are NOT JSON serializable, and a bare
+        # `guild.icon` in the /overview response 500'd EVERY call in
+        # production while this suite's old plain-string mock passed.
+        # The fake now carries a REAL discord.Asset (animated hash, to
+        # cover the a_ gif path) so the serializer fix is enforced.
+        import discord
+        self.icon = discord.Asset._from_guild_icon(
+            None, int(GUILD_ID), "a_1c2e3a4e5f6fakegif")
         self.member_count = 42
         self.premium_subscription_count = 2
         self.me = types.SimpleNamespace(
@@ -68,7 +76,14 @@ class FakeGuild:
                 manage_roles=True, manage_channels=True,
                 moderate_members=True, send_messages=True, embed_links=True,
             ),
+            # _live_guild_roles gateway fallback reads me.top_role.position
+            # (roles at/above the bot are filtered out of every picker)
+            top_role=types.SimpleNamespace(position=10),
+            # _perms_from_overwrites reads me.roles (REST channel path)
+            roles=[FakeRole("200", "@everyone", default=True, position=0),
+                   FakeRole("201", "veloura", 0xFFC0CB, position=3)],
         )
+        self.owner_id = int(USER_ID)
         self.members = [FakeMember(USER_ID, "volc"),
                         FakeMember("999", "sleepy")]
         self.channels = [
@@ -141,6 +156,19 @@ dauth.get_user_guilds = lambda token: (
     FAKE_GUILDS if token == "good-token" else None)
 dauth.verify_guild_permission = (
     lambda token, gid, perm=None: token == "good-token" and str(gid) == GUILD_ID)
+# require_guild_api checks permissions via verify_guild_permission_detailed
+# (imported INTO the blueprint module at import time — patch the dapi copy).
+# Mimics the real reason codes: ok / no_permission / auth.
+def _fake_verify_detailed(token, gid, perm=None):
+    if token != "good-token":
+        return False, dauth.VERIFY_AUTH
+    if str(gid) == GUILD_ID:
+        return True, dauth.VERIFY_OK
+    if str(gid) == "777":
+        return False, dauth.VERIFY_NO_PERMISSION
+    return False, dauth.VERIFY_NOT_FOUND
+
+dauth.verify_guild_permission_detailed = _fake_verify_detailed
 
 import keep_alive  # noqa: E402
 fake_bot = FakeBot()
@@ -154,6 +182,7 @@ import utils.dashboard_api as dapi  # noqa: E402
 dapi.verify_discord_token = dauth.verify_discord_token
 dapi.get_user_guilds = dauth.get_user_guilds
 dapi.verify_guild_permission = dauth.verify_guild_permission
+dapi.verify_guild_permission_detailed = _fake_verify_detailed
 
 app = Flask(__name__)
 dapi.init_dashboard_api(app)
@@ -210,12 +239,15 @@ check("404 guild bot not in", r.status_code == 404)
 print("== overview ==")
 r = client.get(f"/api/dashboard/guild/{GUILD_ID}/overview", headers=H)
 ov = r.get_json()
-check("200 overview", r.status_code == 200)
-check("overview fields", ov["name"] == "veloura lounge"
-      and ov["member_count"] == 42 and ov["boost_count"] == 2
-      and ov["bot_joined_at"].startswith("2024-01-15")
-      and "welcome" in ov["active_features"]
-      and "commands_used_7d" in ov["stats"], str(ov)[:200])
+check("200 overview", r.status_code == 200, str(ov)[:200])
+check("overview fields", ov.get("name") == "veloura lounge"
+      and ov.get("member_count") == 42 and ov.get("boost_count") == 2
+      and str(ov.get("bot_joined_at", "")).startswith("2024-01-15")
+      and "welcome" in ov.get("active_features", {})
+      and "commands_used_7d" in ov.get("stats", {}), str(ov)[:200])
+check("overview icon = raw Asset hash (a_ gif path), not the Asset object",
+      ov.get("icon") == "a_1c2e3a4e5f6fakegif",
+      f"got: {ov.get('icon')!r}")
 
 print("== settings GET/PATCH ==")
 r = client.get(f"/api/dashboard/guild/{GUILD_ID}/settings/welcome", headers=H)
@@ -324,6 +356,32 @@ check("stats data", r.status_code == 200 and "series" in r.get_json())
 r = client.get(f"/api/dashboard/guild/{GUILD_ID}/module/nope/data", headers=H)
 check("unknown data module 404", r.status_code == 404)
 
+print("== polls data (new) ==")
+# seed two polls: one live for this guild, one ended, one foreign guild
+_polls = {
+    "900": {"guild_id": GUILD_ID, "channel_id": "100", "question": "movie night?",
+            "options": ["friday", "saturday"], "author_name": "volc",
+            "end_time": 9999999999, "ended": False},
+    "901": {"guild_id": GUILD_ID, "channel_id": "100", "question": "old poll",
+            "options": ["a", "b"], "author_name": "volc",
+            "end_time": None, "ended": True},
+    "902": {"guild_id": "555555", "channel_id": "1", "question": "other server",
+            "options": ["x"], "author_name": "someone",
+            "end_time": None, "ended": False},
+}
+json.dump(_polls, open("data/polls.json", "w"))
+r = client.get(f"/api/dashboard/guild/{GUILD_ID}/module/polls/data", headers=H)
+pdata = r.get_json()
+check("polls data 200", r.status_code == 200, str(pdata)[:200])
+check("polls data: only this guild's ACTIVE polls",
+      [p["message_id"] for p in pdata.get("polls", [])] == ["900"],
+      str(pdata)[:200])
+check("polls row shape",
+      pdata["polls"][0]["question"] == "movie night?"
+      and pdata["polls"][0]["options"] == ["friday", "saturday"]
+      and pdata["polls"][0]["author_name"] == "volc"
+      and pdata["polls"][0]["channel_id"] == "100")
+
 print("== delete data ==")
 r = client.delete(f"/api/dashboard/guild/{GUILD_ID}/data/custom_commands/hey",
                   headers=HC)
@@ -367,15 +425,27 @@ r = client.post("/api/dashboard/owner/blacklist_add", headers=HC,
 check("owner blacklist queued", r.status_code == 200)
 dashboard_action_queue.get_nowait()
 
-print("== rate limit (61 rapid requests) ==")
+print("== rate limit (150 reads / 60 mutations per min) ==")
 dapi._rl_map.clear()
-limited = False
-for i in range(65):
+limited_at = None
+for i in range(160):
     r = client.get("/api/dashboard/csrf", headers=H)
     if r.status_code == 429:
-        limited = True
+        limited_at = i
         break
-check("rate limit kicks in <= 60/min", limited and i >= 55, f"hit at {i}")
+check("GET rate limit kicks in <= 150/min",
+      limited_at is not None and limited_at >= 145, f"hit at {limited_at}")
+
+dapi._rl_map.clear()
+limited_at = None
+for i in range(70):
+    r = client.post(f"/api/dashboard/guild/{GUILD_ID}/action/not_real",
+                    headers=HC, json={})
+    if r.status_code == 429:
+        limited_at = i
+        break
+check("mutation rate limit kicks in <= 60/min",
+      limited_at is not None and limited_at >= 55, f"hit at {limited_at}")
 
 print("== CORS ==")
 r = client.get("/api/dashboard/user", headers={**H, "Origin": "http://localhost:3000"})

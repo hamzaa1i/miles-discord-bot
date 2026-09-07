@@ -87,12 +87,20 @@ export function GuildProvider({ guildId, children }: { guildId: string; children
   const [error, setError] = useState<string | null>(null);
 
   const reloadOverview = useCallback(async () => {
+    setLoading(true);
     try {
-      setOverview(await endpoints.overview(guildId));
+      // one retry on transient (429/502/503/504) — a cold Render worker
+      // or a Discord blip shouldn't blank the whole shell
+      const ov = await getWithRetry<GuildOverview>(`/guild/${guildId}/overview`, {
+        retries: 1,
+        delayMs: 800,
+      });
+      setOverview(ov);
       setError(null);
     } catch (e) {
-      if (e instanceof ApiRequestError) setError(e.message);
-      else if (e instanceof Error) setError(e.message);
+      if (e instanceof Error) setError(e.message);
+    } finally {
+      setLoading(false);
     }
   }, [guildId]);
 
@@ -133,7 +141,10 @@ export function GuildProvider({ guildId, children }: { guildId: string; children
       setLoading(true);
       try {
         const [ov, res] = await Promise.all([
-          endpoints.overview(guildId),
+          getWithRetry<GuildOverview>(`/guild/${guildId}/overview`, {
+            retries: 1,
+            delayMs: 800,
+          }),
           getWithRetry<GuildResources>(`/guild/${guildId}/resources`, {
             retries: 2,
             delayMs: 900,
