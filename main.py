@@ -73,6 +73,16 @@ start_time = datetime.utcnow()
 app = Flask(__name__)
 bot = None  # set after bot is created
 
+# DASHBOARD (PART 1) — register the /api/dashboard/* blueprint (auth,
+# CORS, rate limit, CSRF and audit live in utils/dashboard_api.py).
+try:
+    from utils.dashboard_api import init_dashboard_api
+    init_dashboard_api(app)
+except Exception as e:
+    logger.error(f"❌ Dashboard API registration failed: {e}")
+    import traceback
+    traceback.print_exc()
+
 
 @app.route('/')
 def home():
@@ -309,6 +319,17 @@ class CynBot(commands.Bot):
         # (drains the usage_logger buffer to Supabase every 30 seconds).
         asyncio.create_task(usage_logger.start_periodic_flush())
         logger.info("✅ Cache cleanup task + usage logger started")
+
+        # DASHBOARD (PART 1) — bot-side consumer of dashboard actions.
+        # Flask worker threads put live actions (qotd_post_now,
+        # welcome_test, giveaway_end, reload_cog, ...) on a thread-safe
+        # queue; this coroutine on the bot's event loop polls it every
+        # 5 seconds and executes with full bot access.
+        try:
+            from utils.dashboard_actions import start_dashboard_action_worker
+            await start_dashboard_action_worker(self)
+        except Exception as e:
+            logger.error(f"❌ Dashboard action worker failed to start: {e}")
 
     async def on_ready(self):
         logger.info(f"🤖 {self.user} is online!")

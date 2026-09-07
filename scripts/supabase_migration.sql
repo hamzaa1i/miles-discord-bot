@@ -445,3 +445,32 @@ CREATE TABLE IF NOT EXISTS public.invite_tracking (
 );
 GRANT ALL ON public.invite_tracking TO anon;
 ALTER TABLE public.invite_tracking DISABLE ROW LEVEL SECURITY;
+
+-- ─── DASHBOARD (web dashboard) ──────────────────────────────────────
+-- Audit log for every dashboard mutation + owner blacklist storage.
+CREATE TABLE IF NOT EXISTS public.dashboard_audit (
+  id BIGSERIAL PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  guild_id TEXT NOT NULL,
+  action TEXT NOT NULL,
+  details JSONB,
+  ip_address TEXT,
+  user_agent TEXT,
+  timestamp TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_audit_guild
+  ON public.dashboard_audit(guild_id, timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_user
+  ON public.dashboard_audit(user_id, timestamp DESC);
+GRANT ALL ON public.dashboard_audit TO anon;
+ALTER TABLE public.dashboard_audit DISABLE ROW LEVEL SECURITY;
+
+CREATE TABLE IF NOT EXISTS public.owner_blacklist (
+  user_id TEXT PRIMARY KEY,
+  added_by TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+GRANT ALL ON public.owner_blacklist TO anon;
+ALTER TABLE public.owner_blacklist DISABLE ROW LEVEL SECURITY;
+
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO anon;

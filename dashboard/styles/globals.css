@@ -1,0 +1,114 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg: #1a1d29;
+  --card: #242938;
+  --border: #333a4e;
+  --text: #f5f5f5;
+  --muted: #9ca3af;
+  --pink: #ffc0cb;
+  --lavender: #e6e6fa;
+}
+
+html,
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: Inter, system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2,
+h3,
+.font-heading {
+  font-family: 'Playfair Display', Georgia, serif;
+}
+
+::selection {
+  background: rgba(255, 192, 203, 0.3);
+  color: #f5f5f5;
+}
+
+/* ── soft scrollbar ─────────────────────────────────────────── */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #333a4e transparent;
+}
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background: #333a4e;
+  border-radius: 8px;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: #464f6b;
+}
+
+/* ── shared component classes ───────────────────────────────── */
+@layer components {
+  .veloura-card {
+    @apply rounded-card border border-veloura-border bg-veloura-card shadow-soft;
+  }
+  .veloura-input {
+    @apply w-full rounded-[12px] border border-veloura-border bg-veloura-navy px-3.5 py-2.5 text-sm text-veloura-text placeholder-veloura-muted/60 outline-none transition focus:border-veloura-pink/60 focus:ring-2 focus:ring-veloura-pink/20;
+  }
+  .veloura-label {
+    @apply mb-1.5 block text-xs font-medium uppercase tracking-wider text-veloura-muted;
+  }
+  .veloura-button {
+    @apply inline-flex min-h-[44px] items-center justify-center gap-2 rounded-[12px] px-5 py-2.5 text-sm font-medium transition focus:outline-none focus:ring-2 focus:ring-veloura-pink/40 disabled:cursor-not-allowed disabled:opacity-50;
+  }
+  .veloura-button-primary {
+    @apply veloura-button bg-veloura-pink text-veloura-navy-deep hover:bg-veloura-pink-soft hover:shadow-glow;
+  }
+  .veloura-button-ghost {
+    @apply veloura-button border border-veloura-border bg-transparent text-veloura-text hover:border-veloura-lavender/50 hover:bg-veloura-card-hover;
+  }
+  .veloura-button-danger {
+    @apply veloura-button border border-veloura-danger/40 bg-transparent text-veloura-danger hover:bg-veloura-danger/10;
+  }
+}
+
+/* ── range slider (veloura pink) ────────────────────────────── */
+input[type='range'] {
+  @apply h-2 w-full cursor-pointer appearance-none rounded-full bg-veloura-border;
+}
+input[type='range']::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 18px;
+  width: 18px;
+  border-radius: 9999px;
+  background: #ffc0cb;
+  border: 3px solid #1a1d29;
+  box-shadow: 0 0 12px rgba(255, 192, 203, 0.55);
+  cursor: pointer;
+}
+input[type='range']::-moz-range-thumb {
+  height: 18px;
+  width: 18px;
+  border-radius: 9999px;
+  background: #ffc0cb;
+  border: 3px solid #1a1d29;
+  box-shadow: 0 0 12px rgba(255, 192, 203, 0.55);
+  cursor: pointer;
+}
+
+/* ── star field twinkle on auth pages ───────────────────────── */
+.twinkle {
+  animation: pulseSoft 3.5s ease-in-out infinite;
+}
+.twinkle:nth-child(2) {
+  animation-delay: 1.2s;
+}
+.twinkle:nth-child(3) {
+  animation-delay: 2.1s;
+}
