@@ -52,5 +52,41 @@ commands in the UI. To force a refresh:
 1. **Completely quit and reopen Discord**, OR
 2. Wait up to **1 hour** for Discord to refresh automatically
 
+## Web Dashboard
+
+A companion Next.js dashboard lives in [`dashboard/`](./dashboard/README.md) —
+server owners can configure every feature (welcome cards, leveling, QOTD,
+moderation, giveaways, custom commands, …) through a browser at
+`https://aurelia.pages.dev` instead of slash commands.
+
+- **Auth** — Discord OAuth2 (`identify` + `guilds`), token in an httpOnly cookie
+- **API** — `/api/dashboard/*` endpoints served by this same Flask app
+  (utils/dashboard_api.py), bearer-verified, manage-guild-gated, CSRF-protected,
+  rate-limited, fully audit-logged
+- **Live actions** — "post QOTD now", "test welcome", "end giveaway",
+  "reload cog" reach the running bot through an internal action queue
+
+### Deploying the dashboard (Vercel, free)
+
+1. Discord Developer Portal → your application → **OAuth2**:
+   - add redirect `https://aurelia.pages.dev/oauth/callback`
+   - add redirect `http://localhost:3000/oauth/callback` (for local dev)
+   - copy the **Client ID** and **Client Secret**
+2. Vercel → import this repo → set **Root Directory = `dashboard`**
+3. Vercel env vars (see `dashboard/README.md` for the full table):
+   `NEXT_PUBLIC_API_URL=https://miles-discord-bot.onrender.com`,
+   `API_BASE_URL` (same), `NEXT_PUBLIC_DISCORD_CLIENT_ID`,
+   `DISCORD_CLIENT_SECRET`, `NEXTAUTH_URL`, `NEXTAUTH_SECRET`
+4. On **Render**, add env vars so the API trusts the dashboard origin:
+   `DASHBOARD_URL=https://aurelia.pages.dev`, `DISCORD_CLIENT_ID`,
+   `DISCORD_CLIENT_SECRET`,
+   `OAUTH_REDIRECT_URI=https://miles-discord-bot.onrender.com/api/dashboard/oauth/callback`
+5. Run the `dashboard_audit` SQL block (bottom of
+   `scripts/supabase_migration.sql`) in the Supabase SQL editor
+
+Full setup guide incl. local dev and custom domain:
+[`dashboard/README.md`](./dashboard/README.md) · design notes:
+[`dashboard/ARCHITECTURE.md`](./dashboard/ARCHITECTURE.md)
+
 ## License
 MIT
