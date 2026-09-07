@@ -16,6 +16,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { Circle } from 'lucide-react';
 import { cn } from '@/lib/format';
 
 const API_BASE = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080').replace(/\/$/, '');
@@ -161,10 +162,13 @@ export default function BotStatusCard({ className }: { className?: string }) {
       {/* row 1 — status indicator */}
       {snap && meta ? (
         <div className="flex items-center gap-3">
-          <span className="relative flex h-3 w-3 items-center justify-center" aria-hidden>
-            <span
-              className="pulse-glow inline-block h-2.5 w-2.5 rounded-full"
-              style={{ backgroundColor: meta.color, color: meta.color }}
+          <span className="relative flex h-4 w-4 items-center justify-center" aria-hidden>
+            <Circle
+              size={10}
+              className="pulse-glow"
+              fill={meta.color}
+              color={meta.color}
+              strokeWidth={0}
             />
           </span>
           <p className="text-sm font-medium tracking-wide" style={{ color: meta.color }}>

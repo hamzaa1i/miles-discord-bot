@@ -14,6 +14,7 @@ import { EmptyState, SectionHeading } from '@/components/EmptyState';
 import { useToast } from '@/components/ui/toast';
 import { timeAgo, cn } from '@/lib/format';
 import type { QotdQueueRow, Settings } from '@/lib/types';
+import { Icon } from '@/components/icons';
 
 const DEFAULTS: Settings = {
   enabled: false,
@@ -44,7 +45,8 @@ export default function QotdPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [gid, ms.saved]);
 
-  if (ms.loading) return <LoadingCard label="loading qotd config…" />;
+  if (ms.loading)
+    return <LoadingCard label={ms.verifying ? 'verifying permissions…' : 'loading qotd config…'} />;
   if (ms.error && !ms.settings) return <ErrorCard message={ms.error} />;
   if (!ms.settings) return null;
 
@@ -95,7 +97,7 @@ export default function QotdPage() {
   return (
     <>
       <ModuleCard
-        icon="❓"
+        icon="helpCircle"
         title="qotd"
         description="one question a day, gently placed — with a thread to gather the answers"
         enabled={Boolean(s.enabled)}
@@ -107,7 +109,7 @@ export default function QotdPage() {
       >
         <div className="grid gap-6 lg:grid-cols-2">
           <Card>
-            <CardTitle icon="✦">schedule</CardTitle>
+            <CardTitle icon="sparkles">schedule</CardTitle>
             <div className="mt-4">
               <ChannelPicker
                 id="qotd-channel"
@@ -153,7 +155,7 @@ export default function QotdPage() {
           </Card>
 
           <Card className="flex flex-col">
-            <CardTitle icon="✧">custom questions</CardTitle>
+            <CardTitle icon="sparkles">custom questions</CardTitle>
             <p className="mt-1.5 text-xs text-veloura-muted">
               asked before the built-in pool — {unused.length} waiting
             </p>
@@ -168,17 +170,17 @@ export default function QotdPage() {
                       <span className="text-sm leading-relaxed text-veloura-text">{q.question}</span>
                       <button
                         onClick={() => removeQuestion(q)}
-                        className="shrink-0 rounded-full border border-veloura-danger/30 px-2 py-0.5 text-xs text-veloura-danger transition hover:bg-veloura-danger/10"
+                        className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-veloura-danger/30 text-veloura-danger transition hover:bg-veloura-danger/10"
                         aria-label="remove question"
                       >
-                        ✕
+                        <Icon name="trash" size={15} />
                       </button>
                     </li>
                   ))}
                 </ul>
               ) : (
                 <EmptyState
-                  icon="❓"
+                  icon="helpCircle"
                   title="queue is empty"
                   hint="add questions below — otherwise aurelia draws from her own pool of 40"
                 />
@@ -201,7 +203,7 @@ export default function QotdPage() {
                   disabled={adding || !newQuestion.trim()}
                   className="veloura-button-primary shrink-0"
                 >
-                  {adding ? '…' : '✦ add'}
+                  {adding ? '…' : 'add'}
                 </button>
               </div>
             </div>
@@ -214,7 +216,7 @@ export default function QotdPage() {
           className="veloura-button-primary mt-6 w-full sm:w-auto"
           title={s.channel_id ? undefined : 'set a channel first'}
         >
-          {posting ? 'queuing…' : '❓ post now'}
+          {posting ? 'queuing…' : 'post now'}
         </button>
       </ModuleCard>
 
@@ -233,7 +235,7 @@ export default function QotdPage() {
         }}
       />
 
-      <SectionHeading icon="📜">question history</SectionHeading>
+      <SectionHeading icon="scroll">question history</SectionHeading>
       <Card>
         {history.length > 0 ? (
           <ul className="divide-y divide-veloura-border/40">
@@ -247,7 +249,7 @@ export default function QotdPage() {
             ))}
           </ul>
         ) : (
-          <EmptyState icon="✧" title="no questions asked yet" hint="history appears here after the first post" />
+          <EmptyState icon="sparkles" title="no questions asked yet" hint="history appears here after the first post" />
         )}
       </Card>
     </>

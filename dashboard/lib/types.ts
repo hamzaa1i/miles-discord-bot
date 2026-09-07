@@ -37,17 +37,33 @@ export interface GuildOverview {
 export interface ChannelInfo {
   id: string;
   name: string;
+  /** raw Discord channel type (0 text, 2 voice, 4 category, 5 announcement, 15 forum) */
   type: number;
   type_name: string;
-  category: string | null;
+  parent_id: string | null;
+  parent_name: string | null;
   position: number;
+  /** can the BOT see/send in this channel (backend-computed) */
+  bot_can_view: boolean;
+  bot_can_send: boolean;
 }
 
 export interface RoleInfo {
   id: string;
   name: string;
-  color: string | null;
+  /** integer color (0 = none) — display via intToHex */
+  color: number;
   position: number;
+  managed: boolean;
+  hoisted: boolean;
+  mentionable: boolean;
+}
+
+/** Legacy shape kept for older cached payloads: color may arrive as hex. */
+export function roleColorHex(color: number | string | null | undefined): string | null {
+  if (color === null || color === undefined || color === 0 || color === '') return null;
+  if (typeof color === 'string') return color.startsWith('#') ? color : `#${color}`;
+  return `#${color.toString(16).padStart(6, '0')}`;
 }
 
 export interface GuildResources {
@@ -165,4 +181,23 @@ export interface ColorRoleRow {
 export interface ApiError {
   error: string;
   allowed?: string[];
+  retry?: boolean;
+}
+
+export interface ReminderRow {
+  id: string;
+  text: string;
+  end_time: number | null;
+  repeat: string;
+  channel_id?: string;
+  created_at?: string | null;
+}
+
+export interface AchievementBadge {
+  key: string;
+  name: string;
+  description: string;
+  emoji: string;
+  rarity: 'common' | 'uncommon' | 'rare' | 'epic' | 'legendary' | string;
+  unlocked_by: number;
 }

@@ -20,6 +20,10 @@ Endpoints (all JSON, all under /api/dashboard):
                                                     qotd_queue, confessions, audit)
   DELETE /guild/<gid>/data/<type>/<id>           -> delete one row
   GET    /guild/<gid>/resources                  -> channels + roles for the pickers
+  GET    /guild/<gid>/discord/channels           -> LIVE Discord channels (5min cache)
+  GET    /guild/<gid>/discord/roles              -> LIVE Discord roles (5min cache)
+  GET    /reminders                             -> the caller's active reminders
+  DELETE /reminders/<id>                        -> cancel one of the caller's reminders
   GET    /guild/<gid>/audit                      -> recent dashboard_audit rows
   GET    /oauth/callback                         -> Discord code exchange (server-side flow)
   GET    /owner/logs                             -> tail of bot.log (OWNER_ID only)
@@ -68,10 +72,15 @@ from flask import Blueprint, g, jsonify, redirect, request
 from utils import db as _db
 from utils.dashboard_auth import (
     PERM_MANAGE_GUILD,
+    VERIFY_AUTH,
+    VERIFY_NO_PERMISSION,
+    VERIFY_NOT_FOUND,
+    VERIFY_TRANSIENT,
     get_user_guilds,
     public_user,
     verify_discord_token,
     verify_guild_permission,
+    verify_guild_permission_detailed,
 )
 from utils.dashboard_actions import enqueue_action
 
@@ -95,20 +104,26 @@ _ALLOWED_ORIGINS.update({
     "http://localhost:3000", "http://127.0.0.1:3000",
 })
 
-# ─── Rate limiting: 60 req/min/IP, sliding window ───────────────────
-_RATE_LIMIT = 60
+# ─── Rate limiting, sliding window per IP ───────────────────────────
+# Reads are cheap (cache-backed Discord + Supabase calls), mutations are
+# not. Live testing showed a single guild page fires 5 requests and the
+# whole dashboard flows through a shared proxy IP, so reads get a wider
+# window than mutations. Both stay per-IP and in-memory.
+_RATE_LIMIT_GET = 150
+_RATE_LIMIT_MUTATION = 60
 _RATE_WINDOW = 60
 _rl_lock = threading.Lock()
 _rl_map: dict = {}
 
 
-def _rate_ok(ip: str) -> bool:
+def _rate_ok(ip: str, is_get: bool) -> bool:
+    limit = _RATE_LIMIT_GET if is_get else _RATE_LIMIT_MUTATION
     now = time.time()
     with _rl_lock:
         window = _rl_map.setdefault(ip, deque())
         while window and now - window[0] > _RATE_WINDOW:
             window.popleft()
-        if len(window) >= _RATE_LIMIT:
+        if len(window) >= limit:
             return False
         window.append(now)
         return True
@@ -398,8 +413,11 @@ def require_api(fn):
 
     @wraps(fn)
     def wrapper(*args, **kwargs):
-        if not _rate_ok(_client_ip()):
-            return _auth_error(429, "rate limit exceeded (60/min)")
+        if not _rate_ok(_client_ip(), request.method in ("GET", "HEAD", "OPTIONS")):
+            resp, code = _auth_error(
+                429, "rate limit exceeded — wait a moment and retry")
+            resp.headers["Retry-After"] = "10"
+            return resp, code
         token = _bearer_token()
         if not token:
             return _auth_error(401, "missing Authorization: Bearer token")
@@ -420,7 +438,15 @@ def require_api(fn):
 
 
 def require_guild_api(fn):
-    """require_api + guild lookup + manage_guild permission check."""
+    """require_api + guild lookup + manage_guild permission check.
+
+    Permission failures are split by cause so the frontend can react:
+      403 — the user genuinely lacks manage_guild (or isn't in the guild
+            list at all). Permanent until Discord says otherwise.
+      503 — Discord couldn't be reached to VERIFY (network blip, 429,
+            timeout). The body carries retry:true; the dashboard retries
+            after ~1s instead of showing a misleading permission error.
+    """
     from functools import wraps
 
     @wraps(fn)
@@ -430,8 +456,23 @@ def require_guild_api(fn):
         guild, err = _get_guild(guild_id)
         if err:
             return _auth_error(err[0], err[1]["error"])
-        if not verify_guild_permission(g.token, guild_id, PERM_MANAGE_GUILD):
-            return _auth_error(403, "you need the Manage Server permission in this guild")
+        allowed, reason = verify_guild_permission_detailed(
+            g.token, guild_id, PERM_MANAGE_GUILD)
+        if not allowed:
+            if reason == VERIFY_TRANSIENT:
+                return jsonify({
+                    "error": "couldn't reach discord to verify your "
+                             "permissions — retrying shortly",
+                    "retry": True,
+                }), 503
+            if reason == VERIFY_AUTH:
+                return _auth_error(401, "invalid or expired token")
+            if reason == VERIFY_NOT_FOUND:
+                return _auth_error(
+                    403, "discord doesn't list this server on your account — "
+                         "re-login or rejoin the server")
+            return _auth_error(
+                403, "you need the Manage Server permission in this guild")
         g.guild = guild
         return fn(*args, **kwargs)
     return wrapper
@@ -498,10 +539,9 @@ def get_user():
         manageable.append({
             "id": gid,
             "name": gu.get("name", "unknown"),
-            "icon": (
-                f"https://cdn.discordapp.com/icons/{gid}/{icon}.png?size=128"
-                if icon else None
-            ),
+            # raw hash — the frontend builds the CDN url (animated a_ icons
+            # need .gif, static ones .png, and pickers need the fallback)
+            "icon": str(icon) if icon else None,
             "owner": owner,
             "member_count": member_counts.get(gid),
         })
@@ -594,11 +634,7 @@ def _usage_stats(guild_id) -> dict:
 @require_guild_api
 def guild_overview(guild_id):
     guild = g.guild
-    icon_url = None
-    if guild.icon:
-        icon_url = (
-            f"https://cdn.discordapp.com/icons/{guild.id}/{guild.icon}.png?size=256"
-        )
+    icon_hash = guild.icon  # raw hash — frontend builds the CDN url
     joined_at = None
     try:
         if guild.me and guild.me.joined_at:
@@ -618,7 +654,7 @@ def guild_overview(guild_id):
     return jsonify({
         "id": str(guild.id),
         "name": guild.name,
-        "icon": icon_url,
+        "icon": icon_hash,
         "member_count": guild.member_count,
         "online_count": online,
         "boost_count": getattr(guild, "premium_subscription_count", 0) or 0,
@@ -894,9 +930,31 @@ def _data_giveaways(guild) -> dict:
     return {"active": active, "past": past[:30]}
 
 
+def _achievement_catalog() -> list:
+    """The 15-badge catalog from cogs/achievements.py (live import, hard
+    fallback if the cog moves). The dashboard renders every badge —
+    locked ones included — so members can see what's still to earn."""
+    try:
+        from cogs.achievements import ACHIEVEMENTS  # noqa: PLC0415
+        items = []
+        for key, meta in ACHIEVEMENTS.items():
+            items.append({
+                "key": key,
+                "name": meta.get("name", key),
+                "description": meta.get("description", ""),
+                "emoji": meta.get("emoji", "✧"),
+                "rarity": meta.get("rarity", "common"),
+            })
+        return items
+    except Exception as e:
+        logger.debug(f"[dashboard] achievements catalog import failed: {e}")
+        return []
+
+
 def _data_achievements(guild) -> dict:
     sb = _db.get_supabase()
     counts: dict = {}
+    unlocked_counts: dict = {}
     if sb:
         try:
             rows = _sb_query("user_achievements", guild.id,
@@ -907,13 +965,18 @@ def _data_achievements(guild) -> dict:
                 counts[uid]["achievements"] += 1
                 counts[uid]["latest"] = max(counts[uid]["latest"],
                                             str(r.get("unlocked_at", "")))
+                key = str(r.get("achievement_key", ""))
+                unlocked_counts[key] = unlocked_counts.get(key, 0) + 1
         except Exception:
             counts = {}
     leaderboard = sorted(counts.values(),
                          key=lambda c: -c["achievements"])[:20]
     for c in leaderboard:
         c["display_name"] = _member_name(guild, c["user_id"])
-    return {"leaderboard": leaderboard}
+    catalog = _achievement_catalog()
+    for item in catalog:
+        item["unlocked_by"] = unlocked_counts.get(item["key"], 0)
+    return {"leaderboard": leaderboard, "catalog": catalog}
 
 
 def _data_level_rewards(guild) -> dict:
@@ -1105,37 +1168,314 @@ def delete_data(guild_id, data_type, data_id):
     return jsonify({"deleted": True, "type": data_type, "id": str(data_id)})
 
 
-# ─── 9. GET /guild/<gid>/resources (pickers) ────────────────────────
+# ─── 9. Live Discord channels / roles (pickers) ─────────────────────
+# Live testing showed guild-cache reads returning empty channel lists on
+# cold starts, which broke every channel picker at once. These endpoints
+# fetch channels/roles LIVE from the Discord REST API with the BOT token
+# (never the user's), compute what the BOT can actually view/send in
+# each channel (the bot posts the messages, so bot perms are what
+# matter), and cache the result for 5 minutes per guild.
+#
+# Endpoints:
+#   GET /guild/<gid>/discord/channels   → [{id, name, type, type_name,
+#        position, parent_id, parent_name, bot_can_view, bot_can_send}]
+#   GET /guild/<gid>/discord/roles      → [{id, name, color, position,
+#        managed, hoisted, mentionable}]
+#   GET /guild/<gid>/resources          → both, for the existing pickers
+#
+# The REST call uses stdlib urllib from the Flask worker thread — the
+# bot's aiohttp session is bound to the event loop and must never be
+# touched cross-thread. If REST fails (network blip), the gateway cache
+# (guild.channels / guild.roles) is used as a fallback, and if THAT is
+# empty too the response says so explicitly instead of pretending.
+
+_CHANNEL_TYPE_NAMES = {
+    0: "text", 1: "dm", 2: "voice", 3: "group_dm", 4: "category",
+    5: "announcement", 6: "guild_directory", 7: "news_thread",
+    8: "public_thread", 9: "private_thread", 10: "stage_voice",
+    11: "guild_directory_v2", 12: "forum", 13: "stage",
+    14: "media", 15: "forum",
+}
+# type 13/14 collide in some API versions; 15 is the modern forum id
+
+_res_cache = None
+
+
+def _resources_cache():
+    global _res_cache
+    if _res_cache is None:
+        from utils.cache import TTLCache
+        _res_cache = TTLCache(max_size=400)
+    return _res_cache
+
+
+def _bot_token() -> str:
+    b = _bot()
+    tok = getattr(getattr(b, "http", None), "token", None)
+    return tok or os.getenv("DISCORD_TOKEN", "")
+
+
+def _bot_rest_get(path: str):
+    """GET a Discord API path with the BOT token. Never raises.
+    Returns (data, error_kind)."""
+    import urllib.request
+    import urllib.error as _uerr
+    tok = _bot_token()
+    if not tok:
+        return None, "no_token"
+    url = f"{DISCORD_API}{path}"
+    req = urllib.request.Request(
+        url,
+        headers={
+            "Authorization": f"Bot {tok}",
+            "User-Agent": "AureliaDashboard (bot resource fetch)",
+        },
+        method="GET",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            if resp.status != 200:
+                return None, "transient"
+            return json.loads(resp.read().decode("utf-8")), None
+    except _uerr.HTTPError as e:
+        if e.code in (401, 403):
+            return None, "auth"
+        return None, "transient"
+    except Exception:
+        return None, "transient"
+
+
+def _perms_from_overwrites(guild, overwrites) -> "discord.Permissions":
+    """Effective permissions for the BOT member in one channel,
+    mirroring discord.py's own overwrite math: base (@everyone + bot
+    roles) → administrator bypass → @everyone overwrite → role
+    overwrites (allow OR / deny OR) → member overwrite."""
+    import discord
+    base = discord.Permissions(0)
+    me = guild.me
+    if me:
+        for role in me.roles:          # includes @everyone
+            base |= role.permissions
+    # guild-wide administrator bypasses every overwrite (discord.py
+    # semantics: Member.guild_permissions -> Permissions.all())
+    if me and guild.owner_id == me.id:
+        return discord.Permissions.all()
+    if base.administrator:
+        return discord.Permissions.all()
+    if not overwrites:
+        return base
+    if isinstance(overwrites, dict):
+        overwrites = list(overwrites.values())
+    role_allow = role_deny = 0
+    member_ow = None
+    bot_role_ids = {r.id for r in me.roles} if me else set()
+    for ow in overwrites:
+        try:
+            oid = int(ow.get("id", 0))
+            allow = int(ow.get("allow", 0) or 0)
+            deny = int(ow.get("deny", 0) or 0)
+        except (TypeError, ValueError):
+            continue
+        otype = ow.get("type")
+        if otype in (0, "0", "role"):
+            if oid == guild.id:                        # @everyone overwrite
+                base &= ~discord.Permissions(deny)
+                base |= discord.Permissions(allow)
+            elif oid in bot_role_ids:
+                role_allow |= allow
+                role_deny |= deny
+        elif otype in (1, "1", "member") and me and oid == me.id:
+            member_ow = (allow, deny)
+    base &= ~discord.Permissions(role_deny)
+    base |= discord.Permissions(role_allow)
+    if member_ow:
+        base &= ~discord.Permissions(member_ow[1])
+        base |= discord.Permissions(member_ow[0])
+    return base
+
+
+def _channel_type_int(t) -> int:
+    """Discord channel type as a plain int.
+
+    discord.py 2.x's ChannelType is a plain Enum (NOT IntEnum) —
+    int(ChannelType.text) raises TypeError. This was the live-testing
+    root cause for every channel picker showing empty: the old endpoint
+    swallowed that error per channel and returned [].
+    """
+    try:
+        return int(t.value)
+    except Exception:
+        try:
+            return int(t)
+        except Exception:
+            return 0
+
+
+def _live_guild_channels(guild):
+    """(channels, error) — REST-first with gateway-cache fallback.
+
+    Each entry: {id, name, type (int), type_name, position, parent_id,
+    parent_name, bot_can_view, bot_can_send}. Sorted category → name."""
+    gid = str(guild.id)
+    cached = _resources_cache().get_sync(f"ch:{gid}")
+    if cached is not None:
+        return cached, None
+
+    raw, err = _bot_rest_get(f"/guilds/{gid}/channels")
+    channels = []
+    if isinstance(raw, list):
+        by_id = {str(c.get("id")): c for c in raw if isinstance(c, dict)}
+        for c in raw:
+            if not isinstance(c, dict):
+                continue
+            overwrites = c.get("permission_overwrites") or []
+            perms = _perms_from_overwrites(guild, overwrites)
+            parent_id = c.get("parent_id")
+            channels.append({
+                "id": str(c.get("id", "")),
+                "name": str(c.get("name", "")),
+                "type": int(c.get("type", 0) or 0),
+                "type_name": _CHANNEL_TYPE_NAMES.get(
+                    int(c.get("type", 0) or 0), "text"),
+                "position": int(c.get("position", 0) or 0),
+                "parent_id": str(parent_id) if parent_id else None,
+                "parent_name": (
+                    str(by_id.get(str(parent_id), {}).get("name"))
+                    if parent_id else None
+                ),
+                "bot_can_view": bool(perms.view_channel),
+                "bot_can_send": bool(
+                    perms.view_channel and perms.send_messages),
+            })
+    if not channels:
+        # REST failed → fall back to the gateway cache (sync reads)
+        err = err or "empty"
+        try:
+            me = guild.me
+            for ch in guild.channels:
+                try:
+                    perms = ch.permissions_for(me) if me else None
+                except Exception:
+                    perms = None
+                channels.append({
+                    "id": str(ch.id),
+                    "name": ch.name,
+                    "type": _channel_type_int(ch.type),
+                    "type_name": _CHANNEL_TYPE_NAMES.get(
+                        _channel_type_int(ch.type), str(ch.type)),
+                    "position": getattr(ch, "position", 0),
+                    "parent_id": (
+                        str(ch.category_id)
+                        if getattr(ch, "category_id", None) else None),
+                    "parent_name": (
+                        str(ch.category.name)
+                        if getattr(ch, "category", None) else None),
+                    "bot_can_view": bool(perms and perms.view_channel),
+                    "bot_can_send": bool(
+                        perms and perms.view_channel and perms.send_messages),
+                })
+        except Exception as e:
+            logger.debug(f"[dashboard] gateway channel fallback failed: {e}")
+    channels.sort(key=lambda c: (c.get("parent_name") or "", c.get("name", "")))
+    if channels:
+        _resources_cache().set_sync(f"ch:{gid}", channels, ttl=300)
+        return channels, None
+    return [], (err if err != "empty" else None)
+
+
+def _live_guild_roles(guild):
+    """(roles, error) — REST-first with gateway fallback.
+
+    @everyone, bot-managed (integration) roles and roles at/above the
+    bot's top role are filtered out — the bot can't assign those, so
+    they'd be dead options in every picker."""
+    gid = str(guild.id)
+    cached = _resources_cache().get_sync(f"rl:{gid}")
+    if cached is not None:
+        return cached, None
+
+    raw, err = _bot_rest_get(f"/guilds/{gid}/roles")
+    roles = []
+    if isinstance(raw, list):
+        me = guild.me
+        top = me.top_role.position if me and me.top_role else 0
+        for r in raw:
+            if not isinstance(r, dict):
+                continue
+            rid = str(r.get("id", ""))
+            if not rid or rid == gid:            # @everyone
+                continue
+            if r.get("managed"):
+                continue                          # bot/integration roles
+            position = int(r.get("position", 0) or 0)
+            if position >= top:
+                continue                          # above the bot
+            roles.append({
+                "id": rid,
+                "name": str(r.get("name", "")),
+                "color": int(r.get("color", 0) or 0),
+                "position": position,
+                "managed": bool(r.get("managed")),
+                "hoisted": bool(r.get("hoist")),
+                "mentionable": bool(r.get("mentionable")),
+            })
+    if not roles:
+        err = err or "empty"
+        try:
+            me = guild.me
+            top = me.top_role.position if me and me.top_role else 0
+            for r in guild.roles:
+                if r.is_default() or getattr(r, "managed", False):
+                    continue
+                if r.position >= top:
+                    continue
+                roles.append({
+                    "id": str(r.id),
+                    "name": r.name,
+                    "color": int(getattr(getattr(r, "color", None), "value", 0) or 0),
+                    "position": r.position,
+                    "managed": bool(getattr(r, "managed", False)),
+                    "hoisted": bool(getattr(r, "hoist", False)),
+                    "mentionable": bool(getattr(r, "mentionable", False)),
+                })
+        except Exception as e:
+            logger.debug(f"[dashboard] gateway role fallback failed: {e}")
+    roles.sort(key=lambda r: -r["position"])
+    if roles:
+        _resources_cache().set_sync(f"rl:{gid}", roles, ttl=300)
+        return roles, None
+    return [], (err if err != "empty" else None)
+
+
+@dashboard_bp.route("/guild/<guild_id>/discord/channels", methods=["GET"])
+@require_guild_api
+def guild_discord_channels(guild_id):
+    guild = g.guild
+    channels, err = _live_guild_channels(guild)
+    if err:
+        logger.debug(f"[dashboard] live channels for {guild_id}: {err}")
+    return jsonify({"channels": channels, "source": "discord" if channels else "cache"})
+
+
+@dashboard_bp.route("/guild/<guild_id>/discord/roles", methods=["GET"])
+@require_guild_api
+def guild_discord_roles(guild_id):
+    guild = g.guild
+    roles, err = _live_guild_roles(guild)
+    if err:
+        logger.debug(f"[dashboard] live roles for {guild_id}: {err}")
+    return jsonify({"roles": roles, "source": "discord" if roles else "cache"})
+
+
 @dashboard_bp.route("/guild/<guild_id>/resources", methods=["GET"])
 @require_guild_api
 def guild_resources(guild_id):
     guild = g.guild
-    channels = []
-    for ch in guild.channels:
-        try:
-            channels.append({
-                "id": str(ch.id),
-                "name": ch.name,
-                "type": int(ch.type),
-                "type_name": str(ch.type),
-                "category": (str(ch.category_id) if getattr(ch, "category_id", None) else None),
-                "position": getattr(ch, "position", 0),
-            })
-        except Exception:
-            continue
-    channels.sort(key=lambda c: (c.get("category") or "", c.get("name", "")))
-
-    roles = []
-    for r in guild.roles:
-        if r.is_default() or getattr(r, "managed", False):
-            continue
-        roles.append({
-            "id": str(r.id),
-            "name": r.name,
-            "color": f"#{r.color.value:06x}" if r.color.value else None,
-            "position": r.position,
-        })
-    roles.sort(key=lambda r: -r["position"])
+    channels, ch_err = _live_guild_channels(guild)
+    roles, rl_err = _live_guild_roles(guild)
+    if ch_err or rl_err:
+        logger.debug(
+            f"[dashboard] resources {guild_id}: channels={ch_err} roles={rl_err}")
 
     me = guild.me
     my_perms = me.guild_permissions if me else None
@@ -1152,6 +1492,69 @@ def guild_resources(guild_id):
             "embed_links": bool(my_perms and my_perms.embed_links),
         },
     })
+
+
+def invalidate_resources_cache(guild_id):
+    """Drop the 5-minute channel/role cache (owner tools can call this
+    after Discord-side changes)."""
+    c = _resources_cache()
+    c.invalidate_sync(f"ch:{str(guild_id)}")
+    c.invalidate_sync(f"rl:{str(guild_id)}")
+
+
+# ─── 9b. GET /reminders + DELETE /reminders/<id> (user-scoped) ──────
+# /remind is a per-USER bot command (not guild config), so these routes
+# are scoped to the caller's bearer identity: list only YOUR reminders,
+# delete only YOUR reminders. manage_guild on some guild is NOT
+# required — the data belongs to the user.
+@dashboard_bp.route("/reminders", methods=["GET"])
+@require_api
+def list_reminders():
+    uid = str(g.user.get("id", ""))
+    try:
+        rows = _db.get_user_reminders(int(uid)) or []
+    except Exception:
+        rows = []
+    out = []
+    for r in rows:
+        if not isinstance(r, dict):
+            continue
+        out.append({
+            "id": str(r.get("id", "")),
+            "text": str(r.get("text", r.get("reminder", r.get("what", "")))),
+            "end_time": r.get("end_time"),
+            "repeat": r.get("repeat_interval", "none"),
+            "channel_id": str(r.get("channel_id", "") or ""),
+            "created_at": r.get("created_at"),
+        })
+    out.sort(key=lambda r: (r.get("end_time") is None,
+                            float(r.get("end_time") or 0)))
+    return jsonify({"reminders": out})
+
+
+@dashboard_bp.route("/reminders/<reminder_id>", methods=["DELETE"])
+@require_api
+def delete_reminder(reminder_id):
+    uid = str(g.user.get("id", ""))
+    rid = str(reminder_id).strip()
+    if not rid:
+        return _auth_error(400, "missing reminder id")
+    # ownership check: the id may only ever refer to one of the
+    # caller's own rows — look it up in THEIR list first.
+    try:
+        mine = _db.get_user_reminders(int(uid)) or []
+    except Exception:
+        mine = []
+    owns = any(str(r.get("id", "")) == rid for r in mine if isinstance(r, dict))
+    if not owns:
+        return _auth_error(404, "reminder not found (or not yours)")
+    try:
+        _db.remove_reminder(int(uid), rid)
+    except Exception as e:
+        logger.error(f"[dashboard] reminder delete failed: {e}")
+        return _auth_error(500, "could not delete the reminder")
+    _audit(uid, "", "reminder_delete", {"id": rid})
+    return jsonify({"deleted": True, "id": rid})
 
 
 # ─── 10. GET /guild/<gid>/audit ─────────────────────────────────────

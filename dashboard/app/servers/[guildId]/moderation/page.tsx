@@ -15,6 +15,7 @@ import { useToast } from '@/components/ui/toast';
 import { useRealtime } from '@/lib/useRealtime';
 import { timeAgo } from '@/lib/format';
 import type { Settings, Warning } from '@/lib/types';
+import { Icon } from '@/components/icons';
 
 const DEFAULTS: Settings = {
   log_channel_id: null,
@@ -81,7 +82,8 @@ export default function ModerationPage() {
     }
   }
 
-  if (ms.loading) return <LoadingCard label="loading moderation config…" />;
+  if (ms.loading)
+    return <LoadingCard label={ms.verifying ? 'verifying permissions…' : 'loading moderation config…'} />;
   if (ms.error && !ms.settings) return <ErrorCard message={ms.error} />;
   if (!ms.settings) return null;
 
@@ -91,7 +93,7 @@ export default function ModerationPage() {
   return (
     <>
       <ModuleCard
-        icon="⚔"
+        icon="swords"
         title="moderation"
         description="warnings, thresholds and the quiet guardrails"
         enabled={Boolean(s.antispam_enabled)}
@@ -104,7 +106,7 @@ export default function ModerationPage() {
       >
         <div className="grid gap-6 lg:grid-cols-2">
           <Card>
-            <CardTitle icon="✦">roles & logs</CardTitle>
+            <CardTitle icon="users">roles &amp; logs</CardTitle>
             <div className="mt-4">
               <ChannelPicker
                 id="mod-log"
@@ -123,7 +125,7 @@ export default function ModerationPage() {
           </Card>
 
           <Card>
-            <CardTitle icon="⚔">warning threshold</CardTitle>
+            <CardTitle icon="swords">warning threshold</CardTitle>
             <div className="mt-4 grid grid-cols-2 gap-4">
               <div className="mb-4">
                 <label htmlFor="threshold-count" className="veloura-label">
@@ -189,7 +191,7 @@ export default function ModerationPage() {
         onRevert={ms.revert}
       />
 
-      <SectionHeading icon="📜" right={live ? <Badge tone="success">✧ realtime</Badge> : undefined}>
+      <SectionHeading icon="scroll" right={live ? <Badge tone="success">realtime</Badge> : undefined}>
         warnings <span className="text-sm text-veloura-muted">({total})</span>
       </SectionHeading>
       <Card id="warnings">
@@ -221,7 +223,7 @@ export default function ModerationPage() {
           <p className="text-sm text-veloura-muted">loading…</p>
         ) : warnings.length === 0 ? (
           <EmptyState
-            icon="✧"
+            icon="sparkles"
             title="no warnings found"
             hint="a clean record — or none matching this filter"
           />
@@ -255,10 +257,10 @@ export default function ModerationPage() {
                     <td className="py-3 text-right">
                       <button
                         onClick={() => deleteWarning(w)}
-                        className="rounded-[10px] border border-veloura-danger/30 px-2.5 py-1 text-xs text-veloura-danger transition hover:bg-veloura-danger/10"
+                        className="flex h-11 w-11 items-center justify-center rounded-[10px] border border-veloura-danger/30 text-veloura-danger transition hover:bg-veloura-danger/10"
                         aria-label="delete warning"
                       >
-                        ✕
+                        <Icon name="trash" size={15} />
                       </button>
                     </td>
                   </tr>

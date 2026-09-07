@@ -6,6 +6,7 @@
  */
 
 import { cn } from '@/lib/format';
+import { Icon } from '@/components/icons';
 
 export function SaveBar({
   dirty,
@@ -33,9 +34,15 @@ export function SaveBar({
     >
       <div className="min-w-0 text-sm">
         {error ? (
-          <p className="text-veloura-danger">✧ {error}</p>
+          <p className="flex items-center gap-2 text-veloura-danger">
+            <Icon name="shieldAlert" size={14} />
+            {error}
+          </p>
         ) : dirty ? (
-          <p className="text-veloura-pink">unsaved changes ✦</p>
+          <p className="flex items-center gap-2 text-veloura-pink">
+            <Icon name="pencil" size={14} />
+            unsaved changes
+          </p>
         ) : (
           <p className="text-veloura-muted/80">{note}</p>
         )}
@@ -67,7 +74,14 @@ export function SaveBar({
           disabled={!dirty || saving}
           className="veloura-button-primary !min-h-[40px] px-6 text-xs"
         >
-          {saving ? 'saving…' : '✦ save changes'}
+          {saving ? (
+            'saving…'
+          ) : (
+            <>
+              <Icon name="check" size={14} />
+              save changes
+            </>
+          )}
         </button>
       </div>
     </div>

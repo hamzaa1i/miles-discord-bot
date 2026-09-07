@@ -25,4 +25,4 @@ data/*.json
 
 # OS
 .DS_Store
-Thumbs.db
+Thumbs.dbdashboard/tsconfig.tsbuildinfo

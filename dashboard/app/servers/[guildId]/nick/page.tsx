@@ -45,12 +45,12 @@ export default function NickPage() {
   return (
     <>
       <ModuleCard
-        icon="✎"
+        icon="pencil"
         title="nickname requests"
         description="gentle name changes — reviewed by the keepers"
       >
         <Card>
-          <CardTitle icon="✦">review flow</CardTitle>
+          <CardTitle icon="sparkles">review flow</CardTitle>
           <div className="mt-4">
             <ChannelPicker
               id="nick-channel"
@@ -102,14 +102,14 @@ export default function NickPage() {
         onRevert={ms.revert}
       />
 
-      <SectionHeading icon="📜" right={<Badge tone="muted">{pending?.length ?? 0} pending</Badge>}>
+      <SectionHeading icon="scroll" right={<Badge tone="muted">{pending?.length ?? 0} pending</Badge>}>
         pending requests
       </SectionHeading>
       <Card>
         {pending === null ? (
           <p className="text-sm text-veloura-muted">loading…</p>
         ) : pending.length === 0 ? (
-          <EmptyState icon="✎" title="no pending requests" hint="members use /nick request to submit one" />
+          <EmptyState icon="pencil" title="no pending requests" hint="members use /nick request to submit one" />
         ) : (
           <ul className="divide-y divide-veloura-border/40">
             {pending.map((r) => (

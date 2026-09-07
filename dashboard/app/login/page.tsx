@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { beginLogin, LoginStartError } from '@/lib/discord';
+import { Icon } from '@/components/icons';
 
 const DEV = process.env.NODE_ENV === 'development';
 
@@ -101,7 +102,14 @@ export default function LoginPage() {
           disabled={busy}
           className="veloura-button-primary mt-8 w-full text-base"
         >
-          {busy ? 'opening the veil…' : '✦ continue with discord'}
+          {busy ? (
+            'opening the veil…'
+          ) : (
+            <>
+              <Icon name="logout" size={16} />
+              continue with discord
+            </>
+          )}
         </button>
 
         {error && (
@@ -112,7 +120,8 @@ export default function LoginPage() {
               disabled={busy}
               className="veloura-button-ghost mt-3 w-full text-sm"
             >
-              ✧ try again
+              <Icon name="refresh" size={14} />
+              try again
             </button>
           </div>
         )}

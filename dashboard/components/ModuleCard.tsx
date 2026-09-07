@@ -6,6 +6,7 @@
  */
 
 import { ToggleSwitch } from './ToggleSwitch';
+import { Icon } from './icons';
 
 export function ModuleCard({
   icon,
@@ -32,9 +33,9 @@ export function ModuleCard({
         <div className="flex items-start gap-4">
           <div
             aria-hidden
-            className="flex h-12 w-12 shrink-0 items-center justify-center rounded-[12px] bg-veloura-navy text-2xl shadow-glow"
+            className="flex h-12 w-12 shrink-0 items-center justify-center rounded-[12px] bg-veloura-pink/10 text-veloura-pink shadow-glow"
           >
-            {icon}
+            <Icon name={icon} size={22} className="text-veloura-pink" />
           </div>
           <div>
             <h1 className="font-heading text-2xl text-veloura-text">{title}</h1>

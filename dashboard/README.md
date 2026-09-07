@@ -29,7 +29,16 @@ browser ──(same-origin, httpOnly cookie)──▶ Next.js on Vercel
   server-side on every API call.
 - Every Flask endpoint verifies the bearer token, checks **manage server** on
   the target guild, requires a CSRF token on mutations, rate-limits to
-  60 req/min/IP and writes to the `dashboard_audit` table.
+  150 reads / 60 writes per minute per IP and writes to the
+  `dashboard_audit` table. A permission check that can't reach Discord
+  answers 503 `retry: true` (the frontend auto-retries) instead of a
+  misleading 403.
+- Channel/role pickers load LIVE from the Discord API with the bot token
+  (`GET /guild/<id>/resources`, `/discord/channels`, `/discord/roles`),
+  5-minute cache per guild, with per-channel `bot_can_view` /
+  `bot_can_send` flags — pickers only offer channels the bot can post in.
+- `/reminders` lists the signed-in user's own `/remind` reminders;
+  `DELETE /reminders/<id>` cancels one (user-scoped, no guild perms).
 - Live actions ("post QOTD now", "test welcome", "end giveaway", "reload cog")
   are enqueued on a thread-safe queue; a worker on the bot's event loop
   executes them within ~5 seconds.

@@ -50,6 +50,16 @@ pattern) — importing main.py would be circular.
 (checked from the OAuth `/users/@me/guilds` permission bitmask, 5-min cache)
 and that the bot is actually in the guild. Fail-closed everywhere.
 
+**Permission-check failure taxonomy (live-testing fix).** The guild-list
+fetch distinguishes *auth* failures (Discord 401/403 -> 401) from
+*transient* ones (network/429/5xx -> **503 with `retry: true`**) so the
+frontend can show "verifying permissions..." and retry instead of a
+misleading "you need Manage Server". A per-token single-flight collapses
+concurrent requests into ONE Discord API call (the herd-of-5 race on
+page load was the original flake), guild lists are paginated (200/page —
+members of many servers were invisible to the check), and transient
+negatives cache for 3s instead of 15s.
+
 **CSRF.** Because auth rides a cookie (via the proxy), mutations need CSRF
 protection: `GET /api/dashboard/csrf` issues a random token bound to a
 SHA-256 of the bearer with a 1-hour expiry; PATCH/POST/DELETE must echo it
@@ -58,9 +68,12 @@ in `X-CSRF-Token`. The frontend fetches it once per session.
 **Rate limiting — deviation from the spec, documented here.** The spec
 suggested flask-limiter. flask-limiter's default storage is in-memory for
 a single process — which is exactly what Render's free tier runs — so we
-implement the same guarantee (60 req/min/IP, sliding window, thread-safe,
-JSON 429) with ~20 lines and zero new dependencies. To swap in
-flask-limiter later: `pip install flask-limiter`, create
+implement the same guarantee with ~20 lines and zero new dependencies.
+As of the live-testing round the window is **split by method**: GET/HEAD
+get 150/min (a guild page fires ~5 requests and every browser request
+arrives through a shared proxy IP, so a single 60/min bucket false-positived
+mid-tour), while mutations keep 60/min. 429s carry `Retry-After: 10`, and
+the frontend retries reads automatically. To swap in flask-limiter later: `pip install flask-limiter`, create
 `Limiter(key_func=get_remote_address)` in this module, `init_app(app)` in
 `init_dashboard_api`, and decorate `_auth_error`'s wrapper.
 
@@ -84,6 +97,25 @@ data-only modules (giveaways, colors) get dedicated paths.
 (qotd queue, nick requests). Flask threads have no event loop, so
 `asyncio.run()` spins up a fresh one per call — the bot's loop lives in a
 different thread and they never touch. Volume is dashboard-scale; fine.
+
+**Live Discord channels/roles.** `GET /guild/<gid>/resources` (plus the
+equivalent `/discord/channels` + `/discord/roles`) fetches channels and
+roles LIVE from the Discord REST API with the BOT token via stdlib
+urllib — never the bot's aiohttp session (loop-bound, unsafe
+cross-thread) — and caches the result 5 minutes per guild. Each channel
+carries `bot_can_view`/`bot_can_send`, computed with discord.py's exact
+overwrite math (administrator bypass included), because the BOT posts
+the messages. Roles filter @everyone, managed roles and anything
+at/above the bot's top role. The gateway cache (`guild.channels` /
+`guild.roles`) is the fallback when REST fails — and note
+`discord.ChannelType` is a plain Enum in discord.py 2.x, so
+`int(ch.type)` RAISES (that silent TypeError is what emptied every
+channel picker before this rewrite; `_channel_type_int` handles it).
+
+**User-scoped reminders.** `GET /reminders` + `DELETE /reminders/<id>`
+list/cancel the CALLER's own `/remind` rows (scoped to the bearer's user
+id, ownership-checked before delete) — no guild permission needed since
+the data belongs to the user, not the server.
 
 **Audit.** Every mutation writes `dashboard_audit` (Supabase, JSON fallback
 file capped at 500 rows) with user, guild, action, params, IP and UA. The

@@ -95,6 +95,7 @@ export const api = {
 /* ── Endpoint helpers ──────────────────────────────────────────── */
 
 import type {
+  AchievementBadge,
   AuditEntry,
   CustomCommand,
   DashboardUser,
@@ -106,11 +107,40 @@ import type {
   ManageableGuild,
   NickRequest,
   QotdQueueRow,
+  ReminderRow,
   Settings,
   StatsData,
   Warning,
   ColorRoleRow,
 } from './types';
+
+/** Statuses worth one automatic retry after a short delay. */
+export function retryableStatus(status: number): boolean {
+  return status === 429 || status === 502 || status === 503 || status === 504;
+}
+
+/** fetch a GET with one retry on 429/5xx (transient backend/network). */
+export async function getWithRetry<T>(
+  path: string,
+  { retries = 2, delayMs = 1000 }: { retries?: number; delayMs?: number } = {},
+): Promise<T> {
+  let lastErr: unknown;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      return await api.get<T>(path);
+    } catch (e) {
+      lastErr = e;
+      const retryable = e instanceof ApiRequestError && retryableStatus(e.status);
+      const retryableNetwork = !(e instanceof ApiRequestError);
+      if ((retryable || retryableNetwork) && attempt < retries) {
+        await new Promise((r) => setTimeout(r, delayMs * (attempt + 1)));
+        continue;
+      }
+      throw e;
+    }
+  }
+  throw lastErr;
+}
 
 export interface UserResponse {
   user: DashboardUser;
@@ -130,6 +160,12 @@ export const endpoints = {
   overview: (gid: string) => api.get<GuildOverview>(`/guild/${gid}/overview`),
 
   resources: (gid: string) => api.get<GuildResources>(`/guild/${gid}/resources`),
+
+  discordChannels: (gid: string) =>
+    api.get<{ channels: GuildResources['channels'] }>(`/guild/${gid}/discord/channels`),
+
+  discordRoles: (gid: string) =>
+    api.get<{ roles: GuildResources['roles'] }>(`/guild/${gid}/discord/roles`),
 
   settings: (gid: string, module: string) =>
     api.get<SettingsResponse>(`/guild/${gid}/settings/${module}`),
@@ -165,7 +201,8 @@ export const endpoints = {
   stats: (gid: string) => api.get<StatsData>(`/guild/${gid}/module/stats/data`),
 
   achievements: (gid: string) =>
-    api.get<{ leaderboard: LeaderboardRow[] }>(`/guild/${gid}/module/achievements/data`),
+    api.get<{ leaderboard: LeaderboardRow[]; catalog: AchievementBadge[] }>(
+      `/guild/${gid}/module/achievements/data`),
 
   levelRewards: (gid: string) =>
     api.get<{ rewards: LevelReward[] }>(`/guild/${gid}/module/level_rewards/data`),
@@ -175,4 +212,9 @@ export const endpoints = {
 
   colorRoles: (gid: string) =>
     api.get<{ color_roles: ColorRoleRow[] }>(`/guild/${gid}/module/colors/data`),
+
+  reminders: () => api.get<{ reminders: ReminderRow[] }>('/reminders'),
+
+  deleteReminder: (id: string) =>
+    api.delete<{ deleted: boolean }>(`/reminders/${encodeURIComponent(id)}`),
 };

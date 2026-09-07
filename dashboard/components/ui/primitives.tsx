@@ -4,6 +4,7 @@
 
 import React from 'react';
 import { cn } from '@/lib/format';
+import { MaybeIcon, Icon } from '@/components/icons';
 
 export function Card({
   children,
@@ -19,8 +20,8 @@ export function Card({
 
 export function CardTitle({ children, icon }: { children: React.ReactNode; icon?: string }) {
   return (
-    <h3 className="flex items-center gap-2 font-heading text-lg text-veloura-text">
-      {icon && <span aria-hidden>{icon}</span>}
+    <h3 className="flex items-center gap-2.5 font-heading text-lg text-veloura-text">
+      {icon && <MaybeIcon value={icon} size={17} className="text-veloura-pink" />}
       {children}
     </h3>
   );
@@ -105,9 +106,7 @@ export function LoadingCard({ label = 'loading…' }: { label?: string }) {
   return (
     <Card>
       <div className="flex items-center gap-3 text-sm text-veloura-muted">
-        <span className="twinkle" aria-hidden>
-          ✦
-        </span>
+        <Icon name="refresh" size={15} className="twinkle text-veloura-lavender" />
         {label}
       </div>
       <div className="mt-4 space-y-3">
@@ -123,8 +122,8 @@ export function ErrorCard({ message, action }: { message: string; action?: React
   return (
     <Card className="border-veloura-danger/30">
       <div className="flex flex-col items-start gap-3">
-        <p className="text-sm text-veloura-danger">
-          <span aria-hidden>✧ </span>
+        <p className="flex items-center gap-2 text-sm text-veloura-danger">
+          <Icon name="shieldAlert" size={15} />
           {message}
         </p>
         {action}
@@ -159,7 +158,7 @@ export function Tabs({
               : 'border-veloura-border text-veloura-muted hover:border-veloura-lavender/40 hover:text-veloura-text',
           )}
         >
-          {t.icon && <span aria-hidden className="mr-1.5">{t.icon}</span>}
+          {t.icon && <MaybeIcon value={t.icon} size={14} className="mr-1.5 inline-block align-[-2px]" />}
           {t.label}
         </button>
       ))}

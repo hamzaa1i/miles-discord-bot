@@ -50,12 +50,12 @@ export default function PrivacyPage() {
   return (
     <>
       <ModuleCard
-        icon="🔒"
+        icon="lock"
         title="privacy & danger zone"
         description="what is stored, who can see it, and the careful destructive things"
       >
         <Card>
-          <CardTitle icon="📜">what aurelia remembers</CardTitle>
+          <CardTitle icon="scroll">what aurelia remembers</CardTitle>
           <div className="mt-4 overflow-x-auto">
             <table className="w-full min-w-[480px] text-sm">
               <thead>
@@ -85,7 +85,7 @@ export default function PrivacyPage() {
         </Card>
 
         <Card id="danger" className="mt-4 border-veloura-danger/30">
-          <CardTitle icon="⚠">danger zone</CardTitle>
+          <CardTitle icon="shieldAlert">danger zone</CardTitle>
           <div className="mt-4 space-y-4">
             <div className="flex flex-wrap items-center justify-between gap-3 rounded-[12px] border border-veloura-border/60 bg-veloura-navy/50 p-4">
               <div className="min-w-0">
@@ -125,7 +125,7 @@ export default function PrivacyPage() {
         </Card>
       </ModuleCard>
 
-      <SectionHeading icon="✦" right={<Badge tone="muted">last 50</Badge>}>
+      <SectionHeading icon="sparkles" right={<Badge tone="muted">last 50</Badge>}>
         audit trail
       </SectionHeading>
       <Card>

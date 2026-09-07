@@ -12,6 +12,7 @@ import { MessageEditor } from '@/components/MessageEditor';
 import { useToast } from '@/components/ui/toast';
 import { truncate } from '@/lib/format';
 import type { CustomCommand } from '@/lib/types';
+import { Icon } from '@/components/icons';
 
 export default function CustomCommandsPage() {
   const params = useParams<{ guildId: string }>();
@@ -87,7 +88,7 @@ export default function CustomCommandsPage() {
   return (
     <>
       <ModuleCard
-        icon="✧"
+        icon="wand"
         title="custom commands"
         description="your own little spells — a trigger word, an enchanted response"
       >
@@ -120,7 +121,7 @@ export default function CustomCommandsPage() {
             </div>
             <div className="mt-4 flex gap-2">
               <button onClick={save} disabled={saving} className="veloura-button-primary">
-                {saving ? 'saving…' : '✦ save command'}
+                {saving ? 'saving…' : 'save command'}
               </button>
               <button onClick={() => setEditing(null)} className="veloura-button-ghost">
                 cancel
@@ -133,7 +134,7 @@ export default function CustomCommandsPage() {
           </button>
         )}
 
-        <SectionHeading icon="✧" right={<Badge tone="muted">{commands?.length ?? 0} commands</Badge>}>
+        <SectionHeading icon="wand" right={<Badge tone="muted">{commands?.length ?? 0} commands</Badge>}>
           your commands
         </SectionHeading>
 
@@ -141,7 +142,7 @@ export default function CustomCommandsPage() {
           <LoadingCard label="loading commands…" />
         ) : commands.length === 0 ? (
           <EmptyState
-            icon="✧"
+            icon="wand"
             title="no custom commands yet"
             hint="create one above — it responds instantly, no AI call needed"
           />
@@ -170,15 +171,17 @@ export default function CustomCommandsPage() {
                       <div className="flex justify-end gap-1.5">
                         <button
                           onClick={() => startEdit(c)}
-                          className="rounded-[10px] border border-veloura-border px-2.5 py-1 text-xs text-veloura-lavender transition hover:bg-veloura-card-hover"
+                          className="flex h-11 items-center gap-1.5 rounded-[10px] border border-veloura-border px-3 text-xs text-veloura-lavender transition hover:bg-veloura-card-hover"
                         >
-                          ✎ edit
+                          <Icon name="pencil" size={13} />
+                          edit
                         </button>
                         <button
                           onClick={() => remove(c)}
-                          className="rounded-[10px] border border-veloura-danger/30 px-2.5 py-1 text-xs text-veloura-danger transition hover:bg-veloura-danger/10"
+                          className="flex h-11 w-11 items-center justify-center rounded-[10px] border border-veloura-danger/30 text-veloura-danger transition hover:bg-veloura-danger/10"
+                          aria-label={`delete command ${c.trigger}`}
                         >
-                          ✕
+                          <Icon name="trash" size={15} />
                         </button>
                       </div>
                     </td>

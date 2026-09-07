@@ -14,6 +14,7 @@ import { Sidebar } from '@/components/Sidebar';
 import { GuildIcon } from '@/components/GuildIcon';
 import { defaultAvatar } from '@/lib/discord';
 import { cn } from '@/lib/format';
+import { X } from 'lucide-react';
 
 function Shell({ guildId, children }: { guildId: string; children: React.ReactNode }) {
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -77,7 +78,7 @@ function Shell({ guildId, children }: { guildId: string; children: React.ReactNo
               aria-label="close navigation"
               className="rounded-[10px] p-2 text-veloura-muted hover:text-veloura-text"
             >
-              ✕
+              <X size={16} strokeWidth={2} />
             </button>
           </div>
           <div className="h-[calc(100%-57px)]">

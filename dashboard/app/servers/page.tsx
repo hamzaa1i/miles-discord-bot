@@ -3,7 +3,8 @@
 import Link from 'next/link';
 import { useAuth } from '@/lib/auth';
 import { GuildIcon } from '@/components/GuildIcon';
-import { Card, LoadingCard, ErrorCard, Badge } from '@/components/ui/primitives';
+import { Card, LoadingCard, ErrorCard, Badge, Skeleton } from '@/components/ui/primitives';
+import { Icon } from '@/components/icons';
 import { useToast } from '@/components/ui/toast';
 import { nf, timeAgo } from '@/lib/format';
 import { defaultAvatar } from '@/lib/discord';
@@ -17,8 +18,18 @@ export default function ServersPage() {
       <main className="mx-auto max-w-4xl px-6 py-12">
         <h1 className="mb-6 font-heading text-3xl">your servers</h1>
         <div className="grid gap-4 sm:grid-cols-2">
-          <LoadingCard label="fetching your servers…" />
-          <LoadingCard />
+          {[0, 1, 2].map((i) => (
+            <Card key={i} className="flex flex-col gap-4">
+              <div className="flex items-center gap-4">
+                <Skeleton className="h-14 w-14 rounded-[12px]" />
+                <div className="flex-1 space-y-2">
+                  <Skeleton className="h-5 w-2/3" />
+                  <Skeleton className="h-4 w-1/3" />
+                </div>
+              </div>
+              <Skeleton className="h-11 w-full rounded-[12px]" />
+            </Card>
+          ))}
         </div>
       </main>
     );
@@ -31,7 +42,8 @@ export default function ServersPage() {
         <h1 className="font-heading text-3xl">drifting away…</h1>
         <p className="mt-3 text-sm text-veloura-muted">your session expired — sign in again</p>
         <Link href="/login" className="veloura-button-primary mt-6">
-          ✦ login with discord
+          <Icon name="logout" size={15} />
+          login with discord
         </Link>
       </main>
     );
@@ -103,16 +115,15 @@ export default function ServersPage() {
                 href={`/servers/${g.id}`}
                 className="veloura-button-primary w-full group-hover:shadow-glow"
               >
-                ✦ manage
+                <Icon name="settings" size={15} />
+                manage
               </Link>
             </Card>
           ))}
         </div>
       ) : (
         <Card className="text-center">
-          <p className="text-3xl" aria-hidden>
-            🌙
-          </p>
+          <Icon name="moon" size={30} className="mx-auto text-veloura-lavender/60" />
           <p className="mt-3 text-sm text-veloura-muted">
             no manageable servers with aurelia yet
           </p>
@@ -125,7 +136,8 @@ export default function ServersPage() {
             rel="noreferrer"
             className="veloura-button-ghost mt-5"
           >
-            invite aurelia ✧
+            <Icon name="plus" size={15} />
+            invite aurelia
           </a>
         </Card>
       )}

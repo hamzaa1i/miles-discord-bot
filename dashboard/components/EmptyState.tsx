@@ -3,9 +3,10 @@
 /** EmptyState + StatCard + SectionHeading — small shared layout bits. */
 
 import { cn } from '@/lib/format';
+import { MaybeIcon } from '@/components/icons';
 
 export function EmptyState({
-  icon = '✧',
+  icon = 'sparkles',
   title,
   hint,
   action,
@@ -17,8 +18,8 @@ export function EmptyState({
 }) {
   return (
     <div className="flex flex-col items-center justify-center rounded-card border border-dashed border-veloura-border/70 px-6 py-10 text-center">
-      <div aria-hidden className="mb-3 text-3xl text-veloura-lavender/60">
-        {icon}
+      <div aria-hidden className="mb-3 text-veloura-lavender/60">
+        <MaybeIcon value={icon} size={26} />
       </div>
       <p className="text-sm text-veloura-muted">{title}</p>
       {hint && <p className="mt-1.5 max-w-sm text-xs leading-relaxed text-veloura-muted/60">{hint}</p>}
@@ -46,11 +47,11 @@ export function StatCard({
         <div
           aria-hidden
           className={cn(
-            'flex h-10 w-10 items-center justify-center rounded-[12px] text-lg',
-            tone === 'lavender' ? 'bg-veloura-lavender/10' : 'bg-veloura-pink/10',
+            'flex h-10 w-10 shrink-0 items-center justify-center rounded-[12px]',
+            tone === 'lavender' ? 'bg-veloura-lavender/10 text-veloura-lavender' : 'bg-veloura-pink/10 text-veloura-pink',
           )}
         >
-          {icon}
+          <MaybeIcon value={icon} size={18} />
         </div>
         <div className="min-w-0">
           <p className="text-[11px] uppercase tracking-wider text-veloura-muted/80">{label}</p>
@@ -73,8 +74,8 @@ export function SectionHeading({
 }) {
   return (
     <div className="mb-4 mt-8 flex items-center justify-between first:mt-0">
-      <h2 className="flex items-center gap-2 font-heading text-xl text-veloura-text">
-        {icon && <span aria-hidden>{icon}</span>}
+      <h2 className="flex items-center gap-2.5 font-heading text-xl text-veloura-text">
+        {icon && <MaybeIcon value={icon} size={17} className="text-veloura-pink" />}
         {children}
       </h2>
       {right}

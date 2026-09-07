@@ -1,14 +1,15 @@
 import Link from 'next/link';
 
 import BotStatusCard from '@/components/BotStatusCard';
+import { Icon } from '@/components/icons';
 
 const FEATURES = [
-  { icon: '♡', title: 'welcome cards', desc: 'greet every soul with embeds, colors and live previews.' },
-  { icon: '✩', title: 'leveling', desc: 'tune xp rates, level-up messages and role rewards.' },
-  { icon: '❓', title: 'qotd', desc: 'schedule the daily question, curate a custom queue.' },
-  { icon: '👁', title: 'ai automod', desc: 'the watchful gaze — severity, timeouts, alerts.' },
-  { icon: '🎁', title: 'giveaways', desc: 'watch entries arrive in realtime, end them early.' },
-  { icon: '📈', title: 'statistics', desc: 'commands per day, top commands, leaderboards.' },
+  { icon: 'heart', title: 'welcome cards', desc: 'greet every soul with embeds, colors and live previews.' },
+  { icon: 'star', title: 'leveling', desc: 'tune xp rates, level-up messages and role rewards.' },
+  { icon: 'helpCircle', title: 'qotd', desc: 'schedule the daily question, curate a custom queue.' },
+  { icon: 'shield', title: 'ai automod', desc: 'the watchful gaze — severity, timeouts, alerts.' },
+  { icon: 'gift', title: 'giveaways', desc: 'watch entries arrive in realtime, end them early.' },
+  { icon: 'barChart', title: 'statistics', desc: 'commands per day, top commands, leaderboards.' },
 ];
 
 export default function LandingPage() {
@@ -41,7 +42,8 @@ export default function LandingPage() {
 
           <div className="mt-8">
             <Link href="/login" className="veloura-button-primary px-8 text-base">
-              ✦ login with discord
+              <Icon name="logout" size={17} />
+              login with discord
             </Link>
           </div>
           <p className="mt-4 text-xs text-veloura-muted/70">
@@ -65,9 +67,9 @@ export default function LandingPage() {
               <div className="relative">
                 <div
                   aria-hidden
-                  className="mb-3 flex h-10 w-10 items-center justify-center rounded-[12px] bg-veloura-card-hover text-xl transition-all duration-300 group-hover:scale-110 group-hover:border group-hover:border-veloura-pink/30 group-hover:shadow-glow"
+                  className="mb-3 flex h-10 w-10 items-center justify-center rounded-[12px] bg-veloura-card-hover text-veloura-pink transition-all duration-300 group-hover:scale-110 group-hover:border group-hover:border-veloura-pink/30 group-hover:shadow-glow"
                 >
-                  {f.icon}
+                  <Icon name={f.icon} size={19} />
                 </div>
                 <h2 className="font-heading text-lg text-veloura-text transition-colors duration-300 group-hover:text-veloura-lavender">
                   {f.title}
@@ -79,8 +81,13 @@ export default function LandingPage() {
         </section>
 
         <footer className="mt-auto border-t border-veloura-border/60 py-8 text-center text-sm text-veloura-muted/70">
-          <span className="twinkle">✦</span> built by volc · wrapped in veloura ·{' '}
-          <span className="twinkle">✧</span>
+          <span className="twinkle" aria-hidden>
+            ✦
+          </span>{' '}
+          built by volc · wrapped in veloura ·{' '}
+          <span className="twinkle" aria-hidden>
+            ✧
+          </span>
         </footer>
       </main>
     </div>

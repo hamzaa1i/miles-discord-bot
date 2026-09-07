@@ -6,10 +6,11 @@ import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import { useModuleSettings } from '@/lib/useModuleSettings';
+import { useHashTab } from '@/lib/useHashTab';
 import { endpoints, ApiRequestError } from '@/lib/api';
 import { ModuleCard } from '@/components/ModuleCard';
 import { SaveBar } from '@/components/SaveBar';
-import { RolePicker, ChannelMultiPicker } from '@/components/ChannelPicker';
+import { RolePicker, RoleMultiPicker } from '@/components/ChannelPicker';
 import { Card, CardTitle, Badge, Tabs, LoadingCard, ErrorCard } from '@/components/ui/primitives';
 import { EmptyState, SectionHeading } from '@/components/EmptyState';
 import { MessageEditor } from '@/components/MessageEditor';
@@ -24,7 +25,11 @@ export default function RolesPage() {
   const params = useParams<{ guildId: string }>();
   const gid = String(params.guildId);
   const toast = useToast();
-  const [tab, setTab] = useState('autorole');
+  // tabs sync to the url fragment: roles#onboarding opens onboarding
+  const [tab, setTab] = useHashTab(
+    ['autorole', 'selfroles', 'colors', 'onboarding'],
+    'autorole',
+  );
 
   const autorole = useModuleSettings(gid, 'autorole', AUTOROLE_DEFAULTS);
   const onboarding = useModuleSettings(gid, 'onboarding', ONBOARDING_DEFAULTS);
@@ -38,7 +43,12 @@ export default function RolesPage() {
       .catch(() => setColorRoles([]));
   }, [gid, tab]);
 
-  if (autorole.loading || onboarding.loading) return <LoadingCard label="loading roles…" />;
+  if (autorole.loading || onboarding.loading) {
+    if (autorole.verifying || onboarding.verifying) {
+      return <LoadingCard label="verifying permissions…" />;
+    }
+    return <LoadingCard label="loading roles…" />;
+  }
   if ((autorole.error && !autorole.settings) || (onboarding.error && !onboarding.settings)) {
     return <ErrorCard message={autorole.error ?? onboarding.error ?? 'failed to load'} />;
   }
@@ -49,16 +59,16 @@ export default function RolesPage() {
   return (
     <>
       <ModuleCard
-        icon="✦"
+        icon="sparkles"
         title="roles"
         description="autorole, self-roles, colors and onboarding — identity, softly arranged"
       >
         <Tabs
           tabs={[
-            { id: 'autorole', label: 'autorole', icon: '✦' },
-            { id: 'selfroles', label: 'self-roles', icon: '✧' },
-            { id: 'colors', label: 'color roles', icon: '🎨' },
-            { id: 'onboarding', label: 'onboarding', icon: '✩' },
+            { id: 'autorole', label: 'autorole', icon: 'sparkles' },
+            { id: 'selfroles', label: 'self-roles', icon: 'users' },
+            { id: 'colors', label: 'color roles', icon: 'zap' },
+            { id: 'onboarding', label: 'onboarding', icon: 'star' },
           ]}
           active={tab}
           onChange={setTab}
@@ -66,7 +76,7 @@ export default function RolesPage() {
 
         {tab === 'autorole' && (
           <Card id="autorole">
-            <CardTitle icon="✦">autorole</CardTitle>
+            <CardTitle icon="sparkles">autorole</CardTitle>
             <p className="mt-1.5 text-xs text-veloura-muted">
               granted automatically the moment a member joins
             </p>
@@ -89,7 +99,7 @@ export default function RolesPage() {
 
         {tab === 'selfroles' && (
           <Card id="selfroles">
-            <CardTitle icon="✧">self-roles</CardTitle>
+            <CardTitle icon="users">self-roles</CardTitle>
             <p className="mt-1.5 text-xs leading-relaxed text-veloura-muted">
               members pick their own roles with{' '}
               <code className="text-veloura-lavender">/selfroles</code>. panels are
@@ -105,7 +115,7 @@ export default function RolesPage() {
 
         {tab === 'colors' && (
           <Card id="colors">
-            <CardTitle icon="🎨">color roles</CardTitle>
+            <CardTitle icon="zap">color roles</CardTitle>
             <p className="mt-1.5 text-xs text-veloura-muted">
               personal colors chosen with <code className="text-veloura-lavender">/color set</code> —
               one per member, 24h between changes
@@ -114,7 +124,7 @@ export default function RolesPage() {
               {colorRoles === null ? (
                 <p className="text-sm text-veloura-muted">loading…</p>
               ) : colorRoles.length === 0 ? (
-                <EmptyState icon="🎨" title="no custom colors yet" hint="members create theirs with /color set #FFC0CB" />
+                <EmptyState icon="zap" title="no custom colors yet" hint="members create theirs with /color set #FFC0CB" />
               ) : (
                 <ul className="divide-y divide-veloura-border/40">
                   {colorRoles.map((r) => (
@@ -139,7 +149,7 @@ export default function RolesPage() {
 
         {tab === 'onboarding' && (
           <Card id="onboarding">
-            <CardTitle icon="✩">onboarding</CardTitle>
+            <CardTitle icon="star">onboarding</CardTitle>
             <p className="mt-1.5 text-xs text-veloura-muted">
               a soft first message with role buttons for new members
             </p>
@@ -160,9 +170,9 @@ export default function RolesPage() {
                 onChange={(v) => onboarding.update({ welcome_text: v })}
                 rows={4}
               />
-              <ChannelMultiPicker
+              <RoleMultiPicker
                 label="selectable roles"
-                help="roles new members can choose"
+                help="roles new members can choose — roles above aurelia can't be granted and are hidden"
                 value={Array.isArray(o.roles) ? (o.roles as string[]) : []}
                 onChange={(v) => onboarding.update({ roles: v })}
               />
@@ -227,7 +237,7 @@ function SelfRolesInfo({ gid }: { gid: string }) {
   if (panels.length === 0) {
     return (
       <EmptyState
-        icon="✧"
+        icon="users"
         title="no self-role panels yet"
         hint="create one in discord with /selfroles panel — it appears here once saved"
       />

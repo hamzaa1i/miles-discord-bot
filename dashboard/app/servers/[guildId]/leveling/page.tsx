@@ -87,7 +87,7 @@ export default function LevelingPage() {
   return (
     <>
       <ModuleCard
-        icon="✩"
+        icon="star"
         title="leveling"
         description="xp, levels and role rewards — the quiet economy of presence"
         enabled={Boolean(s.enabled)}
@@ -99,7 +99,7 @@ export default function LevelingPage() {
       >
         <div className="grid gap-6 lg:grid-cols-2">
           <Card>
-            <CardTitle icon="✦">xp flow</CardTitle>
+            <CardTitle icon="sparkles">xp flow</CardTitle>
             <div className="mt-4">
               <div className="mb-6">
                 <label htmlFor="rate" className="veloura-label">
@@ -168,7 +168,7 @@ export default function LevelingPage() {
 
         {/* rewards table */}
         <Card className="mt-6" id="rewards">
-          <CardTitle icon="✦">role rewards</CardTitle>
+          <CardTitle icon="sparkles">role rewards</CardTitle>
           <p className="mt-1.5 text-xs text-veloura-muted">
             roles handed out automatically when a member reaches a level
           </p>
@@ -207,7 +207,7 @@ export default function LevelingPage() {
                           className="rounded-[10px] border border-veloura-danger/30 px-2.5 py-1 text-xs text-veloura-danger transition hover:bg-veloura-danger/10"
                           aria-label={`remove level ${r.level} reward`}
                         >
-                          ✕ remove
+                          remove
                         </button>
                       </td>
                     </tr>
@@ -216,7 +216,7 @@ export default function LevelingPage() {
               </table>
             ) : (
               <EmptyState
-                icon="✩"
+                icon="star"
                 title="no role rewards configured"
                 hint="add one below — members earn the role at that level automatically"
               />

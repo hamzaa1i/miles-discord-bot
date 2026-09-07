@@ -2,12 +2,24 @@
 
 export function guildIconUrl(id: string, icon: string | null, size = 128): string | null {
   if (!icon) return null;
-  return `https://cdn.discordapp.com/icons/${id}/${icon}.png?size=${size}`;
+  // animated icons (hash starts with "a_") only render as .gif on the
+  // CDN — a static .png 404s and shows the ugly broken-image alt text
+  const ext = icon.startsWith('a_') ? 'gif' : 'png';
+  return `https://cdn.discordapp.com/icons/${id}/${icon}.${ext}?size=${size}`;
 }
 
 export function defaultAvatar(seed: string): string {
   const index = Number(BigInt(seed || '0') % 6n);
   return `https://cdn.discordapp.com/embed/avatars/${index}.png`;
+}
+
+/** Colored circle dot used by status indicators (fills, not emoji). */
+export function channelTypeIcon(type: number): 'hash' | 'megaphone' | 'volume2' | 'layers' | 'messageSquare' {
+  if (type === 0) return 'hash'; // text
+  if (type === 5) return 'megaphone'; // announcement
+  if (type === 2 || type === 13) return 'volume2'; // voice/stage
+  if (type === 15 || type === 16) return 'layers'; // forum/media
+  return 'messageSquare';
 }
 
 export function channelTypeEmoji(type: number): string {

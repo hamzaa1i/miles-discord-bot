@@ -7,7 +7,7 @@ import { useParams } from 'next/navigation';
 import { endpoints } from '@/lib/api';
 import { useGuild } from '@/lib/guild';
 import { LineChart, BarChart } from '@/components/StatsChart';
-import { Card, CardTitle, Badge, LoadingCard, ErrorCard } from '@/components/ui/primitives';
+import { Card, CardTitle, Badge, LoadingCard, ErrorCard, Skeleton } from '@/components/ui/primitives';
 import { SectionHeading, StatCard, EmptyState } from '@/components/EmptyState';
 import { useRealtime } from '@/lib/useRealtime';
 import { nf } from '@/lib/format';
@@ -39,32 +39,56 @@ export default function StatsPage() {
   const { live } = useRealtime(gid, 'command_usage', load);
 
   if (error) return <ErrorCard message={error} />;
-  if (!data) return <LoadingCard label="reading the stars…" />;
+  if (!data) {
+    // stats-shaped skeleton: 4 stat cards + two chart blocks + table
+    return (
+      <div className="animate-fade-in">
+        <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
+          <h1 className="font-heading text-3xl">statistics</h1>
+        </div>
+        <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+          {[0, 1, 2, 3].map((i) => (
+            <Card key={i} className="flex items-center gap-3">
+              <Skeleton className="h-10 w-10 rounded-[12px]" />
+              <div className="flex-1 space-y-2">
+                <Skeleton className="h-3 w-2/3" />
+                <Skeleton className="h-6 w-1/2" />
+              </div>
+            </Card>
+          ))}
+        </div>
+        <div className="mt-8 space-y-4">
+          <Skeleton className="h-44 w-full" />
+          <Skeleton className="h-36 w-full" />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="animate-fade-in">
       <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
         <h1 className="font-heading text-3xl">statistics</h1>
-        {live && <Badge tone="success">✧ realtime</Badge>}
+        {live && <Badge tone="success">realtime</Badge>}
       </div>
 
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <StatCard icon="✦" label="commands · 30d" value={nf(data.total_30d)} />
+        <StatCard icon="sparkles" label="commands · 30d" value={nf(data.total_30d)} />
         <StatCard
-          icon="✧"
+          icon="sparkles"
           label="commands · 7d"
           value={nf(overview?.stats.commands_used_7d ?? 0)}
           tone="lavender"
         />
         <StatCard
-          icon="♡"
+          icon="heart"
           label="active users · 7d"
           value={nf(overview?.stats.active_users_7d ?? 0)}
         />
-        <StatCard icon="✩" label="members" value={nf(overview?.member_count)} tone="lavender" />
+        <StatCard icon="star" label="members" value={nf(overview?.member_count)} tone="lavender" />
       </div>
 
-      <SectionHeading icon="📈">commands per day · 30 days</SectionHeading>
+      <SectionHeading icon="barChart">commands per day · 30 days</SectionHeading>
       <Card>
         <LineChart
           data={data.series.map((p) => ({ label: p.date, value: p.commands }))}
@@ -78,7 +102,7 @@ export default function StatsPage() {
         )}
       </Card>
 
-      <SectionHeading icon="✧">top commands · 30 days</SectionHeading>
+      <SectionHeading icon="sparkles">top commands · 30 days</SectionHeading>
       <Card>
         <BarChart
           data={data.top_commands.map((t) => ({ label: t.command, value: t.count }))}
@@ -86,7 +110,7 @@ export default function StatsPage() {
         />
       </Card>
 
-      <SectionHeading icon="✦">active users per day</SectionHeading>
+      <SectionHeading icon="sparkles">active users per day</SectionHeading>
       <Card>
         <LineChart
           data={data.series.map((p) => ({ label: p.date, value: p.active_users }))}
@@ -95,7 +119,7 @@ export default function StatsPage() {
         />
       </Card>
 
-      <SectionHeading icon="✩">leveling leaderboard</SectionHeading>
+      <SectionHeading icon="star">leveling leaderboard</SectionHeading>
       <Card>
         {data.leveling_leaderboard.length > 0 ? (
           <div className="overflow-x-auto">
@@ -128,7 +152,7 @@ export default function StatsPage() {
           </div>
         ) : (
           <EmptyState
-            icon="✩"
+            icon="star"
             title="no leveling data yet"
             hint="xp accrues as members chat — the leaderboard wakes up on its own"
           />

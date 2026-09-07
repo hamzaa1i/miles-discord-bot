@@ -9,6 +9,7 @@ import { ModuleCard } from '@/components/ModuleCard';
 import { Card, CardTitle, Badge, LoadingCard, ErrorCard } from '@/components/ui/primitives';
 import { EmptyState, SectionHeading } from '@/components/EmptyState';
 import { useToast } from '@/components/ui/toast';
+import { Icon } from '@/components/icons';
 import { timeAgo, nf } from '@/lib/format';
 import type { Giveaway } from '@/lib/types';
 
@@ -68,18 +69,18 @@ export default function GiveawaysPage() {
 
   return (
     <ModuleCard
-      icon="🎁"
+      icon="gift"
       title="giveaways"
       description="gifts from the void — start them in discord with /giveaway start"
     >
-      <SectionHeading icon="✦" right={<Badge tone="pink">{data?.active.length ?? 0} active</Badge>}>
+      <SectionHeading icon="sparkles" right={<Badge tone="pink">{data?.active.length ?? 0} active</Badge>}>
         running now
       </SectionHeading>
 
       {data === null ? (
         <LoadingCard label="loading giveaways…" />
       ) : data.active.length === 0 ? (
-        <EmptyState icon="🎁" title="no active giveaways" hint="start one with /giveaway start prize:... duration:..." />
+        <EmptyState icon="gift" title="no active giveaways" hint="start one with /giveaway start prize:... duration:..." />
       ) : (
         <div className="grid gap-4 sm:grid-cols-2">
           {data.active.map((gw) => (
@@ -122,17 +123,17 @@ export default function GiveawaysPage() {
                 <span className="text-xs text-veloura-muted/60">{timeAgo(gw.created_at)}</span>
                 <button
                   onClick={() => deleteGiveaway(gw)}
-                  className="rounded-[10px] border border-veloura-danger/30 px-2.5 py-1 text-xs text-veloura-danger transition hover:bg-veloura-danger/10"
+                  className="flex h-11 w-11 items-center justify-center rounded-[10px] border border-veloura-danger/30 text-veloura-danger transition hover:bg-veloura-danger/10"
                   aria-label={`delete giveaway ${gw.id}`}
                 >
-                  ✕
+                  <Icon name="trash" size={15} />
                 </button>
               </li>
             ))}
           </ul>
         </Card>
       ) : (
-        <EmptyState icon="✧" title="no past giveaways" hint="ended giveaways stay listed here for 30 days" />
+        <EmptyState icon="sparkles" title="no past giveaways" hint="ended giveaways stay listed here for 30 days" />
       )}
     </ModuleCard>
   );

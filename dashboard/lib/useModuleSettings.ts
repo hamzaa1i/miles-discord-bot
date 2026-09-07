@@ -6,21 +6,29 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { endpoints, ApiRequestError } from '@/lib/api';
+import { endpoints, ApiRequestError, retryableStatus } from '@/lib/api';
+import { useToast } from '@/components/ui/toast';
 import type { Settings } from '@/lib/types';
 
 export function useModuleSettings(gid: string, module: string, defaults?: Settings) {
+  const toast = useToast();
   const [settings, setSettings] = useState<Settings | null>(null);
   const [saved, setSaved] = useState<Settings | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /**
+   * True while a permission-check hiccup (backend 503: Discord was
+   * unreachable to verify manage_guild) is being retried. Pages show
+   * "verifying permissions…" instead of a scary error card.
+   */
+  const [verifying, setVerifying] = useState(false);
   const defaultsRef = useRef<Settings | undefined>(defaults);
   defaultsRef.current = defaults;
 
   useEffect(() => {
     let cancelled = false;
-    (async () => {
+    const load = async (attempt: number): Promise<void> => {
       setLoading(true);
       try {
         const res = await endpoints.settings(gid, module);
@@ -29,13 +37,27 @@ export function useModuleSettings(gid: string, module: string, defaults?: Settin
         setSettings(merged);
         setSaved(merged);
         setError(null);
+        setVerifying(false);
       } catch (e) {
         if (cancelled) return;
+        const retryable =
+          (e instanceof ApiRequestError && retryableStatus(e.status)) ||
+          !(e instanceof ApiRequestError);
+        if (retryable && attempt === 0) {
+          // one automatic retry after a short beat — usually enough for
+          // the transient Discord-verification blip to clear
+          setVerifying(true);
+          await new Promise((r) => setTimeout(r, 1000));
+          if (!cancelled) return load(1);
+          return;
+        }
+        setVerifying(false);
         setError(e instanceof Error ? e.message : 'could not load settings');
       } finally {
         if (!cancelled) setLoading(false);
       }
-    })();
+    };
+    void load(0);
     return () => {
       cancelled = true;
     };
@@ -56,13 +78,17 @@ export function useModuleSettings(gid: string, module: string, defaults?: Settin
         setSaved(merged);
         return merged;
       } catch (e) {
-        setError(e instanceof ApiRequestError ? e.message : 'save failed');
+        const msg = e instanceof ApiRequestError ? e.message : 'save failed';
+        setError(msg);
+        // every failed mutation gets a red toast (the save bar repeats it
+        // inline, but a toast confirms it even when the bar is offscreen)
+        toast.push(msg, 'error');
         return null;
       } finally {
         setSaving(false);
       }
     },
-    [gid, module],
+    [gid, module, toast],
   );
 
   /** Save all dirty keys (settings vs saved diff). */
@@ -96,7 +122,7 @@ export function useModuleSettings(gid: string, module: string, defaults?: Settin
     );
 
   return {
-    settings, saved, loading, saving, error,
+    settings, saved, loading, saving, error, verifying,
     dirty, update, save, patch, revert, resetDefaults,
     setSettings,
   };

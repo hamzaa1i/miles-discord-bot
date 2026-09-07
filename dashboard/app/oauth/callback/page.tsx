@@ -5,15 +5,21 @@ import { useRouter, useSearchParams } from 'next/navigation';
 
 function CallbackInner() {
   const router = useRouter();
+  void router; // navigation happens via window.location.assign (see finish)
   const params = useSearchParams();
-  const [status, setStatus] = useState<'working' | 'error'>('working');
+  const [status, setStatus] = useState<'working' | 'settling' | 'error'>('working');
   const [error, setError] = useState<string | null>(null);
 
   const finish = useCallback(() => {
-    // clear the URL fragment (#token=...) before navigating on
+    // Full page navigation (NOT router.replace): the AuthProvider in the
+    // root layout mounted BEFORE the cookie existed and cached its
+    // "not logged in" state — a client-side route change would render
+    // /servers against that stale state ("drifting away"). A real
+    // navigation remounts the app with the fresh httpOnly cookie.
     window.history.replaceState(null, '', window.location.pathname);
-    router.replace('/servers');
-  }, [router]);
+    setStatus('settling');
+    window.location.assign('/servers');
+  }, []);
 
   useEffect(() => {
     const code = params.get('code');
@@ -72,6 +78,14 @@ function CallbackInner() {
               <div className="h-full w-1/2 animate-pulse-soft rounded-full bg-veloura-pink" />
             </div>
             <p className="mt-4 text-sm text-veloura-muted">exchanging your discord token</p>
+          </>
+        ) : status === 'settling' ? (
+          <>
+            <h1 className="font-heading text-2xl">settling in…</h1>
+            <div className="mx-auto mt-6 h-1 w-40 overflow-hidden rounded-full bg-veloura-border">
+              <div className="h-full w-1/2 animate-pulse-soft rounded-full bg-veloura-lavender" />
+            </div>
+            <p className="mt-4 text-sm text-veloura-muted">finding your servers</p>
           </>
         ) : (
           <>

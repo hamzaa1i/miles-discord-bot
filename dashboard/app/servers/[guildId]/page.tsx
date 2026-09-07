@@ -83,11 +83,11 @@ export default function OverviewPage() {
     <div className="animate-fade-in">
       {/* stat cards */}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <StatCard icon="♡" label="members" value={nf(overview.member_count)} />
-        <StatCard icon="✧" label="online" value={nf(overview.online_count)} tone="lavender" />
-        <StatCard icon="🫧" label="boosts" value={overview.boost_count} />
+        <StatCard icon="heart" label="members" value={nf(overview.member_count)} />
+        <StatCard icon="sparkles" label="online" value={nf(overview.online_count)} tone="lavender" />
+        <StatCard icon="bell" label="boosts" value={overview.boost_count} />
         <StatCard
-          icon="✦"
+          icon="sparkles"
           label="commands · 7d"
           value={nf(stats.commands_used_7d)}
           sub={`${nf(stats.active_users_7d)} active souls`}
@@ -95,10 +95,10 @@ export default function OverviewPage() {
       </div>
 
       {/* quick actions */}
-      <SectionHeading icon="✦">quick actions</SectionHeading>
+      <SectionHeading icon="sparkles">quick actions</SectionHeading>
       <div className="grid gap-3 sm:grid-cols-3">
         <Card className="flex flex-col gap-3">
-          <CardTitle icon="❓">post qotd now</CardTitle>
+          <CardTitle icon="helpCircle">post qotd now</CardTitle>
           <p className="flex-1 text-xs leading-relaxed text-veloura-muted">
             send today&apos;s question immediately, no waiting for the scheduled hour.
           </p>
@@ -107,11 +107,11 @@ export default function OverviewPage() {
             onClick={() => runAction('qotd_post_now', 'qotd post')}
             className="veloura-button-ghost !min-h-[40px] text-xs"
           >
-            {busy === 'qotd_post_now' ? 'queuing…' : 'post now ✦'}
+            {busy === 'qotd_post_now' ? 'queuing…' : 'post now'}
           </button>
         </Card>
         <Card className="flex flex-col gap-3">
-          <CardTitle icon="♡">test welcome</CardTitle>
+          <CardTitle icon="heart">test welcome</CardTitle>
           <p className="flex-1 text-xs leading-relaxed text-veloura-muted">
             send the current welcome card to its channel with you as the guest.
           </p>
@@ -120,11 +120,11 @@ export default function OverviewPage() {
             onClick={() => runAction('welcome_test', 'welcome test', { type: 'welcome' })}
             className="veloura-button-ghost !min-h-[40px] text-xs"
           >
-            {busy === 'welcome_test' ? 'queuing…' : 'send test ✧'}
+            {busy === 'welcome_test' ? 'queuing…' : 'send test'}
           </button>
         </Card>
         <Card className="flex flex-col gap-3">
-          <CardTitle icon="🫧">refresh data</CardTitle>
+          <CardTitle icon="bell">refresh data</CardTitle>
           <p className="flex-1 text-xs leading-relaxed text-veloura-muted">
             purge cached settings so the bot re-reads them from the database.
           </p>
@@ -133,13 +133,13 @@ export default function OverviewPage() {
             onClick={() => runAction('purge_cache', 'cache purge')}
             className="veloura-button-ghost !min-h-[40px] text-xs"
           >
-            {busy === 'purge_cache' ? 'queuing…' : 'purge cache ✩'}
+            {busy === 'purge_cache' ? 'queuing…' : 'purge cache'}
           </button>
         </Card>
       </div>
 
       {/* active features */}
-      <SectionHeading icon="✧" right={live ? <Badge tone="success">✧ realtime</Badge> : undefined}>
+      <SectionHeading icon="sparkles" right={live ? <Badge tone="success">realtime</Badge> : undefined}>
         active features
       </SectionHeading>
       <Card>
@@ -167,13 +167,13 @@ export default function OverviewPage() {
       </Card>
 
       {/* top commands */}
-      <SectionHeading icon="📈">top commands · 7d</SectionHeading>
+      <SectionHeading icon="barChart">top commands · 7d</SectionHeading>
       <Card>
         {stats.top_commands.length > 0 ? (
           <BarChart data={stats.top_commands.map((t) => ({ label: t.command, value: t.count }))} />
         ) : (
           <EmptyState
-            icon="✦"
+            icon="sparkles"
             title="no commands used this week"
             hint="slash command usage is recorded automatically once the command_usage table exists in supabase"
           />
@@ -181,7 +181,7 @@ export default function OverviewPage() {
       </Card>
 
       {/* activity feed */}
-      <SectionHeading icon="📜">dashboard activity</SectionHeading>
+      <SectionHeading icon="scroll">dashboard activity</SectionHeading>
       <Card>
         <AuditList entries={audit} limit={10} />
       </Card>

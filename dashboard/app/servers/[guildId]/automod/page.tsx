@@ -43,7 +43,7 @@ export default function AutomodPage() {
   return (
     <>
       <ModuleCard
-        icon="👁"
+        icon="shield"
         title="ai automod"
         description="messages pass before a quiet model — severity decides the consequence"
         enabled={Boolean(s.enabled)}
@@ -55,7 +55,7 @@ export default function AutomodPage() {
       >
         <div className="grid gap-6 lg:grid-cols-2">
           <Card>
-            <CardTitle icon="✦">response</CardTitle>
+            <CardTitle icon="swords">response</CardTitle>
             <div className="mt-4">
               <div className="mb-4">
                 <label htmlFor="timeout-min" className="veloura-label">
@@ -97,7 +97,7 @@ export default function AutomodPage() {
           </Card>
 
           <Card>
-            <CardTitle icon="✧">scope</CardTitle>
+            <CardTitle icon="users">scope</CardTitle>
             <div className="mt-4">
               {Array.isArray(s[WATCH_KEY]) ? (
                 <ChannelMultiPicker

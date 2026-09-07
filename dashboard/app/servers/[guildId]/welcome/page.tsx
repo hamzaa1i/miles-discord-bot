@@ -49,7 +49,8 @@ export default function WelcomePage() {
   const [tab, setTab] = useState('welcome');
   const [testing, setTesting] = useState(false);
 
-  if (ms.loading) return <LoadingCard label="loading welcome config…" />;
+  if (ms.loading)
+    return <LoadingCard label={ms.verifying ? 'verifying permissions…' : 'loading welcome config…'} />;
   if (ms.error && !ms.settings) return <ErrorCard message={ms.error} />;
   if (!ms.settings) return null;
 
@@ -77,7 +78,7 @@ export default function WelcomePage() {
   return (
     <>
       <ModuleCard
-        icon="♡"
+        icon="heart"
         title="welcome & goodbye"
         description="greet every soul that drifts in — and wish them well on the way out"
         enabled={Boolean(s.enabled)}
@@ -89,9 +90,9 @@ export default function WelcomePage() {
       >
         <Tabs
           tabs={[
-            { id: 'welcome', label: 'welcome', icon: '♡' },
-            { id: 'goodbye', label: 'goodbye', icon: '✧' },
-            { id: 'style', label: 'style & extras', icon: '✦' },
+            { id: 'welcome', label: 'welcome', icon: 'heart' },
+            { id: 'goodbye', label: 'goodbye', icon: 'sparkles' },
+            { id: 'style', label: 'style & extras', icon: 'wand' },
           ]}
           active={tab}
           onChange={setTab}
@@ -100,7 +101,7 @@ export default function WelcomePage() {
         {tab === 'welcome' && (
           <div className="grid gap-6 lg:grid-cols-2">
             <Card>
-              <CardTitle icon="♡">arrival</CardTitle>
+              <CardTitle icon="heart">arrival</CardTitle>
               <div className="mt-4">
                 <ChannelPicker
                   id="welcome-channel"
@@ -127,7 +128,7 @@ export default function WelcomePage() {
                 className="veloura-button-ghost mt-3 w-full !min-h-[40px] text-xs"
                 title={s.channel_id ? 'send a real test card' : 'set a channel first'}
               >
-                {testing ? 'sending…' : '✧ send test to discord'}
+                {testing ? 'sending…' : 'send test to discord'}
               </button>
             </div>
           </div>
@@ -136,7 +137,7 @@ export default function WelcomePage() {
         {tab === 'goodbye' && (
           <div className="grid gap-6 lg:grid-cols-2">
             <Card>
-              <CardTitle icon="✧">departure</CardTitle>
+              <CardTitle icon="sparkles">departure</CardTitle>
               <div className="mt-4">
                 <div className="mb-4 flex items-center justify-between gap-4 rounded-[12px] border border-veloura-border/60 bg-veloura-navy/50 px-4 py-3">
                   <span className="text-sm text-veloura-text">goodbye messages enabled</span>
@@ -171,7 +172,7 @@ export default function WelcomePage() {
                 disabled={testing || !(s.goodbye_channel_id ?? s.channel_id)}
                 className="veloura-button-ghost mt-3 w-full !min-h-[40px] text-xs"
               >
-                {testing ? 'sending…' : '✧ send test goodbye'}
+                {testing ? 'sending…' : 'send test goodbye'}
               </button>
             </div>
           </div>
@@ -181,7 +182,7 @@ export default function WelcomePage() {
           <div className="grid gap-6 lg:grid-cols-2">
             <div className="space-y-4">
               <Card>
-                <CardTitle icon="✦">embed style</CardTitle>
+                <CardTitle icon="wand">embed style</CardTitle>
                 <div className="mt-4">
                   <div className="mb-4">
                     <label htmlFor="embed-mode" className="veloura-label">
@@ -254,7 +255,7 @@ export default function WelcomePage() {
 
             <div className="space-y-4">
               <Card>
-                <CardTitle icon="🎁">rewards & roles</CardTitle>
+                <CardTitle icon="gift">rewards &amp; roles</CardTitle>
                 <div className="mt-4">
                   <RolePicker
                     id="autorole"
@@ -291,7 +292,7 @@ export default function WelcomePage() {
                 </div>
               </Card>
               <Card>
-                <CardTitle icon="✉">welcome dm</CardTitle>
+                <CardTitle icon="messageSquare">welcome dm</CardTitle>
                 <div className="mt-4">
                   <MessageEditor
                     label="dm text (sent after the card)"

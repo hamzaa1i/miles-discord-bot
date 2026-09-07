@@ -168,7 +168,13 @@ export function SettingsForm({
     return [...sections.entries()];
   }, [module.fields]);
 
-  if (ms.loading) return <LoadingCard label={`loading ${module.title}…`} />;
+  if (ms.loading) {
+    return (
+      <LoadingCard
+        label={ms.verifying ? 'verifying permissions…' : `loading ${module.title}…`}
+      />
+    );
+  }
   if (ms.error && !ms.settings)
     return (
       <ErrorCard

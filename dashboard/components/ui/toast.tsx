@@ -3,6 +3,7 @@
 /** Minimal toast system (veloura-styled, a11y-live). */
 
 import { createContext, useCallback, useContext, useRef, useState } from 'react';
+import { Check, CircleAlert, Sparkles } from 'lucide-react';
 
 type ToastKind = 'success' | 'error' | 'info';
 interface Toast {
@@ -27,10 +28,10 @@ const KIND_STYLES: Record<ToastKind, string> = {
   info: 'border-veloura-lavender/40 text-veloura-lavender',
 };
 
-const KIND_ICONS: Record<ToastKind, string> = {
-  success: '✦',
-  error: '✧',
-  info: '✩',
+const KIND_ICONS: Record<ToastKind, React.ReactNode> = {
+  success: <Check size={15} strokeWidth={2.2} />,
+  error: <CircleAlert size={15} strokeWidth={2.2} />,
+  info: <Sparkles size={15} strokeWidth={2.2} />,
 };
 
 export function ToastProvider({ children }: { children: React.ReactNode }) {
@@ -57,7 +58,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
             key={t.id}
             className={`veloura-card pointer-events-auto flex min-h-[44px] items-center gap-3 px-4 py-3 text-sm animate-fade-in ${KIND_STYLES[t.kind]}`}
           >
-            <span aria-hidden>{KIND_ICONS[t.kind]}</span>
+            <span aria-hidden className="shrink-0">{KIND_ICONS[t.kind]}</span>
             <span className="text-veloura-text">{t.message}</span>
           </div>
         ))}
