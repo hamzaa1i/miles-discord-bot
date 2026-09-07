@@ -130,11 +130,59 @@ input[type='range']::-moz-range-thumb {
   animation: pulseGlow 2.4s ease-in-out infinite;
 }
 
+/* ── PHASE M: landing animated gradient (pink → lavender → navy) ── */
+.bg-gradient-drift {
+  background: linear-gradient(
+    160deg,
+    rgba(255, 192, 203, 0.14) 0%,
+    rgba(230, 230, 250, 0.1) 35%,
+    rgba(26, 29, 41, 0) 70%
+  );
+  background-size: 200% 200%;
+  animation: gradientDrift 14s ease-in-out infinite;
+}
+@keyframes gradientDrift {
+  0%,
+  100% {
+    background-position: 0% 0%;
+  }
+  50% {
+    background-position: 100% 100%;
+  }
+}
+
+/* ── PHASE M: print-friendly docs ───────────────────────────── */
+@media print {
+  header,
+  footer,
+  .site-header,
+  .site-footer,
+  nav,
+  .no-print {
+    display: none !important;
+  }
+  body,
+  html {
+    background: #fff !important;
+    color: #111 !important;
+  }
+  .veloura-card {
+    border-color: #ddd !important;
+    box-shadow: none !important;
+    break-inside: avoid;
+  }
+  a {
+    color: #111 !important;
+    text-decoration: underline;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .pulse-glow,
   .twinkle,
   .animate-float-slow,
-  .animate-rise {
+  .animate-rise,
+  .bg-gradient-drift {
     animation: none !important;
   }
 }

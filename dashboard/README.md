@@ -199,20 +199,54 @@ Supabase free tier (already storing the data), the default Vercel domain
 ```
 dashboard/
 ├── app/
-│   ├── page.tsx                    landing
+│   ├── page.tsx                    public marketing landing (PHASE M)
 │   ├── login/                      OAuth login
 │   ├── oauth/callback/             code/token handling
 │   ├── servers/page.tsx            server list
-│   ├── servers/[guildId]/          guild shell + 23 module pages
+│   ├── servers/[guildId]/          guild shell + 34 module pages
+│   ├── docs/                       documentation site (search + 7 guides
+│   │                               + 31 module deep dives + command ref)
+│   ├── stats/                      public live stats page
+│   ├── changelog/ (+ changelog.rss) release notes page + rss feed
+│   ├── sitemap.ts / robots.ts      SEO (public routes only)
+│   ├── manifest.ts                 PWA manifest
 │   └── api/
 │       ├── auth/{state,exchange,session,logout}/
 │       └── proxy/[...path]/        bearer relay to Flask
-├── components/                     ui primitives + pickers + charts + preview
-├── lib/                            api client, auth/guild contexts, module registry
+├── components/                     ui primitives + pickers + charts
+│   ├── site/                       public-site chrome (header/footer/
+│   │                               share buttons/landing sections)
+│   └── docs/                       docs sidebar, search, code blocks
+├── lib/                            api client, auth/guild contexts, module
+│   │                               registry, marketing consts, generated
+│   │                               changelog + command datasets
+├── marketing/                      bot-listing assets + descriptions
+│   └── SUPPORT_SERVER_SETUP.md     the manual support-server guide
 ├── styles/globals.css              veloura theme
-├── middleware.ts                   cookie route guard
-└── public/                         logo + favicon
+├── middleware.ts                   cookie route guard (/servers only)
+└── public/                         logo + favicon + og-image
 ```
+
+## public pages (PHASE M — marketing & launch)
+
+Besides the authenticated dashboard, the app now serves a public
+marketing side (no login, SEO'd, shareable):
+
+| route | what |
+|---|---|
+| `/` | landing — hero, live stats, feature showcase, pricing, faq |
+| `/docs/*` | documentation site with client-side Fuse.js search |
+| `/stats` | live public vitals from `GET /api/public/stats` |
+| `/changelog` (+ `.rss`) | release notes from generated data |
+| `/sitemap.xml`, `/robots.txt` | SEO (auth routes excluded) |
+
+New optional env vars: `NEXT_PUBLIC_SUPPORT_SERVER_URL` (support links
+across public pages) and `NEXT_PUBLIC_SITE_URL` (canonical url for
+SEO/sitemap; falls back to `NEXTAUTH_URL` / the Vercel production url).
+The bot side of the public api (`/api/public/stats`, `/api/changelog`,
+`/changelog.rss`) lives in `utils/public_api.py`, registered by
+`main.py`. See [SUPPORT_SERVER_SETUP.md](./SUPPORT_SERVER_SETUP.md) for
+the one-time manual support-server guide.
 
 See [ARCHITECTURE.md](./ARCHITECTURE.md) for the design decisions and
 [DEVELOPMENT.md](./DEVELOPMENT.md) to contribute.

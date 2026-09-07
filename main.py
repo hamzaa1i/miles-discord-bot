@@ -32,6 +32,16 @@ logging.basicConfig(
 )
 logger = logging.getLogger('cyn')
 
+# PHASE M (PART 6) — support server link (optional). When set it is
+# appended to generic error messages (and cogs/help.py reads the same
+# env) so users always have a human to turn to. Empty string = feature
+# silently off, nothing changes for existing users.
+SUPPORT_SERVER_URL = (os.getenv("SUPPORT_SERVER_URL") or "").strip()
+SUPPORT_HINT = (
+    f"\nneed help? support server: {SUPPORT_SERVER_URL}"
+    if SUPPORT_SERVER_URL else ""
+)
+
 # PHASE 1 / PART 7 — Sentry error tracking (optional).
 # Enabled only when SENTRY_DSN is set in the environment (add it to the
 # Render env vars if you want crash + error reporting; the free tier is
@@ -80,6 +90,19 @@ try:
     init_dashboard_api(app)
 except Exception as e:
     logger.error(f"❌ Dashboard API registration failed: {e}")
+    import traceback
+    traceback.print_exc()
+
+# PHASE M (PART 4/5) — public marketing endpoints (NO auth, aggregated +
+# anonymized only, 60s cache, per-IP rate limit): /api/public/stats,
+# /api/changelog, /changelog.rss. Also starts the 10-minute stats history
+# sampler that builds the /stats growth chart. Additive — no bot behavior
+# change.
+try:
+    from utils.public_api import init_public_api
+    init_public_api(app)
+except Exception as e:
+    logger.error(f"❌ Public API registration failed: {e}")
     import traceback
     traceback.print_exc()
 
@@ -623,13 +646,13 @@ async def on_app_command_error(
     else:
         try:
             await interaction.response.send_message(
-                f"❌ Something went wrong: {str(error)}",
+                f"❌ Something went wrong: {str(error)}{SUPPORT_HINT}",
                 ephemeral=True
             )
         except:
             try:
                 await interaction.followup.send(
-                    f"❌ Something went wrong: {str(error)}",
+                    f"❌ Something went wrong: {str(error)}{SUPPORT_HINT}",
                     ephemeral=True
                 )
             except:

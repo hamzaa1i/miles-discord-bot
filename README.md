@@ -1,96 +1,136 @@
-# Aurelia — Veloura's Custom Discord Bot
+<p align="center">
+  <img src="dashboard/marketing/aurelia-icon-transparent.png" width="130" alt="aurelia — a soft pink four-pointed star on transparent background" />
+</p>
 
-Aurelia is Veloura's custom community bot — soft-spoken, slightly playful, AI-powered, with a full moderation suite. She/her, lowercase always.
+<h1 align="center">aurelia ✦</h1>
 
-## Features
+<p align="center"><b>the soft, elegant discord bot</b><br/>
+aesthetic moderation, ai chat, and community features for your veloura-vibe server</p>
 
-- **AI Chat** — `@Aurelia` or `/aurelia` to talk to her naturally
-- **Natural Language Moderation** — say "warn @user" via AI and she handles it
-- **Server Moderation** — full `/mod` command suite (kick, ban, timeout, warn, purge, nuke, lock, slowmode)
-- **Weather** — `/weather [city]`
-- **Fun** — `/joke`, `/meme`, `/flip`, `/roll`, `/truth`, `/dare`
-- **Welcome System** — customizable welcome/goodbye messages
-- **Server Info** — `/serverinfo`, `/whois`, `/avatar`
-- **AFK System** — `/afk [reason]`
+<p align="center">
+  <a href="https://veloura-aurelia.vercel.app"><img alt="dashboard" src="https://img.shields.io/badge/dashboard-veloura--aurelia.vercel.app-FFC0CB?style=flat-square&labelColor=1A1D29"></a>
+  <img alt="commands" src="https://img.shields.io/badge/commands-168-E6E6FA?style=flat-square&labelColor=1A1D29">
+  <img alt="cogs" src="https://img.shields.io/badge/cogs-45-E6E6FA?style=flat-square&labelColor=1A1D29">
+  <img alt="discord.py" src="https://img.shields.io/badge/discord.py-2.7-9CA3AF?style=flat-square&labelColor=1A1D29">
+  <img alt="license" src="https://img.shields.io/badge/license-MIT-A8E6CF?style=flat-square&labelColor=1A1D29">
+  <img alt="price" src="https://img.shields.io/badge/price-free%20forever%20%E2%99%A1-FFC0CB?style=flat-square&labelColor=1A1D29">
+</p>
 
-## Setup
+<p align="center">
+  <a href="https://veloura-aurelia.vercel.app"><b>add to discord ✦</b></a> ·
+  <a href="https://veloura-aurelia.vercel.app/docs">documentation</a> ·
+  <a href="https://veloura-aurelia.vercel.app/stats">live stats</a> ·
+  <a href="https://veloura-aurelia.vercel.app/changelog">changelog</a>
+</p>
 
-### Prerequisites
-- Python 3.11+
-- A Discord bot token (from the Discord Developer Portal)
-- A Groq API key (free at [console.groq.com](https://console.groq.com))
+<p align="center">
+  <img src="dashboard/marketing/aurelia-banner-2000x1000.png" alt="aurelia banner — the wordmark, a pink four-pointed star and the tagline 'the soft, elegant discord bot' on a dark navy gradient" width="100%" />
+</p>
 
-### Installation
-1. Clone the repo
-2. `pip install -r requirements.txt`
-3. Copy `.env.example` to `.env`
-4. Set `DISCORD_TOKEN`, `GROQ_API_KEY`, `OWNER_ID`
-5. `python main.py`
+---
 
-## Hosting (Render + UptimeRobot)
+## why aurelia ♡
 
-### Render Setup
-1. Connect this GitHub repo to Render → New Web Service
-2. Runtime: Python 3.11.9
-3. Build: `pip install -r requirements.txt`
-4. Start: `python main.py`
-5. Env vars: `DISCORD_TOKEN`, `GROQ_API_KEY`, `OWNER_ID`, `PYTHON_VERSION=3.11.9`
+she's the bot for communities that care about vibes. every feature is
+built twice — once as a slash command, once as something soft to look
+at. talk to her, let her greet your newcomers, and let moderation be
+firm where it matters and gentle everywhere else.
 
-### UptimeRobot
-- Monitor: HTTP(s)
-- URL: `https://your-service.onrender.com/health`
-- Interval: every 5 minutes
+| | |
+|---|---|
+| **ai chat & memory** | `@aurelia hey what's up` — she keeps the conversation thread and learns durable facts. per-server personality, opt-out per user. |
+| **aesthetic welcome cards** | embed / text / hybrid / dm modes, custom colors, live preview in the dashboard. |
+| **smart moderation** | warnings as numbered cases, escalating thresholds, context-aware ai automod (severity 1-5), full audit log. |
+| **engagement** | leveling + role rewards, daily streaks, qotd, giveaways with realtime entries, starboard, confessions, ships, achievements. |
+| **a real dashboard** | 34 module pages with live discord pickers, one-click live actions and realtime updates. |
+| **privacy first** | `/privacy export` (full json) and `/privacy delete` (erase everywhere) built in. |
 
-### Important Render notes
-- Free tier sleeps after 15 min — UptimeRobot prevents this
-- `/data` folder is ephemeral — data resets on redeploy
-- For persistent data, upgrade to Render paid tier or use an external DB
+<p>
+  <img src="dashboard/marketing/aurelia-welcome-preview.png" width="30%" alt="welcome card preview — an embed greeting 'miyu' as member #128 with a pink gradient strip" valign="top" />
+  <img src="dashboard/marketing/aurelia-chat-preview.png" width="30%" alt="chat preview — a conversation with aurelia about remembering a preference" valign="top" />
+  <img src="dashboard/marketing/aurelia-mod-preview.png" width="30%" alt="moderation preview — warning case, ai automod nudge and audit log cards" valign="top" />
+</p>
 
-### Discord slash-command cache
-When commands are added/removed/changed, Discord's client may still show old
-commands in the UI. To force a refresh:
-1. **Completely quit and reopen Discord**, OR
-2. Wait up to **1 hour** for Discord to refresh automatically
+## quick start (using her)
 
-## Web Dashboard
+1. **invite** — [add to discord ✦](https://veloura-aurelia.vercel.app)
+   (curated permissions, never administrator)
+2. **run** `/setup` — the interactive wizard configures welcome,
+   leveling, qotd and friends in under two minutes
+3. **talk** — `/help` for the menu, or just `@aurelia hello`
 
-A companion Next.js dashboard lives in [`dashboard/`](./dashboard/README.md) —
-server owners can configure every feature (welcome cards, leveling, QOTD,
-moderation, giveaways, custom commands, …) through a browser at
-`<YOUR_DASHBOARD_URL>` instead of slash commands.
+new servers also get a friendly owner dm with quick-start links, and
+everything is configurable visually in the
+[dashboard](https://veloura-aurelia.vercel.app).
 
-> **the domain is never hardcoded** — change it by updating env vars only:
-> `DASHBOARD_URL` (Render), `NEXTAUTH_URL` (Vercel) and the Discord OAuth
-> redirect (Developer Portal). No code changes needed, ever.
+## self-hosting (building with her)
 
-- **Auth** — Discord OAuth2 (`identify` + `guilds`), token in an httpOnly cookie
-- **API** — `/api/dashboard/*` endpoints served by this same Flask app
-  (utils/dashboard_api.py), bearer-verified, manage-guild-gated, CSRF-protected,
-  rate-limited, fully audit-logged
-- **Live actions** — "post QOTD now", "test welcome", "end giveaway",
-  "reload cog" reach the running bot through an internal action queue
+prerequisites: python 3.11+, a discord bot token
+([developer portal](https://discord.com/developers/applications)), a
+free groq api key ([console.groq.com](https://console.groq.com)), and
+optionally a free supabase project for persistent data.
 
-### Deploying the dashboard (Vercel, free)
+```bash
+git clone https://github.com/hamzaa1i/miles-discord-bot.git
+cd miles-discord-bot
+pip install -r requirements.txt
+cp .env.example .env          # then edit: DISCORD_TOKEN, GROQ_API_KEY, OWNER_ID
+python main.py
+```
 
-1. Discord Developer Portal → your application → **OAuth2**:
-   - add redirect `<YOUR_DASHBOARD_URL>/oauth/callback`
-   - add redirect `http://localhost:3000/oauth/callback` (for local dev)
-   - copy the **Client ID** and **Client Secret**
-2. Vercel → import this repo → set **Root Directory = `dashboard`**
-3. Vercel env vars (see `dashboard/README.md` for the full table):
-   `NEXT_PUBLIC_API_URL=<YOUR_BOT_API_URL>`,
-   `API_BASE_URL` (same), `NEXT_PUBLIC_DISCORD_CLIENT_ID`,
-   `DISCORD_CLIENT_SECRET`, `NEXTAUTH_URL`, `NEXTAUTH_SECRET`
-4. On **Render**, add env vars so the API trusts the dashboard origin:
-   `DASHBOARD_URL=<YOUR_DASHBOARD_URL>`, `DISCORD_CLIENT_ID`,
-   `DISCORD_CLIENT_SECRET`,
-   `OAUTH_REDIRECT_URI=https://miles-discord-bot.onrender.com/api/dashboard/oauth/callback`
-5. Run the `dashboard_audit` SQL block (bottom of
-   `scripts/supabase_migration.sql`) in the Supabase SQL editor
+the dashboard is optional but lovely — deploy
+[`dashboard/`](./dashboard) to vercel (free) following
+[`dashboard/README.md`](./dashboard/README.md). render + uptime robot
+notes are in [hosting](#hosting-render--uptimerobot) below. full docs:
+[documentation](https://veloura-aurelia.vercel.app/docs) ·
+[command reference](./COMMANDS.md) ·
+[api](https://veloura-aurelia.vercel.app/docs/api)
 
-Full setup guide incl. local dev and custom domain:
-[`dashboard/README.md`](./dashboard/README.md) · design notes:
-[`dashboard/ARCHITECTURE.md`](./dashboard/ARCHITECTURE.md)
+## tech stack
 
-## License
-MIT
+- **bot** — python 3.11 · discord.py 2.7 · groq (open models, fast
+  inference) · 46 cogs, 168 commands
+- **data** — supabase postgres with a json-file fallback so every
+  feature works even before the (free) db is wired up
+- **dashboard** — next.js 14 · react 18 · tailwind · supabase realtime
+- **api** — flask blueprint on the bot process: bearer-auth,
+  manage-guild-gated, csrf-protected, rate-limited, audit-logged
+- **infra** — render (bot) + vercel (dashboard), both free tier
+
+## hosting (render + uptimerobot)
+
+1. render → new web service → this repo → python 3.11.9
+2. build `pip install -r requirements.txt` · start `python main.py`
+3. env vars: `DISCORD_TOKEN`, `GROQ_API_KEY`, `OWNER_ID`,
+   `PYTHON_VERSION=3.11.9`, (optional) `SUPABASE_URL`, `SUPABASE_KEY`,
+   `SUPPORT_SERVER_URL`
+4. uptimerobot → https monitor on `https://<your-app>.onrender.com/health`
+   every 5 minutes (keeps the free tier awake)
+5. run the sql migration blocks at the top of
+   [`utils/db.py`](./utils/db.py) in the supabase sql editor when
+   you're ready for persistent storage
+
+> the `/data` folder is ephemeral on render's free tier — the json
+> fallback resets on redeploy, which is exactly why supabase is the
+> recommended (free) persistence layer.
+
+### slash-command cache quirks
+
+when commands change, discord's client may show stale ones for up to an
+hour — fully quit and reopen discord to force a refresh.
+
+## contributing ♡
+
+issues and pull requests are genuinely welcome — the repo runs on
+"small, soft, well-tested changes":
+
+1. fork → branch (`feat/my-idea`)
+2. keep the voice (lowercase, gentle) and the architecture notes in
+   [`AUDIT.md`](./AUDIT.md) / [`dashboard/ARCHITECTURE.md`](./dashboard/ARCHITECTURE.md) in mind
+3. add your feature to `COMMANDS.md` + the tests in `scripts/`
+4. open the pr — describe the *why* first
+
+## license
+
+MIT — see [LICENSE](./LICENSE). free forever, no premium tiers, no ads.
+built by **volc**, wrapped in veloura ✧

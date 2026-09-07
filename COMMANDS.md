@@ -3,7 +3,7 @@
 Every slash command, prefix command, natural-language @mention intent, and
 reaction/button interaction in Aurelia — the Veloura community bot.
 
-> **Quick facts** · 45 cogs · 167 slash commands (164 cog commands + 3 hybrid
+> **Quick facts** · 46 cogs · 168 slash commands (165 cog commands + 3 hybrid
 > in `main.py`) · AI powered by Groq (`qwen/qwen3.6-27b` for chat,
 > `openai/gpt-oss-20b` for fast tasks, `openai/gpt-oss-120b` for reasoning)
 > · data in Supabase PostgreSQL with JSON-file fallback.
@@ -794,6 +794,20 @@ Show a user's avatar (full-size).
 
 ## Settings & Configuration
 
+### /setup 🆕 *New in Phase M*
+Interactive first-time setup wizard — pick features from a multi-select,
+choose channels with real pickers, test them, done in under two minutes.
+Also auto-runs (as a welcome DM to the server owner) whenever Aurelia
+joins a new server.
+- **Permissions:** Manage Server
+- **Example usage:** `/setup` (response is *ephemeral* — only you see it)
+- **Example response:** an interactive wizard — feature multi-select →
+  per-feature channel pickers → summary with "test welcome" / "post
+  today's qotd" buttons → dashboard link.
+- Writes the same settings tables the slash commands use
+  (welcome, leveling, logging, qotd, anniversaries, confessions,
+  proactive) — read-modify-write, nothing is wiped.
+
 ### /privacy — group 🆕 *New in Phase 3*
 Per-user data controls. Opt-outs are enforced at the source: chat history
 isn't saved for memory-opted-out members, their messages stay out of /vibe
@@ -1124,15 +1138,16 @@ Default: `🎉 {user} just reached level {level}! ✦`
 
 | Category | Commands |
 |---|---|
-| Top-level tree entries | 69 (36 commands + 33 groups) — was 63 before Phase 3 |
+| Top-level tree entries | 70 (37 commands + 33 groups) — was 63 before Phase 3 |
 | Hybrid commands (main.py) | 3 |
 | Subcommands (all groups, incl. nested) | 128 |
-| **Total invocable slash commands** | **167** (164 cog + 3 hybrid; 147 before Phase 3) |
+| **Total invocable slash commands** | **168** (165 cog + 3 hybrid; 147 before Phase 3) |
 | Prefix text commands | 25+ routes |
 | Natural-language @mention intents | 30+ |
 | New in Phase 1 | /vibe · /pick · /askstars · /fortune |
 | New in Phase 2 | /daily · /qotd · /anniversary · /remind · /time |
 | New in Phase 3 | /ship · /capsule · /achievements · /color · /nick · /privacy (6 groups, 20 commands) |
+| New in Phase M | /setup (interactive setup wizard + on-join owner dm) |
 
 Discord's hard limit is 100 **top-level** commands — Aurelia is at 69.
 

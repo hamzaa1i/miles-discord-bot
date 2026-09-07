@@ -1,13 +1,20 @@
 """
 cogs/help.py — interactive help system using a Select dropdown.
 Rebranded to Aurelia for Veloura.
+
+PHASE M (PART 6) — when SUPPORT_SERVER_URL is set, the home embed
+shows a "need help?" line with the invite link (additive only —
+unset env = the exact old behavior).
 """
 import discord
+import os
 from discord.ext import commands
 from discord import app_commands
 from datetime import datetime
 from utils.constants import COLOR_DEFAULT, COLOR_AI, COLOR_FUN, COLOR_MOD, COLOR_INFO
 from utils.veloura_embeds import veloura_embed
+
+SUPPORT_SERVER_URL = (os.getenv("SUPPORT_SERVER_URL") or "").strip()
 
 CATEGORIES = {
     "ai": {
@@ -188,9 +195,10 @@ CATEGORIES = {
     "settings": {
         "emoji": "⚙️",
         "name": "Settings",
-        "desc": "Welcome, onboarding, autorole, logging, status, prefix, rules, privacy",
+        "desc": "Welcome, onboarding, autorole, logging, status, prefix, rules, privacy, setup wizard",
         "color": COLOR_DEFAULT,
         "commands": [
+            ("/setup", "Interactive first-time setup wizard (manage server)"),
             ("/privacy show", "See your privacy opt-outs"),
             ("/privacy set <feature> <enabled>", "Turn memory/vibe/recap/ship/facts on or off"),
             ("/privacy delete", "Erase ALL your data everywhere (double confirmation)"),
@@ -292,7 +300,12 @@ class HelpView(discord.ui.View):
         self.next_btn = None
 
     def build_home_embed(self):
-        embed = veloura_embed("aurelia — commands", "pick a category from the dropdown.")
+        embed = veloura_embed(
+            "aurelia — commands",
+            "pick a category from the dropdown."
+            + (f"\nneed help? [support server]({SUPPORT_SERVER_URL}) ✧"
+               if SUPPORT_SERVER_URL else ""),
+        )
         if self.bot.user and self.bot.user.avatar:
             embed.set_thumbnail(url=self.bot.user.avatar.url)
         for key, cat in CATEGORIES.items():
