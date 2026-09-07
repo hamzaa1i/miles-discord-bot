@@ -81,7 +81,7 @@ def _discord_get(path: str, token: str) -> Optional[dict | list]:
         url,
         headers={
             "Authorization": f"Bearer {token}",
-            "User-Agent": "AureliaDashboard (https://aurelia.pages.dev)",
+            "User-Agent": "AureliaDashboard (https://aurelia.vercel.app)",
         },
         method="GET",
     )

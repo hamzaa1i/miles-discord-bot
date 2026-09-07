@@ -77,7 +77,7 @@ and Aurelia is a member.
 
 > **Discord OAuth setup (one-time):** Developer Portal → your application →
 > **OAuth2** → *Redirects* → add `http://localhost:3000/oauth/callback`
-> (and later `https://aurelia.pages.dev/oauth/callback`). Copy the
+> (and later `https://aurelia.vercel.app/oauth/callback`). Copy the
 > **Client ID** and **Client Secret** into your env files. The bot's own token
 > is unchanged — this uses the same *application*, only its OAuth side.
 
@@ -92,7 +92,7 @@ and Aurelia is a member.
    API_BASE_URL            = https://miles-discord-bot.onrender.com   (same, server-side)
    NEXT_PUBLIC_DISCORD_CLIENT_ID = <application id>
    DISCORD_CLIENT_SECRET   = <client secret>       (server-side only)
-   NEXTAUTH_URL            = https://aurelia.pages.dev      (or your domain)
+   NEXTAUTH_URL            = https://aurelia.vercel.app      (or your domain)
    NEXTAUTH_SECRET         = <openssl rand -hex 32>
    NEXT_PUBLIC_SUPABASE_URL       = <optional — realtime>
    NEXT_PUBLIC_SUPABASE_ANON_KEY  = <optional — realtime>
@@ -103,7 +103,7 @@ Then on **Render** (the bot), add these environment variables so the Flask
 API trusts your new dashboard origin:
 
 ```
-DASHBOARD_URL           = https://aurelia.pages.dev
+DASHBOARD_URL           = https://aurelia.vercel.app
 DISCORD_CLIENT_ID       = <application id>
 DISCORD_CLIENT_SECRET   = <client secret>
 OAUTH_REDIRECT_URI      = https://miles-discord-bot.onrender.com/api/dashboard/oauth/callback
@@ -114,7 +114,7 @@ OAUTH_REDIRECT_URI      = https://miles-discord-bot.onrender.com/api/dashboard/o
 Next.js route handlers and does not need it.
 
 4. In the Discord Developer Portal, add your production redirect:
-   `https://aurelia.pages.dev/oauth/callback`.
+   `https://aurelia.vercel.app/oauth/callback`.
 
 ## custom domain
 
@@ -178,8 +178,8 @@ npm run lint    # eslint
 ## cost
 
 $0. Vercel free tier (hobby), Render free tier (already running the bot),
-Supabase free tier (already storing the data), Cloudflare Pages domain
-(`aurelia.pages.dev`) or ~$10/yr if you buy `aurelia.bot`.
+Supabase free tier (already storing the data), the default Vercel domain
+(`aurelia.vercel.app`) or ~$10/yr if you buy `aurelia.bot`.
 
 ## project layout
 

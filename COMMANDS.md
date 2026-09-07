@@ -15,7 +15,7 @@ reaction/button interaction in Aurelia — the Veloura community bot.
 3. **Custom prefix** (if set) — `a!roll`, `a!welcome show`, `a!any question`
 
 > **Web dashboard** · every configuration command below can also be set from
-> a browser at `https://aurelia.pages.dev` (see [`dashboard/README.md`](./dashboard/README.md))
+> a browser at `https://aurelia.vercel.app` (see [`dashboard/README.md`](./dashboard/README.md))
 > — welcome, leveling, QOTD, moderation, custom commands, giveaways and more,
 > with live previews and a full audit trail. Commands remain fully usable.
 
