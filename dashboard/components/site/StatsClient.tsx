@@ -31,6 +31,7 @@ const FETCH_TIMEOUT_MS = 10_000;
 type PublicStats = {
   status?: string;
   version?: string;
+  ai_status?: string;
   servers?: number;
   members?: number;
   latency_ms?: number;
@@ -169,6 +170,23 @@ export function StatsClient() {
               <span className={cn('pulse-glow inline-block h-2.5 w-2.5 rounded-full bg-current')} aria-hidden />
               {statusMeta.label}
             </span>
+            {/* PHASE N — GENERIC ai health only (one word; quotas and
+                provider details live behind the authed dashboard) */}
+            {stats?.ai_status && stats.ai_status !== 'starting' && (
+              <span
+                className={cn(
+                  'text-xs',
+                  stats.ai_status === 'operational'
+                    ? 'text-veloura-success'
+                    : stats.ai_status === 'degraded'
+                      ? 'text-[#F5D68A]'
+                      : 'text-veloura-danger',
+                )}
+                aria-live="polite"
+              >
+                ✦ ai {stats.ai_status}
+              </span>
+            )}
             {checkedAt && (
               <span className="text-xs text-veloura-muted/60">
                 checked {Math.max(0, Math.round((Date.now() - checkedAt) / 1000))}s ago

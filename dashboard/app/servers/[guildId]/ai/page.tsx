@@ -1,6 +1,12 @@
 'use client';
 
-/** Chat & memory — proactive settings + how aurelia's mind works. */
+/**
+ * Chat & memory — proactive settings + how aurelia's mind works.
+ *
+ * PHASE N: hosts the AI ENGINE section (provider routing, health,
+ * latencies, GLM budget meter, privacy note) fed by the authenticated
+ * /api/dashboard/ai/status endpoint.
+ */
 
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
@@ -9,6 +15,7 @@ import { MODULES } from '@/lib/modules';
 import { Card, CardTitle, Badge } from '@/components/ui/primitives';
 import { SectionHeading } from '@/components/EmptyState';
 import { Icon } from '@/components/icons';
+import { AiEngineCard } from '@/components/AiEngineCard';
 
 export default function AiPage() {
   const params = useParams<{ guildId: string }>();
@@ -22,6 +29,9 @@ export default function AiPage() {
           aurelia&apos;s mind is always available through commands.
         </p>
       </SettingsForm>
+
+      {/* PHASE N (PART 16) — live multi-provider AI engine status */}
+      <AiEngineCard />
 
       <SectionHeading icon="moon">the mind of aurelia</SectionHeading>
       <div className="grid gap-4 sm:grid-cols-3">

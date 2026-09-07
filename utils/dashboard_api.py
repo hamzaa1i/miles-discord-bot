@@ -1591,6 +1591,25 @@ def list_reminders():
     return jsonify({"reminders": out})
 
 
+# ─── 9c. GET /ai/status — PHASE N AI engine status (auth'd) ────────
+# Provider routing, health, models, latency, request counts today, GLM
+# budget meter and the sensitive-routing privacy note for the dashboard
+# AI page. Authenticated (any logged-in dashboard user) but contains NO
+# secrets: provider names, model ids, aggregate counts and sanitized
+# error categories only — never keys, prompts or raw errors. The PUBLIC
+# stats endpoint exposes only the generic ai_status string.
+@dashboard_bp.route("/ai/status", methods=["GET"])
+@require_api
+def ai_engine_status():
+    try:
+        from utils.ai_handler import router_status
+        snap = router_status()
+    except Exception as e:
+        logger.error(f"[dashboard] ai/status failed: {e}", exc_info=True)
+        return _auth_error(500, f"internal error ({type(e).__name__})")
+    return jsonify(snap)
+
+
 @dashboard_bp.route("/reminders/<reminder_id>", methods=["DELETE"])
 @require_api
 def delete_reminder(reminder_id):

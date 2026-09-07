@@ -62,6 +62,14 @@ export default function ServersPage() {
       {/* header */}
       <div className="mb-8 flex flex-wrap items-center justify-between gap-4">
         <div>
+          {/* PHASE N (19.2) — home link so the dashboard is never a trap */}
+          <Link
+            href="/"
+            className="mb-2 inline-flex items-center gap-1.5 text-xs text-veloura-muted/70 transition hover:text-veloura-pink"
+          >
+            <Icon name="star" size={12} />
+            aurelia home
+          </Link>
           <h1 className="font-heading text-3xl text-veloura-text">your servers</h1>
           <p className="mt-2 text-sm text-veloura-muted">
             servers where you have <span className="text-veloura-pink">manage server</span> and

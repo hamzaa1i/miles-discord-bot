@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 
 import { CodeBlock } from '@/components/docs/CodeBlock';
+import { DocsBreadcrumb } from '@/components/docs/DocsBreadcrumb';
 import { Markdown } from '@/components/docs/Markdown';
 import { ShareButtons } from '@/components/site/ShareButtons';
 import { MODULE_DOCS, moduleDoc } from '@/lib/docs-modules';
@@ -42,13 +43,7 @@ export default function ModulePage({ params }: Params) {
 
   return (
     <>
-      <nav aria-label="breadcrumb" className="mb-4 text-xs text-veloura-muted/70">
-        <Link href="/docs" className="hover:text-veloura-pink">docs</Link>
-        <span aria-hidden> / </span>
-        <Link href="/docs/modules" className="hover:text-veloura-pink">modules</Link>
-        <span aria-hidden> / </span>
-        <span className="text-veloura-text">{doc.title}</span>
-      </nav>
+      <DocsBreadcrumb items={[{ label: 'modules', href: '/docs/modules' }]} page={doc.title} />
 
       <header className="mb-8">
         <h1 className="font-heading text-4xl text-veloura-text">{doc.title}</h1>

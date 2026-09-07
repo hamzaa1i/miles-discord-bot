@@ -1,5 +1,6 @@
 /**
- * lib/marketing.ts — PHASE M shared marketing/site constants.
+ * lib/marketing.ts — PHASE M shared marketing/site constants
+ * (maintained through Phase N).
  *
  * Everything public-facing (landing, docs, stats, changelog, share
  * buttons, SEO) pulls from here so URLs live in exactly one place:
@@ -8,8 +9,14 @@
  *     curated, least-privilege-but-complete permission set)
  *   - support server (NEXT_PUBLIC_SUPPORT_SERVER_URL — optional; all
  *     support links simply hide when unset)
- *   - github repo + share intents
+ *   - creator attribution + share intents
  *   - canonical site metadata used by every public page's `metadata`
+ *
+ * PHASE N (20.3): the source repository is going private, so public
+ * pages no longer link to the repo (a private repo link 404s for
+ * strangers). CREATOR_GITHUB_URL points at the creator's GitHub
+ * PROFILE — attribution stays, dead links go. Nothing here links to
+ * hamzaa1i/miles-discord-bot anymore.
  *
  * Nothing here is hardcoded to a domain — the canonical dashboard URL
  * comes from NEXT_PUBLIC_SITE_URL (Vercel sets it automatically for
@@ -36,7 +43,7 @@ export const SITE_KEYWORDS = [
   'giveaways',
 ];
 
-export const GITHUB_URL = 'https://github.com/hamzaa1i/miles-discord-bot';
+export const CREATOR_GITHUB_URL = 'https://github.com/hamzaa1i';
 
 export const SUPPORT_SERVER_URL = (
   process.env.NEXT_PUBLIC_SUPPORT_SERVER_URL || ''

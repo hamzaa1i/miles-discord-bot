@@ -59,7 +59,7 @@ const GUIDES: {
     href: '/docs/faq',
     icon: 'helpCircle',
     title: 'faq',
-    desc: 'the soft questions and their soft answers — pricing, data, self-hosting, support.',
+    desc: 'the soft questions and their soft answers — pricing, data, ai models, support.',
     tag: 'quick answers',
   },
   {

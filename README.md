@@ -12,7 +12,7 @@ aesthetic moderation, ai chat, and community features for your veloura-vibe serv
   <img alt="commands" src="https://img.shields.io/badge/commands-168-E6E6FA?style=flat-square&labelColor=1A1D29">
   <img alt="cogs" src="https://img.shields.io/badge/cogs-45-E6E6FA?style=flat-square&labelColor=1A1D29">
   <img alt="discord.py" src="https://img.shields.io/badge/discord.py-2.7-9CA3AF?style=flat-square&labelColor=1A1D29">
-  <img alt="license" src="https://img.shields.io/badge/license-MIT-A8E6CF?style=flat-square&labelColor=1A1D29">
+  <img alt="source" src="https://img.shields.io/badge/source-privately%20maintained-E6E6FA?style=flat-square&labelColor=1A1D29">
   <img alt="price" src="https://img.shields.io/badge/price-free%20forever%20%E2%99%A1-FFC0CB?style=flat-square&labelColor=1A1D29">
 </p>
 
@@ -51,7 +51,7 @@ firm where it matters and gentle everywhere else.
   <img src="dashboard/marketing/aurelia-mod-preview.png" width="30%" alt="moderation preview — warning case, ai automod nudge and audit log cards" valign="top" />
 </p>
 
-## quick start (using her)
+## quick start
 
 1. **invite** — [add to discord ✦](https://veloura-aurelia.vercel.app)
    (curated permissions, never administrator)
@@ -63,33 +63,62 @@ new servers also get a friendly owner dm with quick-start links, and
 everything is configurable visually in the
 [dashboard](https://veloura-aurelia.vercel.app).
 
-## self-hosting (building with her)
+> aurelia runs as one shared, carefully tended instance — the source is
+> privately maintained by volc. adding her to your server is (and stays)
+> free; source access is a separate thing.
 
-prerequisites: python 3.11+, a discord bot token
-([developer portal](https://discord.com/developers/applications)), a
-free groq api key ([console.groq.com](https://console.groq.com)), and
-optionally a free supabase project for persistent data.
+## the ai core
 
-```bash
-git clone https://github.com/hamzaa1i/miles-discord-bot.git
-cd miles-discord-bot
-pip install -r requirements.txt
-cp .env.example .env          # then edit: DISCORD_TOKEN, GROQ_API_KEY, OWNER_ID
-python main.py
+one router, four providers, failover at every hop:
+
+```
+                Discord
+                   │
+                Aurelia
+                   │
+             AI Router
+      ┌────────────┼────────────┐
+   Gemini        Mistral       GLM
+  (chat)     (fallback +     (reasoning,
+              sensitive)      budget-guarded)
+      └────────────┼────────────┘
+                   │
+                 Groq
+             emergency floor
 ```
 
-the dashboard is optional but lovely — deploy
-[`dashboard/`](./dashboard) to vercel (free) following
-[`dashboard/README.md`](./dashboard/README.md). render + uptime robot
-notes are in [hosting](#hosting-render--uptimerobot) below. full docs:
-[documentation](https://veloura-aurelia.vercel.app/docs) ·
-[command reference](./COMMANDS.md) ·
-[api](https://veloura-aurelia.vercel.app/docs/api)
+- **gemini 3.7 flash** — everyday conversation, low thinking
+- **mistral small 4** — fallback, and the default route for sensitive
+  work (moderation, automod) chosen for stricter data terms
+- **glm-5.2 (openrouter, free)** — hard reasoning: recaps, deep
+  analysis, difficult code. daily-budget guarded
+- **groq** — the always-on emergency floor; if it's the only configured
+  provider, aurelia behaves exactly like her pre-router self
+
+every provider output passes the same sanitization pipeline (reasoning
+strips, empty-content failover, discord length caps), every provider
+has a circuit breaker, and `/owner ai_status` plus the dashboard's ai
+engine page show live health — telemetry is counts and latencies only,
+never conversations.
+
+## architecture overview
+
+```
+cogs/ (46)              slash + prefix + listeners
+utils/ai_router.py      profiles → provider chains, failover, breakers
+ai_providers/           gemini · mistral · openrouter · groq adapters
+utils/ai_handler.py     compatibility facade (call_ai family)
+utils/db.py             supabase + json fallback persistence
+utils/dashboard_api.py  flask api — bearer, csrf, rate-limit, audit
+utils/public_api.py     public stats + changelog + rss
+dashboard/              next.js 14 · react 18 · tailwind · realtime
+main.py                 discord.py 2.7 entrypoint + flask keep-alive
+```
 
 ## tech stack
 
-- **bot** — python 3.11 · discord.py 2.7 · groq (open models, fast
-  inference) · 46 cogs, 168 commands
+- **bot** — python 3.11 · discord.py 2.7 · multi-provider ai (gemini ·
+  mistral · openrouter/glm · groq failover) · 46 cogs, 168 commands
 - **data** — supabase postgres with a json-file fallback so every
   feature works even before the (free) db is wired up
 - **dashboard** — next.js 14 · react 18 · tailwind · supabase realtime
@@ -97,22 +126,10 @@ notes are in [hosting](#hosting-render--uptimerobot) below. full docs:
   manage-guild-gated, csrf-protected, rate-limited, audit-logged
 - **infra** — render (bot) + vercel (dashboard), both free tier
 
-## hosting (render + uptimerobot)
-
-1. render → new web service → this repo → python 3.11.9
-2. build `pip install -r requirements.txt` · start `python main.py`
-3. env vars: `DISCORD_TOKEN`, `GROQ_API_KEY`, `OWNER_ID`,
-   `PYTHON_VERSION=3.11.9`, (optional) `SUPABASE_URL`, `SUPABASE_KEY`,
-   `SUPPORT_SERVER_URL`
-4. uptimerobot → https monitor on `https://<your-app>.onrender.com/health`
-   every 5 minutes (keeps the free tier awake)
-5. run the sql migration blocks at the top of
-   [`utils/db.py`](./utils/db.py) in the supabase sql editor when
-   you're ready for persistent storage
-
-> the `/data` folder is ephemeral on render's free tier — the json
-> fallback resets on redeploy, which is exactly why supabase is the
-> recommended (free) persistence layer.
+full docs:
+[documentation](https://veloura-aurelia.vercel.app/docs) ·
+[command reference](./COMMANDS.md) ·
+[api](https://veloura-aurelia.vercel.app/docs/api)
 
 ### slash-command cache quirks
 
@@ -121,16 +138,13 @@ hour — fully quit and reopen discord to force a refresh.
 
 ## contributing ♡
 
-issues and pull requests are genuinely welcome — the repo runs on
-"small, soft, well-tested changes":
-
-1. fork → branch (`feat/my-idea`)
-2. keep the voice (lowercase, gentle) and the architecture notes in
-   [`AUDIT.md`](./AUDIT.md) / [`dashboard/ARCHITECTURE.md`](./dashboard/ARCHITECTURE.md) in mind
-3. add your feature to `COMMANDS.md` + the tests in `scripts/`
-4. open the pr — describe the *why* first
+aurelia's source is privately maintained. bug reports, feature ideas
+and feedback are very welcome through the
+[documentation](https://veloura-aurelia.vercel.app/docs) site and the
+support server — they land in the build queue the same day.
 
 ## license
 
-MIT — see [LICENSE](./LICENSE). free forever, no premium tiers, no ads.
-built by **volc**, wrapped in veloura ✧
+source © 2026 hamzaa1i (volc), all rights reserved — see
+[LICENSE](./LICENSE) and [NOTICE](./NOTICE). free forever, no premium
+tiers, no ads. built by **volc**, wrapped in veloura ✧

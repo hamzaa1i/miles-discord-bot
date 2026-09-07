@@ -22,6 +22,7 @@ Commands:
   /owner leave [guild_id] — leave a server by ID (with confirmation)
   /owner personality [note] — set server personality note
   /owner personality_clear — clear server personality note
+  /owner ai_status — AI routing / provider health card (Phase N)
 """
 import discord
 from discord.ext import commands
@@ -515,6 +516,113 @@ class Owner(commands.Cog):
             )
         except Exception as e:
             await interaction.followup.send(f"failed: `{e}`", ephemeral=True)
+
+    # PHASE N (PART 15) — /owner ai_status: compact provider health card.
+    # Owner-only subcommand of the existing /owner group (NOT a new root
+    # command). Shows configuration state, health, today's usage, the
+    # active route chains and the GLM budget — never API keys, never raw
+    # error strings (categories only), never prompts.
+    @owner.command(name="ai_status",
+                   description="AI routing and provider health (owner only)")
+    async def owner_ai_status(self, interaction: discord.Interaction):
+        self.bot.increment_command('owner_ai_status')
+        await interaction.response.defer(ephemeral=True)
+        if not self._check_owner(interaction):
+            await interaction.followup.send("not your command.", ephemeral=True)
+            return
+
+        try:
+            from utils.ai_handler import router_status
+            snap = router_status()
+        except Exception as e:
+            await interaction.followup.send(
+                f"failed to build ai status: `{type(e).__name__}: {e}`",
+                ephemeral=True,
+            )
+            return
+
+        # ── provider rows ──
+        _STATE_EMOJI = {
+            "healthy": "🟢", "cooldown": "🟠", "degraded": "🟠",
+            "misconfigured": "🔴", "unconfigured": "⚪",
+        }
+        rows = []
+        for name in ("gemini", "mistral", "openrouter", "groq"):
+            p = snap.get("providers", {}).get(name, {})
+            state = p.get("state", "unknown")
+            emoji = _STATE_EMOJI.get(state, "⚪")
+            if name == "openrouter" and p.get("configured"):
+                budget = snap.get("openrouter", {})
+                used = budget.get("requests_today", 0)
+                cap = budget.get("daily_budget", 0)
+                budget_note = (
+                    " · budget reached (skipping)" if cap and used >= cap
+                    else ""
+                )
+                rows.append(
+                    f"{emoji} **OpenRouter**   {used} / {cap} today{budget_note}"
+                )
+            else:
+                today = p.get("today", {})
+                note = ""
+                if state == "misconfigured":
+                    note = " · check api key"
+                elif state == "cooldown":
+                    left = p.get("cooldown_seconds_left", 0)
+                    note = f" · cooldown {left}s"
+                if p.get("configured"):
+                    note += (
+                        f" · {today.get('requests', 0)} req today"
+                        f" ({today.get('successes', 0)}✓/{today.get('failures', 0)}✗)"
+                    )
+                rows.append(f"{emoji} **{name.title()}**{note}")
+
+        # ── route chains (compact: provider → provider → ...) ──
+        routes = snap.get("routes", {})
+        def _chain(profile_key):
+            steps = routes.get(profile_key, [])
+            return " → ".join(
+                s["provider"].title() if s["provider"] != "openrouter"
+                else "GLM" for s in steps
+            ) or "—"
+
+        embed = discord.Embed(
+            title="✦ AI routing",
+            description=(
+                f"router: {'enabled' if snap.get('router_enabled') else 'groq-only (legacy)'}"
+                f" · status: **{snap.get('ai_status', 'unknown')}**"
+            ),
+            color=0x1a1a2e,
+            timestamp=datetime.now(timezone.utc),
+        )
+        embed.add_field(
+            name="providers",
+            value="\n".join(rows)[:1024],
+            inline=False,
+        )
+        embed.add_field(
+            name="routes",
+            value=(
+                f"chat         {_chain('chat')}\n"
+                f"fast         {_chain('fast')}\n"
+                f"reasoning    {_chain('reasoning')}\n"
+                f"sensitive    {_chain('sensitive_fast')}"
+            )[:1024],
+            inline=False,
+        )
+        privacy = snap.get("privacy", {})
+        embed.add_field(
+            name="privacy",
+            value=(
+                "sensitive → Mistral → Groq"
+                + (" (+Gemini)" if privacy.get("allow_gemini_sensitive") else "")
+                + (" (+GLM)" if privacy.get("allow_openrouter_sensitive") else "")
+                + " · opt-outs enforced before any provider call"
+            )[:1024],
+            inline=False,
+        )
+        embed.set_footer(text="aurelia ai core · provider telemetry contains metadata only")
+        await interaction.followup.send(embed=embed, ephemeral=True)
 
     # FIX 4 — /owner leave: make the bot leave a server by ID
     @owner.command(name="leave",

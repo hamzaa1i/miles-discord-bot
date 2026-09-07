@@ -1,12 +1,17 @@
 /**
- * components/site/Faq.tsx — PHASE M PART 1 §7.
+ * components/site/Faq.tsx — PHASE M PART 1 §7 (maintained through N).
  *
  * Accessible FAQ using native <details>/<summary> (keyboard + screen
  * reader friendly, zero js). Content is mirrored on /docs/faq.
+ *
+ * PHASE N: self-host / MIT copy replaced with the managed-project
+ * wording (source is privately maintained), and the AI answers now
+ * describe the multi-provider routing honestly — including the
+ * sensitive-data privacy story.
  */
 
 import Link from 'next/link';
-import { GITHUB_URL, SUPPORT_SERVER_URL } from '@/lib/marketing';
+import { SUPPORT_SERVER_URL } from '@/lib/marketing';
 
 const QA: { q: string; a: React.ReactNode }[] = [
   {
@@ -15,8 +20,9 @@ const QA: { q: string; a: React.ReactNode }[] = [
       <>
         yes — completely. no paywalls, no premium tiers, no ads, no
         locked features. aurelia is hosted with love by{' '}
-        <span className="text-veloura-pink">@volc</span> and the code is
-        MIT-licensed, so you can even self-host her.
+        <span className="text-veloura-pink">@volc</span> and the source is
+        privately maintained — adding her to your server costs nothing,
+        ever.
       </>
     ),
   },
@@ -42,23 +48,36 @@ const QA: { q: string; a: React.ReactNode }[] = [
     q: 'can i self-host?',
     a: (
       <>
-        absolutely — she&apos;s MIT licensed. clone the{' '}
-        <a
-          href={GITHUB_URL}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="text-veloura-pink underline decoration-veloura-pink/40 underline-offset-2"
-        >
-          repository
-        </a>
-        , add your discord token + a free groq api key, and the{' '}
+        aurelia is currently hosted and maintained as a managed project
+        — the source repository is private. installation and source
+        access are separate things: anyone can{' '}
         <Link
           href="/docs/getting-started"
           className="text-veloura-pink underline decoration-veloura-pink/40 underline-offset-2"
         >
-          getting-started guide
+          add her to their server
         </Link>{' '}
-        walks you through the rest.
+        for free, but she runs as one shared, carefully tended instance.
+      </>
+    ),
+  },
+  {
+    q: 'which ai powers her — and what about privacy?',
+    a: (
+      <>
+        aurelia routes each request across multiple external ai
+        providers (gemini for everyday chat, mistral for fallback and
+        sensitive work, a glm reasoning model for hard questions, groq as
+        the emergency floor) depending on the request type and live
+        provider health. only the minimum context a feature needs is
+        ever sent; moderation and automod traffic is routed to providers
+        chosen specifically for stricter data terms by default; your{' '}
+        <code className="rounded bg-veloura-card-hover px-1.5 py-0.5 font-mono text-[11px]">
+          /privacy
+        </code>{' '}
+        opt-outs are enforced before any provider is called; and nothing
+        you say is written into analytics — provider telemetry stores
+        counts and latencies, never conversations.
       </>
     ),
   },
@@ -94,9 +113,11 @@ const QA: { q: string; a: React.ReactNode }[] = [
     q: 'does the ai cost anything?',
     a: (
       <>
-        no — aurelia runs on groq&apos;s free-tier inference, which is
-        fast enough to feel instant. there are no per-message charges
-        and no usage caps for normal servers.
+        no — the router prefers free-tier inference everywhere and fails
+        over automatically, so there are no per-message charges and no
+        usage caps for normal servers. heavy reasoning calls are
+        budget-guarded to keep her sustainable, and normal chat never
+        touches the expensive routes.
       </>
     ),
   },

@@ -2,12 +2,16 @@
  * components/site/SiteFooter.tsx — public site footer.
  *
  * "built by volc · wrapped in veloura ✧" + every link the spec asked
- * for: dashboard, documentation, support server, github.
+ * for: dashboard, documentation, support server, creator profile.
+ *
+ * PHASE N (20.3): the repository link became a creator-PROFILE link —
+ * the source is privately maintained, and a repo link would 404 for
+ * strangers. Attribution is preserved.
  */
 
 import Link from 'next/link';
 import { Icon } from '@/components/icons';
-import { GITHUB_URL, SUPPORT_SERVER_URL } from '@/lib/marketing';
+import { CREATOR_GITHUB_URL, SUPPORT_SERVER_URL } from '@/lib/marketing';
 
 export function SiteFooter() {
   return (
@@ -47,13 +51,14 @@ export function SiteFooter() {
             </a>
           )}
           <a
-            href={GITHUB_URL}
+            href={CREATOR_GITHUB_URL}
             target="_blank"
             rel="noopener noreferrer"
             className="flex items-center gap-1 text-sm text-veloura-muted transition-colors hover:text-veloura-pink"
+            aria-label="volc on github — aurelia's creator (opens in a new tab)"
           >
             <Icon name="star" size={13} />
-            github
+            volc
           </a>
         </nav>
       </div>

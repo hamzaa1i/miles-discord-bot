@@ -384,6 +384,27 @@ class CynBot(commands.Bot):
         # FIX 5 — make absolutely sure data files exist on every ready
         ensure_data_files()
 
+        # PHASE N — warm up the multi-provider AI router: build provider
+        # chains from the env keys, restore today's usage counters from
+        # the persistent ai_provider_usage accounting (restart-safe GLM
+        # budget) and log a one-line provider summary. Missing optional
+        # keys are normal (Groq-only deployments) — never an error.
+        try:
+            from utils.ai_router import init_ai_router, get_router
+            await init_ai_router()
+            snap = get_router().status_snapshot()
+            providers_line = ", ".join(
+                f"{name}:{'on' if p.get('configured') else 'off'}"
+                for name, p in snap.get("providers", {}).items()
+            )
+            print(f"✅ AI router ready ({providers_line}) · status: "
+                  f"{snap.get('ai_status')}")
+            logger.info(f"✅ AI router ready ({providers_line}) · "
+                        f"status: {snap.get('ai_status')}")
+        except Exception as e:
+            print(f"⚠️ AI router init skipped: {type(e).__name__}: {e}")
+            logger.warning(f"AI router init skipped: {e}")
+
         # PHASE 2 (B1) — One-time legacy warnings migration.
         # If data/moderation.json still exists AND contains actual warnings,
         # import them into the unified utils.db store, then rename the file
@@ -455,10 +476,14 @@ class CynBot(commands.Bot):
             print(f"Sync complete: {success} success, {failed} failed")
             logger.info(f"Sync complete: {success} success, {failed} failed")
 
-        # Test Groq API + print active cog count + command count
+        # Test the AI route + print active cog count + command count.
+        # PHASE N — the old Groq-only probe now goes through the router
+        # (call_ai_fast -> FAST chain), so it verifies whichever provider
+        # chain the environment actually configured and fails over like
+        # production traffic. A graceful canned string means every
+        # provider failed — logged, never fatal.
         try:
-            # FIX 1 — call_ai_fast now uses MODEL_FAST (openai/gpt-oss-20b).
-            from utils.ai_handler import call_ai_fast, MODEL_FAST
+            from utils.ai_handler import call_ai_fast, router_status
             result = await call_ai_fast([
                 {"role": "user", "content": "say ok"}
             ])
@@ -468,15 +493,22 @@ class CynBot(commands.Bot):
                 len(g.commands) if hasattr(g, 'commands') else 1
                 for g in all_cmds
             )
-            print(f"✅ Groq API working (model={MODEL_FAST}): {result[:50]}")
+            snap = router_status()
+            provider_states = ", ".join(
+                f"{n}={p.get('state')}"
+                for n, p in snap.get("providers", {}).items()
+            )
+            print(f"✅ AI route working: {result[:50]}")
+            print(f"✅ AI providers: {provider_states}")
             print(f"✅ Active cogs loaded: {active_cogs}")
             print(f"✅ Commands in tree: {len(all_cmds)} groups, {total_cmds} total")
-            logger.info(f"✅ Groq API working (model={MODEL_FAST}): {result[:50]}")
+            logger.info(f"✅ AI route working: {result[:50]}")
+            logger.info(f"✅ AI providers: {provider_states}")
             logger.info(f"✅ Active cogs loaded: {active_cogs}")
             logger.info(f"[STARTUP] Commands in tree: {len(all_cmds)} groups, {total_cmds} total")
         except Exception as e:
-            print(f"❌ Groq API failed: {type(e).__name__}: {e}")
-            logger.error(f"❌ Groq API failed: {type(e).__name__}: {e}")
+            print(f"❌ AI route test failed: {type(e).__name__}: {e}")
+            logger.error(f"❌ AI route test failed: {type(e).__name__}: {e}")
             import traceback
             traceback.print_exc()
 
@@ -775,7 +807,8 @@ async def botinfo(ctx):
         name="Engine",
         value=(
             f"Python {sys.version_info.major}.{sys.version_info.minor} · "
-            f"discord.py {_discord.__version__} · Groq API"
+            f"discord.py {_discord.__version__} · "
+            f"multi-provider AI (Gemini · Mistral · GLM · Groq failover)"
         ),
         inline=False,
     )

@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { DocsBreadcrumb } from '@/components/docs/DocsBreadcrumb';
 
 import { CodeBlock } from '@/components/docs/CodeBlock';
 import { Icon } from '@/components/icons';
@@ -42,6 +43,8 @@ export default function GettingStarted() {
 
   return (
     <>
+      <DocsBreadcrumb page="getting started" />
+
       <header className="mb-10">
         <p className="text-xs uppercase tracking-[0.2em] text-veloura-pink">getting started</p>
         <h1 className="font-heading mt-2 text-4xl text-veloura-text">from zero to soft ✦</h1>
@@ -159,7 +162,7 @@ export default function GettingStarted() {
             { href: '/docs/commands', label: 'the full command reference — all 167 commands' },
             { href: '/docs/modules/welcome', label: 'start with the welcome module guide' },
             { href: '/docs/dashboard', label: 'configure everything visually in the dashboard' },
-            { href: '/docs/faq', label: 'pricing, data and self-hosting questions' },
+            { href: '/docs/faq', label: 'pricing, data and ai privacy questions' },
           ].map((l) => (
             <li key={l.href}>
               <Link href={l.href} className="text-veloura-pink underline decoration-veloura-pink/40 underline-offset-2">

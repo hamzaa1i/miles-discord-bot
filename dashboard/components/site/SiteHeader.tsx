@@ -3,18 +3,28 @@
 /**
  * components/site/SiteHeader.tsx — public site navigation.
  *
- * Sticky, translucent, veloura-styled. Shown on every public page
- * (landing, docs, stats, changelog). The "login" pill turns into
- * "dashboard" for users that already hold the aurelia_token cookie
- * (presence-only check — the token value is never read here).
+ * PHASE N (19.1) — auth-aware header. The old cookie-presence probe
+ * ("aurelia_token= exists") stayed stuck on "dashboard" after a session
+ * expired, and never showed who was signed in. The header now uses the
+ * AuthProvider session (backed by the same-origin httpOnly-cookie proxy
+ * — the Discord token is never readable here, only the user object):
+ *
+ *   logged out  → "login" pill
+ *   logged in   → avatar + display name + dropdown:
+ *                 dashboard · my servers · sign out
+ *
+ * The public repo link was removed for private-source preparation; the
+ * footer keeps a creator-profile attribution link instead.
  */
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Icon } from '@/components/icons';
 import { cn } from '@/lib/format';
-import { GITHUB_URL, SUPPORT_SERVER_URL } from '@/lib/marketing';
+import { defaultAvatar } from '@/lib/discord';
+import { SUPPORT_SERVER_URL } from '@/lib/marketing';
+import { useAuth } from '@/lib/auth';
 
 const NAV = [
   { href: '/#features', label: 'features' },
@@ -23,13 +33,126 @@ const NAV = [
   { href: '/changelog', label: 'changelog' },
 ];
 
-export function SiteHeader() {
-  const pathname = usePathname();
-  const [hasToken, setHasToken] = useState(false);
+function ProfileMenu() {
+  const { user, logout } = useAuth();
   const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    setHasToken(document.cookie.split(';').some((c) => c.trim().startsWith('aurelia_token=')));
+    if (!open) return;
+    function onDocClick(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    }
+    function onEsc(e: KeyboardEvent) {
+      if (e.key === 'Escape') setOpen(false);
+    }
+    document.addEventListener('mousedown', onDocClick);
+    document.addEventListener('keydown', onEsc);
+    return () => {
+      document.removeEventListener('mousedown', onDocClick);
+      document.removeEventListener('keydown', onEsc);
+    };
+  }, [open]);
+
+  if (!user) return null;
+
+  return (
+    <div className="relative" ref={ref}>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        aria-haspopup="menu"
+        aria-label="open your profile menu"
+        className="flex items-center gap-2 rounded-[10px] border border-veloura-border/70 py-1 pl-1 pr-2.5 transition hover:border-veloura-pink/40 hover:bg-veloura-card-hover"
+      >
+        <img
+          src={user.avatar ?? defaultAvatar(user.id)}
+          alt={`${user.display_name} avatar`}
+          width={26}
+          height={26}
+          className="h-[26px] w-[26px] rounded-full"
+        />
+        <span className="hidden max-w-[140px] truncate text-sm text-veloura-text sm:inline">
+          {user.display_name}
+        </span>
+        <span
+          aria-hidden
+          className={cn('text-[10px] text-veloura-muted transition-transform', open && 'rotate-180')}
+        >
+          ▾
+        </span>
+      </button>
+
+      {open && (
+        <div
+          role="menu"
+          className="absolute right-0 z-50 mt-2 w-44 rounded-[12px] border border-veloura-border bg-veloura-navy-deep p-1.5 shadow-soft"
+        >
+          <Link
+            role="menuitem"
+            href="/servers"
+            onClick={() => setOpen(false)}
+            className="flex items-center gap-2.5 rounded-[9px] px-3 py-2 text-sm text-veloura-muted transition hover:bg-veloura-card-hover hover:text-veloura-text"
+          >
+            <Icon name="settings" size={14} />
+            dashboard
+          </Link>
+          <Link
+            role="menuitem"
+            href="/servers"
+            onClick={() => setOpen(false)}
+            className="flex items-center gap-2.5 rounded-[9px] px-3 py-2 text-sm text-veloura-muted transition hover:bg-veloura-card-hover hover:text-veloura-text"
+          >
+            <Icon name="hash" size={14} />
+            my servers
+          </Link>
+          <button
+            role="menuitem"
+            type="button"
+            onClick={() => {
+              setOpen(false);
+              void logout();
+            }}
+            className="flex w-full items-center gap-2.5 rounded-[9px] px-3 py-2 text-left text-sm text-veloura-muted transition hover:bg-veloura-card-hover hover:text-veloura-danger"
+          >
+            <Icon name="logout" size={14} />
+            sign out
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AuthButton() {
+  const { user, loading } = useAuth();
+
+  // While the session probe runs, render a neutral placeholder that
+  // matches the login pill's footprint — no login→profile flash.
+  if (loading) {
+    return <span className="veloura-button-primary ml-2 px-4 py-2 text-sm opacity-70">✦</span>;
+  }
+
+  if (user) return <ProfileMenu />;
+
+  return (
+    <Link href="/login" className="veloura-button-primary ml-2 px-4 py-2 text-sm">
+      <Icon name="logout" size={15} />
+      login
+    </Link>
+  );
+}
+
+export function SiteHeader() {
+  const pathname = usePathname();
+  const [open, setOpen] = useState(false);
+
+  // close the mobile drawer on navigation
+  useEffect(() => {
+    setOpen(false);
   }, [pathname]);
 
   const isDocs = pathname.startsWith('/docs');
@@ -85,22 +208,7 @@ export function SiteHeader() {
               support
             </a>
           )}
-          <a
-            href={GITHUB_URL}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="rounded-[10px] px-3 py-2 text-sm text-veloura-muted transition-colors hover:bg-veloura-card-hover hover:text-veloura-text"
-            aria-label="aurelia on github (opens in a new tab)"
-          >
-            github
-          </a>
-          <Link
-            href={hasToken ? '/servers' : '/login'}
-            className="veloura-button-primary ml-2 px-4 py-2 text-sm"
-          >
-            <Icon name={hasToken ? 'settings' : 'logout'} size={15} />
-            {hasToken ? 'dashboard' : 'login'}
-          </Link>
+          <AuthButton />
         </div>
 
         {/* mobile menu button */}
@@ -115,7 +223,7 @@ export function SiteHeader() {
         </button>
       </nav>
 
-      {/* mobile drawer */}
+      {/* mobile drawer — same essential destinations as desktop */}
       {open && (
         <div className="border-t border-veloura-border/60 bg-veloura-navy/95 px-4 pb-4 pt-2 md:hidden">
           {NAV.map((item) => (
@@ -138,24 +246,57 @@ export function SiteHeader() {
               support
             </a>
           )}
-          <a
-            href={GITHUB_URL}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="block rounded-[10px] px-3 py-2.5 text-sm text-veloura-muted hover:bg-veloura-card-hover hover:text-veloura-text"
-          >
-            github
-          </a>
-          <Link
-            href={hasToken ? '/servers' : '/login'}
-            onClick={() => setOpen(false)}
-            className="veloura-button-primary mt-3 w-full"
-          >
-            <Icon name={hasToken ? 'settings' : 'logout'} size={15} />
-            {hasToken ? 'dashboard' : 'login'}
-          </Link>
+          <div className="mt-3">
+            <MobileAuthButton />
+          </div>
         </div>
       )}
     </header>
+  );
+}
+
+function MobileAuthButton() {
+  const { user, loading, logout } = useAuth();
+
+  if (loading) {
+    return <span className="veloura-button-primary w-full py-2.5 text-center opacity-70">✦</span>;
+  }
+
+  if (user) {
+    return (
+      <div className="veloura-card !p-2">
+        <div className="flex items-center gap-2.5 px-2 py-1.5">
+          <img
+            src={user.avatar ?? defaultAvatar(user.id)}
+            alt={`${user.display_name} avatar`}
+            width={28}
+            height={28}
+            className="h-7 w-7 rounded-full"
+          />
+          <span className="truncate text-sm text-veloura-text">{user.display_name}</span>
+        </div>
+        <Link
+          href="/servers"
+          className="veloura-button-primary mt-1 w-full !py-2 text-sm"
+        >
+          <Icon name="settings" size={14} />
+          open dashboard
+        </Link>
+        <button
+          type="button"
+          onClick={() => void logout()}
+          className="mt-1 w-full rounded-[12px] px-3 py-2 text-sm text-veloura-muted transition hover:text-veloura-danger"
+        >
+          sign out
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <Link href="/login" className="veloura-button-primary w-full">
+      <Icon name="logout" size={15} />
+      login
+    </Link>
   );
 }

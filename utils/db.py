@@ -519,7 +519,7 @@ import functools
 import os
 import json
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from utils.cache import cache
@@ -799,6 +799,14 @@ _TABLE_COLUMNS = {
     "user_privacy": {
         "user_id", "memory_optout", "vibe_optout", "recap_optout",
         "ship_optout", "fact_extraction_optout", "updated_at",
+    },
+    # PHASE N — multi-provider AI usage accounting (metadata ONLY:
+    # provider/model/profile names, counts, tokens, latency — never
+    # prompts, responses, conversation or moderation text, never keys)
+    "ai_provider_usage": {
+        "usage_date", "provider", "model", "profile",
+        "requests", "successes", "failures",
+        "input_tokens", "output_tokens", "total_latency_ms", "updated_at",
     },
 }
 
@@ -3959,3 +3967,159 @@ async def export_user_data_async(user_id) -> dict:
         export["privacy"] = dict(_PRIVACY_DEFAULTS)
 
     return export
+
+
+# ─── PHASE N: AI provider usage accounting ──────────────────────────
+#
+# Persistent, restart-safe provider telemetry for utils/ai_router.py
+# (spec Part 9). One row per (usage_date, provider, model, profile).
+#
+# PRIVACY GUARANTEE: this table stores METADATA ONLY — provider name,
+# model id, profile, request counts, token counts, latency. It NEVER
+# stores prompts, responses, conversation text, moderation text or API
+# keys. Writes are fire-and-forget from the router (thread executor);
+# failures fall back to JSON and never break AI replies.
+#
+# Supabase schema (run scripts/supabase_migration.sql):
+#   ai_provider_usage(
+#     id BIGSERIAL PRIMARY KEY,
+#     usage_date DATE NOT NULL,
+#     provider TEXT NOT NULL,
+#     model TEXT NOT NULL,
+#     profile TEXT NOT NULL,
+#     requests INT DEFAULT 0, successes INT DEFAULT 0, failures INT DEFAULT 0,
+#     input_tokens BIGINT DEFAULT 0, output_tokens BIGINT DEFAULT 0,
+#     total_latency_ms BIGINT DEFAULT 0,
+#     updated_at TIMESTAMPTZ DEFAULT NOW(),
+#     UNIQUE (usage_date, provider, model, profile))
+#
+# JSON fallback: data/ai_provider_usage.json
+#   { "2026-09-07": [ {provider, model, profile, requests, ...}, ... ] }
+#   days older than 7 are pruned on write.
+
+_AI_USAGE_JSON = "data/ai_provider_usage.json"
+_AI_USAGE_KEEP_DAYS = 7
+
+_USAGE_INT_FIELDS = (
+    "requests", "successes", "failures",
+    "input_tokens", "output_tokens", "total_latency_ms",
+)
+
+
+def _json_usage_day(day: str) -> list:
+    data = _read_json(_AI_USAGE_JSON)
+    rows = data.get(day, [])
+    return rows if isinstance(rows, list) else []
+
+
+def record_ai_usage(usage_date: str, provider: str, model: str,
+                    profile: str, requests: int = 0, successes: int = 0,
+                    failures: int = 0, input_tokens: int = 0,
+                    output_tokens: int = 0, total_latency_ms: int = 0) -> bool:
+    """Increment (or insert) one usage row. Supabase when available,
+    JSON fallback otherwise. Never raises."""
+    try:
+        if using_supabase():
+            sb = get_supabase()
+            if sb is not None:
+                rows = sb.table("ai_provider_usage").select("id,requests,successes,failures,input_tokens,output_tokens,total_latency_ms") \
+                    .eq("usage_date", usage_date).eq("provider", provider) \
+                    .eq("model", model).eq("profile", profile).execute().data or []
+                if rows:
+                    row = rows[0]
+                    sb.table("ai_provider_usage").update({
+                        "requests": int(row.get("requests", 0)) + int(requests),
+                        "successes": int(row.get("successes", 0)) + int(successes),
+                        "failures": int(row.get("failures", 0)) + int(failures),
+                        "input_tokens": int(row.get("input_tokens", 0) or 0) + int(input_tokens),
+                        "output_tokens": int(row.get("output_tokens", 0) or 0) + int(output_tokens),
+                        "total_latency_ms": int(row.get("total_latency_ms", 0) or 0) + int(total_latency_ms),
+                        "updated_at": datetime.now(timezone.utc).isoformat(),
+                    }).eq("id", row["id"]).execute()
+                else:
+                    sb.table("ai_provider_usage").insert({
+                        "usage_date": usage_date,
+                        "provider": provider,
+                        "model": model,
+                        "profile": profile,
+                        "requests": int(requests),
+                        "successes": int(successes),
+                        "failures": int(failures),
+                        "input_tokens": int(input_tokens),
+                        "output_tokens": int(output_tokens),
+                        "total_latency_ms": int(total_latency_ms),
+                    }).execute()
+                return True
+    except Exception as e:
+        logger.debug(f"[DB] ai_provider_usage supabase write failed: {e}")
+
+    # JSON fallback (also the primary path without Supabase)
+    try:
+        from datetime import date as _date, timedelta as _td
+        try:
+            day = _date.fromisoformat(str(usage_date))
+        except (ValueError, TypeError):
+            day = _date.today()
+        data = _read_json(_AI_USAGE_JSON)
+        rows = data.get(str(day), [])
+        if not isinstance(rows, list):
+            rows = []
+        found = None
+        for r in rows:
+            if (isinstance(r, dict) and r.get("provider") == provider
+                    and r.get("model") == model
+                    and r.get("profile") == profile):
+                found = r
+                break
+        if found is None:
+            found = {"provider": provider, "model": model, "profile": profile,
+                     "requests": 0, "successes": 0, "failures": 0,
+                     "input_tokens": 0, "output_tokens": 0,
+                     "total_latency_ms": 0}
+            rows.append(found)
+        found["requests"] = int(found.get("requests", 0)) + int(requests)
+        found["successes"] = int(found.get("successes", 0)) + int(successes)
+        found["failures"] = int(found.get("failures", 0)) + int(failures)
+        found["input_tokens"] = int(found.get("input_tokens", 0)) + int(input_tokens)
+        found["output_tokens"] = int(found.get("output_tokens", 0)) + int(output_tokens)
+        found["total_latency_ms"] = int(found.get("total_latency_ms", 0)) + int(total_latency_ms)
+        data[str(day)] = rows
+        # prune old days
+        cutoff = (_date.today() - _td(days=_AI_USAGE_KEEP_DAYS)).isoformat()
+        data = {k: v for k, v in data.items() if str(k) >= cutoff}
+        _write_json(_AI_USAGE_JSON, data)
+        return True
+    except Exception as e:
+        logger.debug(f"[DB] ai_provider_usage json write failed: {e}")
+        return False
+
+
+def get_ai_usage_for_date(usage_date: str) -> list:
+    """Read every usage row for one date (UTC iso 'YYYY-MM-DD').
+    Supabase first, JSON fallback. Returns [] on any failure — never
+    raises (the router treats telemetry as best-effort)."""
+    rows: list = []
+    try:
+        if using_supabase():
+            sb = get_supabase()
+            if sb is not None:
+                rows = sb.table("ai_provider_usage").select("*") \
+                    .eq("usage_date", usage_date).execute().data or []
+    except Exception as e:
+        logger.debug(f"[DB] ai_provider_usage supabase read failed: {e}")
+        rows = []
+    if rows:
+        return rows
+    try:
+        return _json_usage_day(str(usage_date))
+    except Exception:
+        return []
+
+
+async def record_ai_usage_async(**kwargs) -> bool:
+    """Thread-pool wrapper for the event loop (router hot path)."""
+    return await asyncio.to_thread(record_ai_usage, **kwargs)
+
+
+async def get_ai_usage_for_date_async(usage_date: str) -> list:
+    return await asyncio.to_thread(get_ai_usage_for_date, usage_date)

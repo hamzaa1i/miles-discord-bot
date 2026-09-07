@@ -74,7 +74,7 @@ export function Badge({
   className,
 }: {
   children: React.ReactNode;
-  tone?: 'default' | 'pink' | 'lavender' | 'success' | 'danger' | 'muted';
+  tone?: 'default' | 'pink' | 'lavender' | 'success' | 'warning' | 'danger' | 'muted';
   className?: string;
 }) {
   const tones: Record<string, string> = {
@@ -82,6 +82,7 @@ export function Badge({
     pink: 'border-veloura-pink/40 bg-veloura-pink/10 text-veloura-pink',
     lavender: 'border-veloura-lavender/40 bg-veloura-lavender/10 text-veloura-lavender',
     success: 'border-veloura-success/40 bg-veloura-success/10 text-veloura-success',
+    warning: 'border-veloura-warning/40 bg-veloura-warning/10 text-veloura-warning',
     danger: 'border-veloura-danger/40 bg-veloura-danger/10 text-veloura-danger',
     muted: 'border-transparent bg-veloura-card-hover text-veloura-muted',
   };

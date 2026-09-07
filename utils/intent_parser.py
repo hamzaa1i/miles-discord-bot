@@ -422,10 +422,16 @@ async def parse_intent(message_content: str, ai_handler) -> dict:
         # so they don't spam Render logs on every @mention / prefix command.
         _log.getLogger('cyn.intent').debug(f"[INTENT_PARSER] calling call_ai_fast for: {message_content[:80]}")
 
+        # PHASE N — sensitive=True: natural-language MODERATION commands
+        # and automod-adjacent intents route through SENSITIVE_FAST
+        # (Mistral → Groq). Gemini free-tier / OpenRouter never see
+        # moderation content unless explicitly allowed by config. The
+        # deterministic parser above still runs FIRST — known intents
+        # make zero LLM calls.
         raw = await call_ai_fast([
             {"role": "system", "content": INTENT_SYSTEM_PROMPT},
             {"role": "user", "content": message_content}
-        ], max_tokens=100)
+        ], max_tokens=100, sensitive=True)
 
         _log.getLogger('cyn.intent').debug(f"[INTENT_PARSER] raw response: {raw[:100] if raw else 'NONE'}")
 

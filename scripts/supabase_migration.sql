@@ -474,3 +474,35 @@ GRANT ALL ON public.owner_blacklist TO anon;
 ALTER TABLE public.owner_blacklist DISABLE ROW LEVEL SECURITY;
 
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO anon;
+
+-- ─── PHASE N — AI PROVIDER USAGE ACCOUNTING ─────────────────────────
+-- Persistent provider telemetry for the multi-provider AI router
+-- (utils/ai_router.py). One row per (usage_date, provider, model,
+-- profile); the OpenRouter daily-budget guard counts requests from
+-- this table so the counter survives Render restarts.
+--
+-- METADATA ONLY: provider/model/profile names, request counts, token
+-- counts and latency. This table NEVER stores prompts, AI responses,
+-- conversation text, moderation text or API keys.
+CREATE TABLE IF NOT EXISTS public.ai_provider_usage (
+  id BIGSERIAL PRIMARY KEY,
+  usage_date DATE NOT NULL,
+  provider TEXT NOT NULL,
+  model TEXT NOT NULL,
+  profile TEXT NOT NULL,
+  requests INTEGER DEFAULT 0,
+  successes INTEGER DEFAULT 0,
+  failures INTEGER DEFAULT 0,
+  input_tokens BIGINT DEFAULT 0,
+  output_tokens BIGINT DEFAULT 0,
+  total_latency_ms BIGINT DEFAULT 0,
+  updated_at TIMESTAMPTZ DEFAULT NOW(),
+  CONSTRAINT ai_provider_usage_unique
+    UNIQUE (usage_date, provider, model, profile)
+);
+CREATE INDEX IF NOT EXISTS idx_ai_usage_date
+  ON public.ai_provider_usage(usage_date DESC);
+GRANT ALL ON public.ai_provider_usage TO anon;
+ALTER TABLE public.ai_provider_usage DISABLE ROW LEVEL SECURITY;
+
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO anon;

@@ -166,7 +166,7 @@ def test_public_api():
     check("GET /api/public/stats -> 200", r.status_code == 200)
     check("stats has servers", body.get("servers") == 1)
     check("stats has members", body.get("members") == 100)
-    check("stats has version", body.get("version") == "1.0.0")
+    check("stats has version", body.get("version") == "1.1.0")
     check("stats has top_commands fallback",
           isinstance(body.get("top_commands"), list) and
           body["top_commands"][0]["command"] == "help")

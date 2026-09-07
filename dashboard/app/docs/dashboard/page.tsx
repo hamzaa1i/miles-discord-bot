@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { DocsBreadcrumb } from '@/components/docs/DocsBreadcrumb';
 
 import { CodeBlock } from '@/components/docs/CodeBlock';
 import { ShareButtons } from '@/components/site/ShareButtons';
@@ -51,6 +52,8 @@ const SECTIONS = [
 export default function DashboardGuide() {
   return (
     <>
+      <DocsBreadcrumb page="dashboard guide" />
+
       <header className="mb-10">
         <p className="text-xs uppercase tracking-[0.2em] text-veloura-pink">guide</p>
         <h1 className="font-heading mt-2 text-4xl text-veloura-text">the dashboard ✦</h1>
@@ -99,16 +102,13 @@ export default function DashboardGuide() {
 /servers/[guild-id]          overview: stats, features, activity
 /servers/[guild-id]/welcome  welcome cards + live preview`}</CodeBlock>
         <p className="mt-3 text-sm leading-relaxed text-veloura-muted">
-          the login flow, env vars and self-hosting instructions live in{' '}
-          <a
-            href="https://github.com/hamzaa1i/miles-discord-bot/blob/main/dashboard/README.md"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-veloura-pink underline decoration-veloura-pink/40 underline-offset-2"
-          >
-            dashboard/README.md
-          </a>
-          .
+          the dashboard is part of the managed aurelia deployment — source
+          and deployment notes are privately maintained. stuck on login or
+          a setting? the support server answers fast, and the{' '}
+          <Link href="/docs/api" className="text-veloura-pink underline decoration-veloura-pink/40 underline-offset-2">
+            api guide
+          </Link>{' '}
+          documents every endpoint the dashboard itself uses.
         </p>
       </section>
 

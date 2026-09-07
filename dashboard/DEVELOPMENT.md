@@ -1,11 +1,17 @@
-# dashboard/DEVELOPMENT.md — contributing guide
+# dashboard/DEVELOPMENT.md — INTERNAL development guide
+
+> **internal only.** the source repository is privately maintained
+> (phase n). this document is for the maintainer and invited
+> collaborators — it is not part of the public documentation site, and
+> the clone instructions below assume you already have repository
+> access.
 
 thanks for wanting to make the veloura softer ✦
 
 ## getting set up
 
 ```bash
-git clone https://github.com/hamzaa1i/miles-discord-bot
+git clone git@github.com:hamzaa1i/miles-discord-bot.git   # requires access
 cd miles-discord-bot/dashboard
 npm install
 cp .env.example .env.local   # see README.md for the values

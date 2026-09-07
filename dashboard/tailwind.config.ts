@@ -23,6 +23,7 @@ const config: Config = {
           text: '#F5F5F5',
           muted: '#9CA3AF',
           success: '#A8E6CF',
+          warning: '#F5D5A0',
           danger: '#F4A8A8',
         },
       },

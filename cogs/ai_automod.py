@@ -229,12 +229,18 @@ class AIAutoMod(commands.Cog):
                     pass
 
             # ── classify via fast model ──
+            # PHASE N — sensitive=True: automod classification is the
+            # canonical sensitive request (Part 11). Routes through
+            # SENSITIVE_FAST (Mistral → Groq); Gemini free-tier and
+            # OpenRouter are excluded by default via explicit config
+            # allow flags.
             raw = await call_ai_fast(
                 [
                     {"role": "system", "content": _CLASSIFY_PROMPT},
                     {"role": "user", "content": message.content[:1000]},
                 ],
                 max_tokens=300,
+                sensitive=True,
             )
             severity, reason = self._parse_classification(raw)
             if severity is None:

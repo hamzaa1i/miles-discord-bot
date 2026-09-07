@@ -1,0 +1,27 @@
+NOTICE — Aurelia license transition (Phase N, September 2026)
+
+This repository was originally published under the MIT license.
+
+1. Revisions of this project that were actually distributed under the
+   MIT license (commits up to and including 28734dd, the v1.0.0 launch
+   release) remain governed by the MIT license that accompanied those
+   versions. The copyright holder does not claim that this notice
+   revokes rights already granted for those earlier distributions.
+
+2. All subsequent revisions (beginning with the Phase N multi-provider
+   AI release, v1.1.0) are distributed under the proprietary terms in
+   the LICENSE file ("All Rights Reserved"). No permission to copy,
+   modify, distribute, sublicense, publish, deploy, or create
+   derivative works from those revisions is granted without prior
+   written permission.
+
+3. Repository visibility (public / private) is set on GitHub by the
+   owner. Making the repository private does not change the license
+   status of revisions already distributed under MIT, and publishing a
+   repository does not by itself grant rights beyond the license that
+   accompanies each revision.
+
+4. Aurelia — the bot as a service — remains free for anyone to invite
+   and use. Source licensing and bot usage are separate things.
+
+— volc (hamzaa1i), September 2026

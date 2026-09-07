@@ -1,4 +1,5 @@
 import { CommandsClient } from '@/components/docs/CommandsClient';
+import { DocsBreadcrumb } from '@/components/docs/DocsBreadcrumb';
 import { pageMetadata } from '@/lib/seo';
 
 /**
@@ -16,5 +17,10 @@ export const metadata = pageMetadata({
 });
 
 export default function CommandsPage() {
-  return <CommandsClient />;
+  return (
+    <>
+      <DocsBreadcrumb page="commands" />
+      <CommandsClient />
+    </>
+  );
 }

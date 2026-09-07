@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { DocsBreadcrumb } from '@/components/docs/DocsBreadcrumb';
 
 import { MODULE_DOCS } from '@/lib/docs-modules';
 import { pageMetadata } from '@/lib/seo';
@@ -20,6 +21,8 @@ export const metadata = pageMetadata({
 export default function ModulesIndex() {
   return (
     <>
+      <DocsBreadcrumb page="modules" />
+
       <header className="mb-10">
         <p className="text-xs uppercase tracking-[0.2em] text-veloura-pink">modules</p>
         <h1 className="font-heading mt-2 text-4xl text-veloura-text">

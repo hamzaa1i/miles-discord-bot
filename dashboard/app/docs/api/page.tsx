@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { DocsBreadcrumb } from '@/components/docs/DocsBreadcrumb';
 
 import { CodeBlock } from '@/components/docs/CodeBlock';
 import { ShareButtons } from '@/components/site/ShareButtons';
@@ -26,6 +27,8 @@ const API_BASE = (process.env.NEXT_PUBLIC_API_URL || 'https://miles-discord-bot.
 export default function ApiDocs() {
   return (
     <>
+      <DocsBreadcrumb page="api" />
+
       <header className="mb-10">
         <p className="text-xs uppercase tracking-[0.2em] text-veloura-pink">for developers</p>
         <h1 className="font-heading mt-2 text-4xl text-veloura-text">the api ✦</h1>
@@ -56,7 +59,7 @@ export default function ApiDocs() {
             <CodeBlock title="request">{`curl ${API_BASE}/api/public/stats`}</CodeBlock>
             <CodeBlock title="response (trimmed)">{`{
   "status": "ok",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "servers": 5,
   "members": 1234,
   "latency_ms": 82.5,
@@ -122,19 +125,20 @@ export default function ApiDocs() {
 
 GET    /api/dashboard/guild/<gid>/settings/<module>
 PATCH  /api/dashboard/guild/<gid>/settings/<module>
-POST   /api/dashboard/guild/<gid>/action/<action>`}</CodeBlock>
+POST   /api/dashboard/guild/<gid>/action/<action>
+GET    /api/dashboard/ai/status`}</CodeBlock>
         <p className="mt-2 text-sm leading-relaxed text-veloura-muted">
-          self-hosting the whole stack? the{' '}
-          <a
-            href="https://github.com/hamzaa1i/miles-discord-bot/blob/main/dashboard/ARCHITECTURE.md"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-veloura-pink underline decoration-veloura-pink/40 underline-offset-2"
-          >
-            architecture doc
-          </a>{' '}
-          describes every route, the security model and the deployment
-          topology.
+          curious how it all fits together? aurelia is a managed project
+          with a privately maintained source — the{' '}
+          <Link href="/stats" className="text-veloura-pink underline decoration-veloura-pink/40 underline-offset-2">
+            live stats page
+          </Link>{' '}
+          and the{' '}
+          <Link href="/servers" className="text-veloura-pink underline decoration-veloura-pink/40 underline-offset-2">
+            dashboard itself
+          </Link>{' '}
+          are the living demonstration; questions about the topology are
+          welcome in the support server.
         </p>
       </section>
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-scripts/generate_changelog.py — PHASE M PART 5.
+scripts/generate_changelog.py — PHASE M PART 5 (maintained through N).
 
 Generates, from git history:
   1. CHANGELOG.md              (repo root — human-readable release notes)
@@ -10,6 +10,11 @@ One source of truth, two artifacts. Re-run after any release; existing
 non-v1.0.0 version blocks in CHANGELOG.md are PRESERVED so manual
 entries for future versions (v1.1.0 …) are never wiped.
 
+PHASE N: V1_UNTIL pins the v1.0.0 commit range so re-running this
+script after later releases never rewrites the launch notes (Part 27:
+"do not rewrite previous release notes") — post-1.0 commits belong to
+their own version blocks (added by hand, like v1.1.0).
+
 Usage:
     python scripts/generate_changelog.py [--repo /path/to/repo]
 """
@@ -18,6 +23,11 @@ import os
 import re
 import subprocess
 import sys
+
+# ─── PHASE N — v1.0.0 commit cutoff ──────────────────────────────
+# The launch release shipped at 28734dd (Phase M). Everything after
+# that belongs to v1.1.0+ blocks, never to the v1.0.0 entry.
+V1_UNTIL = "28734dd"
 
 # ─── curated launch copy (v1.0.0) ──────────────────────────────────
 V1_HIGHLIGHTS = [
@@ -46,10 +56,13 @@ CATEGORY_BY_PREFIX = {
 }
 
 
-def git_log(repo: str) -> list:
+def git_log(repo: str, until: str | None = None) -> list:
+    cmd = ["git", "log", "--pretty=format:%h|%ad|%s", "--date=short"]
+    if until:
+        # plain sha = this commit AND all its ancestors
+        cmd.append(until)
     out = subprocess.run(
-        ["git", "log", "--pretty=format:%h|%ad|%s", "--date=short"],
-        cwd=repo, capture_output=True, text=True, check=True,
+        cmd, cwd=repo, capture_output=True, text=True, check=True,
     ).stdout
     rows = []
     for line in out.splitlines():
@@ -220,7 +233,10 @@ def main() -> int:
     args = ap.parse_args()
     repo = args.repo
 
-    commits = git_log(repo)
+    commits = git_log(repo, until=V1_UNTIL)
+    if not commits:
+        # cutoff not present in this clone — fall back to full history
+        commits = git_log(repo)
     if not commits:
         print("no git history found", file=sys.stderr)
         return 1

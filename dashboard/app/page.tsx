@@ -1,6 +1,7 @@
 import Link from 'next/link';
 
 import { Icon } from '@/components/icons';
+import { AuthAwareCta } from '@/components/site/AuthAwareCta';
 import { CommandGrid } from '@/components/site/CommandGrid';
 import { Faq } from '@/components/site/Faq';
 import { FeatureShowcase } from '@/components/site/FeatureShowcase';
@@ -18,6 +19,10 @@ import { pageMetadata, softwareApplicationJsonLd } from '@/lib/seo';
  * "/" is now the shop window: hero, live stats, six feature
  * showcases, social proof, command grid, pricing, faq and footer.
  * Server-rendered except the live stats bar + share buttons.
+ *
+ * PHASE N: the hero's secondary CTA is auth-aware ("open dashboard"
+ * when signed in) and the pricing block no longer advertises
+ * self-hosting — the source is privately maintained now.
  */
 
 export const metadata = pageMetadata({
@@ -86,10 +91,7 @@ export default function LandingPage() {
                 login with discord
               </Link>
             )}
-            <Link href="/login" className="veloura-button-ghost px-8 text-base">
-              <Icon name="settings" size={16} />
-              login to dashboard
-            </Link>
+            <AuthAwareCta />
           </div>
 
           {/* ══ 2 · live stats bar (auto-refresh 60s) ═══════════════ */}
@@ -202,7 +204,7 @@ export default function LandingPage() {
                   '167 commands, all free',
                   'full dashboard, all free',
                   'ai chat & memory, all free',
-                  'self-hosting? MIT licensed, also free',
+                  'every provider and model included, still free',
                 ].map((line) => (
                   <li key={line} className="flex items-center gap-2 text-sm text-veloura-muted">
                     <Icon name="check" size={14} className="text-veloura-success" />

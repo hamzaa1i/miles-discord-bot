@@ -64,6 +64,28 @@ export function Sidebar({ guildId, onNavigate }: { guildId: string; onNavigate?:
           </ul>
         </div>
       ))}
+
+      {/* PHASE N (19.2) — site escape hatches pinned at the bottom of
+          the module nav: home (landing) + all servers. Nobody gets
+          stranded inside the guild dashboard. */}
+      <div className="mt-auto border-t border-veloura-border/60 pt-3">
+        <Link
+          href="/servers"
+          onClick={onNavigate}
+          className="flex min-h-[36px] items-center gap-2.5 rounded-[10px] px-3 text-[13px] text-veloura-muted transition hover:bg-veloura-card-hover hover:text-veloura-text"
+        >
+          <Icon name="hash" size={14} className="w-4 shrink-0 text-veloura-lavender/70" />
+          all servers
+        </Link>
+        <Link
+          href="/"
+          onClick={onNavigate}
+          className="flex min-h-[36px] items-center gap-2.5 rounded-[10px] px-3 text-[13px] text-veloura-muted transition hover:bg-veloura-card-hover hover:text-veloura-pink"
+        >
+          <Icon name="star" size={14} className="w-4 shrink-0 text-veloura-lavender/70" />
+          aurelia home
+        </Link>
+      </div>
     </nav>
   );
 }

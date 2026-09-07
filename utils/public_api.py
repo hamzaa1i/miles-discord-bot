@@ -62,7 +62,9 @@ from flask import Blueprint, Response, jsonify, request
 
 logger = logging.getLogger('cyn.public_api')
 
-BOT_VERSION = "1.0.0"
+# PHASE N (Part 27) — central backend version, bumped for the
+# multi-provider AI core release (v1.1.0).
+BOT_VERSION = "1.1.0"
 
 _repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CHANGELOG_PATH = os.path.join(_repo_root, "CHANGELOG.md")
@@ -315,9 +317,20 @@ def _collect_stats() -> dict:
 
     history = _load_history()
 
+    # PHASE N (Part 16) — GENERIC AI health only: one word, no quotas,
+    # no provider counts, no account details. Full status lives behind
+    # the authenticated dashboard endpoint /ai/status.
+    ai_status = "starting"
+    try:
+        from utils.ai_handler import router_status
+        ai_status = router_status().get("ai_status", "starting")
+    except Exception:
+        ai_status = "starting"
+
     return {
         "status": "ok" if ready else "starting",
         "version": BOT_VERSION,
+        "ai_status": ai_status,
         "servers": servers,
         "members": members,
         "latency_ms": latency,
