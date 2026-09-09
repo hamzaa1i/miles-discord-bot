@@ -245,7 +245,10 @@ async def test_backend():
             except Exception:
                 pass
     root_count = len(root_bot.tree.get_commands())
-    check("C8. root command count unchanged (70)", root_count == 70,
+    # PHASE O — /boosters added one root group: 71 in the cogs-only tree
+    # (74 canonical once main.py's 3 hybrid roots are included)
+    check("C8. root command count (71 cogs-only; +3 main.py hybrids "
+          "= 74 canonical)", root_count == 71,
           f"got {root_count}")
 
     # dashboard api + public api endpoints — register BOTH before any

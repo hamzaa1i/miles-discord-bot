@@ -9,8 +9,8 @@ aesthetic moderation, ai chat, and community features for your veloura-vibe serv
 
 <p align="center">
   <a href="https://veloura-aurelia.vercel.app"><img alt="dashboard" src="https://img.shields.io/badge/dashboard-veloura--aurelia.vercel.app-FFC0CB?style=flat-square&labelColor=1A1D29"></a>
-  <img alt="commands" src="https://img.shields.io/badge/commands-168-E6E6FA?style=flat-square&labelColor=1A1D29">
-  <img alt="cogs" src="https://img.shields.io/badge/cogs-45-E6E6FA?style=flat-square&labelColor=1A1D29">
+  <img alt="commands" src="https://img.shields.io/badge/commands-173-E6E6FA?style=flat-square&labelColor=1A1D29">
+  <img alt="cogs" src="https://img.shields.io/badge/cogs-47-E6E6FA?style=flat-square&labelColor=1A1D29">
   <img alt="discord.py" src="https://img.shields.io/badge/discord.py-2.7-9CA3AF?style=flat-square&labelColor=1A1D29">
   <img alt="source" src="https://img.shields.io/badge/source-privately%20maintained-E6E6FA?style=flat-square&labelColor=1A1D29">
   <img alt="price" src="https://img.shields.io/badge/price-free%20forever%20%E2%99%A1-FFC0CB?style=flat-square&labelColor=1A1D29">
@@ -40,9 +40,10 @@ firm where it matters and gentle everywhere else.
 |---|---|
 | **ai chat & memory** | `@aurelia hey what's up` — she keeps the conversation thread and learns durable facts. per-server personality, opt-out per user. |
 | **aesthetic welcome cards** | embed / text / hybrid / dm modes, custom colors, live preview in the dashboard. |
+| **booster celebrations** | configurable boost announcements (text / embed / hybrid), an optional hierarchy-safe booster role, and once-ever milestone cards at boost thresholds. |
 | **smart moderation** | warnings as numbered cases, escalating thresholds, context-aware ai automod (severity 1-5), full audit log. |
 | **engagement** | leveling + role rewards, daily streaks, qotd, giveaways with realtime entries, starboard, confessions, ships, achievements. |
-| **a real dashboard** | 34 module pages with live discord pickers, one-click live actions and realtime updates. |
+| **a real dashboard** | 35 module pages with live discord pickers, one-click live actions and realtime updates. |
 | **privacy first** | `/privacy export` (full json) and `/privacy delete` (erase everywhere) built in. |
 
 <p>
@@ -104,7 +105,7 @@ never conversations.
 ## architecture overview
 
 ```
-cogs/ (46)              slash + prefix + listeners
+cogs/ (47)              slash + prefix + listeners
 utils/ai_router.py      profiles → provider chains, failover, breakers
 ai_providers/           gemini · mistral · openrouter · groq adapters
 utils/ai_handler.py     compatibility facade (call_ai family)
@@ -118,7 +119,7 @@ main.py                 discord.py 2.7 entrypoint + flask keep-alive
 ## tech stack
 
 - **bot** — python 3.11 · discord.py 2.7 · multi-provider ai (gemini ·
-  mistral · openrouter/glm · groq failover) · 46 cogs, 168 commands
+  mistral · openrouter/glm · groq failover) · 47 cogs, 173 commands
 - **data** — supabase postgres with a json-file fallback so every
   feature works even before the (free) db is wired up
 - **dashboard** — next.js 14 · react 18 · tailwind · supabase realtime

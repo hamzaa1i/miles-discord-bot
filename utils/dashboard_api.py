@@ -59,6 +59,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import secrets
 import threading
 import time
@@ -372,6 +373,29 @@ DASHBOARD_MODULES = {
         "table": None, "data_only": True,
         "note": "giveaway rows; see module data endpoint",
     },
+    # PHASE O — server booster system (/boosters). Defaults mirror
+    # utils/db.py _BOOSTER_SETTINGS_DEFAULTS (same templates, one
+    # Python source — imported, not duplicated).
+    "boosters": {
+        "table": "booster_settings",
+        "defaults": {
+            "enabled": False,
+            "channel_id": None,
+            "message": _db.BOOSTER_DEFAULT_MESSAGE,
+            "embed_mode": "embed",
+            "color": "#FFC0CB",
+            "image_url": None,
+            "thumbnail_mode": "member",
+            "footer": _db.BOOSTER_DEFAULT_FOOTER,
+            "booster_role_id": None,
+            "auto_role": False,
+            "remove_role_on_unboost": True,
+            "milestone_enabled": True,
+            "milestone_message": _db.BOOSTER_DEFAULT_MILESTONE_MESSAGE,
+            "milestone_counts": list(_db.BOOSTER_DEFAULT_MILESTONE_COUNTS),
+            "milestone_last": 0,
+        },
+    },
 }
 
 # Light type validation for known settings fields (beyond the
@@ -383,6 +407,9 @@ _FIELD_TYPES = {
     "member_leave": bool, "member_ban": bool, "member_unban": bool,
     "role_change": bool, "nickname_change": bool, "voice_join": bool,
     "voice_leave": bool,
+    # PHASE O — booster settings
+    "auto_role": bool, "remove_role_on_unboost": bool,
+    "milestone_enabled": bool, "milestone_last": int,
     "post_hour_utc": int, "timeout_minutes": int, "threshold": int,
     "warn_threshold_count": int, "max_warns_before_ban": int,
     "welcome_reward": int, "welcomer_reward": int,
@@ -391,11 +418,15 @@ _FIELD_TYPES = {
 }
 
 # channel-id list style fields -> must be list/None
-_LIST_FIELDS = {"channel_ids", "antilink_channels", "roles", "panels", "commands"}
+_LIST_FIELDS = {"channel_ids", "antilink_channels", "roles", "panels",
+                "commands", "milestone_counts"}
 
 VALID_ACTIONS = {
     "qotd_post_now", "qotd_add", "welcome_test", "giveaway_end",
     "purge_cache",
+    # PHASE O — live booster actions (executed on the bot loop by
+    # utils/dashboard_actions.py)
+    "booster_test", "booster_reset",
 }
 OWNER_ACTIONS = {
     "reload_cog", "sync_commands", "blacklist_add", "blacklist_remove",
@@ -783,6 +814,29 @@ def _validate_patch(mod, body) -> tuple:
             for k, v in value.items():
                 if not str(k).isdigit() or not str(v).isdigit():
                     return False, {"error": "rewards keys/values must be numeric ids"}
+        # PHASE O — booster value validation (key names are unique to
+        # the boosters module, so generic placement is safe)
+        if key == "embed_mode" and value is not None and \
+                value not in ("text", "embed", "hybrid"):
+            return False, {"error": "embed_mode must be 'text', 'embed' or 'hybrid'"}
+        if key == "thumbnail_mode" and value is not None and \
+                value not in ("member", "server", "none"):
+            return False, {"error": "thumbnail_mode must be 'member', 'server' or 'none'"}
+        if key == "color" and value is not None:
+            if not isinstance(value, str) or not re.fullmatch(
+                    r"#?[0-9a-fA-F]{6}", value.strip()):
+                return False, {"error": "color must be a hex string like #FFC0CB"}
+        if key == "image_url" and value is not None:
+            if not isinstance(value, str) or not value.strip().startswith(
+                    ("http://", "https://")):
+                return False, {"error": "image_url must be an http(s) URL"}
+        if key == "milestone_counts" and value is not None:
+            if not isinstance(value, list) or not value:
+                return False, {"error": "milestone_counts must be a non-empty list of whole numbers"}
+            if len(value) > 25 or any(
+                    not isinstance(x, int) or not (1 <= x <= 1000)
+                    for x in value):
+                return False, {"error": "milestone thresholds are whole numbers 1-1000 (max 25)"}
 
     return True, body
 
@@ -807,10 +861,40 @@ def patch_settings(guild_id, module):
             return jsonify(result), 400
         return _auth_error(400, result["error"])
 
+    # PHASE O — boosters: server-side live validation of the patched
+    # channel/role against the BOT's guild object (defense in depth —
+    # the live pickers already filter, the cog re-checks at runtime,
+    # and this stops a hand-crafted PATCH from storing a role aurelia
+    # could never manage, e.g. Discord's native managed booster role).
+    if module == "boosters" and result:
+        err = _validate_boosters_targets(g.guild, result)
+        if err is not None:
+            return _auth_error(400, err)
+
     # merge with current settings then write
     current = _module_settings(g.guild, module)
+    prev = dict(current)
     current.pop("guild_id", None)
     current.update(result)
+
+    # PHASE O — boosters: when the module or milestones are being
+    # switched ON, pin the milestone high-water mark to the CURRENT
+    # boost count so thresholds the guild already passed historically
+    # are never announced retroactively (same rule as the slash path).
+    if module == "boosters":
+        newly_on = (
+            (result.get("enabled") is True and not prev.get("enabled"))
+            or (result.get("milestone_enabled") is True
+                and not prev.get("milestone_enabled"))
+        )
+        if newly_on:
+            try:
+                count = int(getattr(
+                    g.guild, "premium_subscription_count", 0) or 0)
+            except (TypeError, ValueError):
+                count = 0
+            if int(current.get("milestone_last") or 0) < count:
+                current["milestone_last"] = count
 
     if mod.get("table"):
         _db.set_guild_setting(g.guild.id, mod["table"], current)
@@ -828,6 +912,40 @@ def patch_settings(guild_id, module):
         "module": module,
         "settings": _module_settings(g.guild, module),
     })
+
+
+def _validate_boosters_targets(guild, body: dict):
+    """PHASE O — validate booster channel/role ids in a PATCH body
+    against the live guild. Returns an error string or None."""
+    cid = body.get("channel_id")
+    if cid is not None:
+        if not str(cid).strip():
+            return None  # empty string clears the channel
+        channel = guild.get_channel(int(cid)) if str(cid).isdigit() else None
+        if channel is None:
+            return "channel not found in this server"
+        ctype = int(getattr(channel, "type", 0) or 0)
+        if ctype not in (0, 5, 15, 16):
+            return "booster announcements need a text channel"
+    rid = body.get("booster_role_id")
+    if rid is not None:
+        if not str(rid).strip():
+            return None  # empty string clears the role
+        role = guild.get_role(int(rid)) if str(rid).isdigit() else None
+        if role is None:
+            return "role not found in this server"
+        if getattr(role, "managed", False):
+            return (f"'{getattr(role, 'name', rid)}' is managed by an "
+                    "integration (includes Discord's Server Booster "
+                    "role) — pick a normal role")
+        if getattr(role, "is_default", lambda: False)():
+            return "@everyone is not a valid booster role"
+        me = getattr(guild, "me", None)
+        top = getattr(getattr(me, "top_role", None), "position", 0)
+        if role.position >= top:
+            return (f"'{role.name}' is at/above aurelia's top role — "
+                    "move it below aurelia first")
+    return None
 
 
 # ─── 6. POST /guild/<gid>/action/<action> ───────────────────────────

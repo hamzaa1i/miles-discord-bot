@@ -859,6 +859,16 @@ _TABLE_COLUMNS = {
         "requests", "successes", "failures",
         "input_tokens", "output_tokens", "total_latency_ms", "updated_at",
     },
+    # PHASE O — server booster system (/boosters). milestone_counts is a
+    # JSONB list of ints (thresholds); milestone_last is the persisted
+    # high-water mark so restarts / boost churn never re-post a milestone.
+    "booster_settings": {
+        "guild_id", "enabled", "channel_id", "message", "embed_mode",
+        "color", "image_url", "thumbnail_mode", "footer",
+        "booster_role_id", "auto_role", "remove_role_on_unboost",
+        "milestone_enabled", "milestone_message", "milestone_counts",
+        "milestone_last", "updated_at",
+    },
 }
 
 
@@ -2880,6 +2890,106 @@ async def set_anniversary_settings_async(guild_id: str, payload: dict):
     clean = {k: v for k, v in current.items()
              if k in _TABLE_COLUMNS[_ANNIVERSARY_TABLE] or k == "guild_id"}
     await set_guild_setting_async(int(guild_id), _ANNIVERSARY_TABLE, clean)
+
+
+# ─── PHASE O — server booster system (/boosters) ──────────────────
+
+_BOOSTER_SETTINGS_TABLE = "booster_settings"
+
+# The default announcement / milestone templates live HERE (single Python
+# source) so cogs/boosters.py, the dashboard API defaults and the tests
+# all render the same factory content. {server} (not a hardcoded server
+# name) keeps the copy portable outside any one community.
+BOOSTER_DEFAULT_MESSAGE = (
+    "✩ ━━ **a new star is shining brighter** ༉‧₊˚. ღ\n\n"
+    "꒰ა ♡ ໒꒱ thank you {user} for boosting **{server}**!\n\n"
+    "your support helps our little community grow and unlock even more "
+    "for everyone here.\n\n"
+    "୨୧ you're officially one of our boosters\n"
+    "୨୧ your booster perks are now available\n"
+    "୨୧ thank you for supporting the community ♡\n\n"
+    "𓂃 ࣪˖ ִֶָ **{boostcount} boosts** ִֶָ˖ ࣪ 𓂃\n\n"
+    "✩ ━━ **thank you for supporting {server}** ༉‧₊˚. ღ"
+)
+
+BOOSTER_DEFAULT_MILESTONE_MESSAGE = (
+    "✩ ━━ **{server} reached {boostcount} boosts** ༉‧₊˚. ღ\n\n"
+    "another little milestone reached ♡\n"
+    "thank you to everyone supporting **{server}**."
+)
+
+BOOSTER_DEFAULT_FOOTER = "{boostcount} boosts ♡"
+
+# Default milestone thresholds — the current Discord boost-level
+# boundaries (2 → level 1, 7 → level 2, 14 → level 3). Admins can add
+# natural counts (5, 10, 20, 25, 50, 100 …) via /boosters config
+# setting:milestones or the dashboard; the default stays deliberately
+# small so nobody gets dozens of announcements.
+BOOSTER_DEFAULT_MILESTONE_COUNTS = [2, 7, 14]
+
+_BOOSTER_SETTINGS_DEFAULTS = {
+    "enabled": False,
+    "channel_id": None,
+    "message": BOOSTER_DEFAULT_MESSAGE,
+    "embed_mode": "embed",
+    "color": "#FFC0CB",
+    "image_url": None,
+    "thumbnail_mode": "member",
+    "footer": BOOSTER_DEFAULT_FOOTER,
+    "booster_role_id": None,
+    "auto_role": False,
+    "remove_role_on_unboost": True,
+    "milestone_enabled": True,
+    "milestone_message": BOOSTER_DEFAULT_MILESTONE_MESSAGE,
+    "milestone_counts": list(BOOSTER_DEFAULT_MILESTONE_COUNTS),
+    # High-water mark: the highest milestone threshold ever announced.
+    # Persisted so a restart / boost churn (drop below, climb back) can
+    # never re-post the same milestone. 0 = nothing announced yet.
+    "milestone_last": 0,
+    "updated_at": None,
+}
+
+
+async def get_booster_settings_async(guild_id) -> dict:
+    """PHASE O — booster settings for a guild (defaults filled for every
+    missing key, cached 60s inside get_guild_setting)."""
+    raw = await get_guild_setting_async(int(guild_id), _BOOSTER_SETTINGS_TABLE)
+    settings = dict(raw) if isinstance(raw, dict) else {}
+    for key, default in _BOOSTER_SETTINGS_DEFAULTS.items():
+        settings.setdefault(key, default)
+    # milestone_counts must always be a clean list of ints (a legacy or
+    # hand-edited row must never crash the milestone check)
+    mc = settings.get("milestone_counts")
+    if not isinstance(mc, list):
+        mc = list(BOOSTER_DEFAULT_MILESTONE_COUNTS)
+    try:
+        mc = sorted({int(x) for x in mc})
+    except (TypeError, ValueError):
+        mc = list(BOOSTER_DEFAULT_MILESTONE_COUNTS)
+    settings["milestone_counts"] = mc
+    try:
+        settings["milestone_last"] = int(settings.get("milestone_last") or 0)
+    except (TypeError, ValueError):
+        settings["milestone_last"] = 0
+    return settings
+
+
+async def set_booster_settings_async(guild_id, payload: dict):
+    """PHASE O — save (merge) booster settings for a guild.
+
+    Merging keeps the milestone loop's milestone_last update from wiping
+    the channel / message / role configuration. updated_at is written as
+    an ISO-8601 UTC string (TIMESTAMPTZ-safe at the Supabase boundary —
+    the Phase N.1 22007 lesson) and survives verbatim in the JSON
+    fallback."""
+    current = await get_booster_settings_async(guild_id)
+    current.update(payload if isinstance(payload, dict) else {})
+    current["updated_at"] = datetime.now(timezone.utc).isoformat()
+    clean = {k: v for k, v in current.items()
+             if k in _TABLE_COLUMNS[_BOOSTER_SETTINGS_TABLE] or k == "guild_id"}
+    await set_guild_setting_async(
+        int(guild_id), _BOOSTER_SETTINGS_TABLE, clean
+    )
 
 
 # ════════════════════════════════════════════════════════════════

@@ -95,6 +95,12 @@ class FakeGuild:
             FakeRole("200", "@everyone", default=True, position=0),
             FakeRole("201", "veloura", 0xFFC0CB, position=3),
             FakeRole("202", "midnight", 0x1A1D29, position=2),
+            # PHASE O — a Discord-native style MANAGED role (integration):
+            # must never appear in pickers nor be accepted as booster role
+            FakeRole("203", "Server Booster", 0xFF73FA, position=4,
+                     managed=True),
+            # a role ABOVE the bot's top role (bot top = 10): unmanageable
+            FakeRole("204", "above-bot", 0xFF0000, position=11),
         ]
 
     def get_channel(self, cid):
@@ -315,6 +321,120 @@ data = json.load(open("data/leveling_settings.json"))
 check("rewards written to JSON",
       data.get(GUILD_ID, {}).get("rewards") == {"5": "201"},
       str(data.get(GUILD_ID))[:120])
+
+print("== boosters module (PHASE O) ==")
+from utils.dashboard_actions import dashboard_action_queue  # noqa: E402
+# start from a clean slate so this section is re-run safe
+try:
+    _bs = json.load(open("data/booster_settings.json"))
+    if _bs.pop(GUILD_ID, None) is not None:
+        json.dump(_bs, open("data/booster_settings.json", "w"), indent=2)
+except Exception:
+    pass
+try:
+    dapi._db.cache.invalidate_sync(f"gs:booster_settings:{GUILD_ID}")
+except Exception:
+    pass
+# DASH-33 — auth required
+r = client.get(f"/api/dashboard/guild/{GUILD_ID}/settings/boosters")
+check("boosters settings need auth (401)", r.status_code == 401)
+# DASH-34 — manage-guild required
+g777 = client.get("/api/dashboard/guild/777/settings/boosters", headers=H)
+check("boosters settings need manage_guild (403)",
+      g777.status_code == 403)
+# DASH-35 — CSRF required on mutation
+r = client.patch(f"/api/dashboard/guild/{GUILD_ID}/settings/boosters",
+                 headers={**H, "Content-Type": "application/json"},
+                 json={"enabled": True})
+check("boosters PATCH rejected without CSRF (403)", r.status_code == 403)
+
+# defaults merged (template straight from utils/db.py)
+r = client.get(f"/api/dashboard/guild/{GUILD_ID}/settings/boosters", headers=H)
+s = r.get_json()["settings"]
+check("boosters defaults merged", r.status_code == 200
+      and s["embed_mode"] == "embed" and s["color"] == "#FFC0CB"
+      and s["milestone_counts"] == [2, 7, 14]
+      and s["thumbnail_mode"] == "member"
+      and s["remove_role_on_unboost"] is True
+      and "a new star is shining brighter" in (s["message"] or ""),
+      str(s)[:200])
+
+# valid PATCH persists + milestone baseline pinned to current count (2)
+r = client.patch(f"/api/dashboard/guild/{GUILD_ID}/settings/boosters",
+                 headers=HC,
+                 json={"enabled": True, "channel_id": "100",
+                       "booster_role_id": "201", "auto_role": True,
+                       "milestone_counts": [2, 7, 14, 25]})
+check("boosters PATCH ok (channel + role + milestones)",
+      r.status_code == 200
+      and r.get_json()["settings"]["channel_id"] == "100"
+      and r.get_json()["settings"]["booster_role_id"] == "201"
+      and r.get_json()["settings"]["milestone_counts"] == [2, 7, 14, 25],
+      str(r.get_json())[:200])
+check("milestone baseline pinned to current boost count on enable",
+      r.get_json()["settings"]["milestone_last"] == 2,
+      str(r.get_json()["settings"].get("milestone_last")))
+
+# DASH-36 — managed role rejected server-side
+r = client.patch(f"/api/dashboard/guild/{GUILD_ID}/settings/boosters",
+                 headers=HC, json={"booster_role_id": "203"})
+check("boosters PATCH managed role → 400",
+      r.status_code == 400 and "managed" in r.get_json().get("error", ""),
+      str(r.get_json()))
+# role above the bot rejected
+r = client.patch(f"/api/dashboard/guild/{GUILD_ID}/settings/boosters",
+                 headers=HC, json={"booster_role_id": "204"})
+check("boosters PATCH role above bot → 400",
+      r.status_code == 400 and "top role" in r.get_json().get("error", ""),
+      str(r.get_json()))
+# value validation
+r = client.patch(f"/api/dashboard/guild/{GUILD_ID}/settings/boosters",
+                 headers=HC, json={"embed_mode": "bogus"})
+check("boosters PATCH bad embed_mode → 400", r.status_code == 400)
+r = client.patch(f"/api/dashboard/guild/{GUILD_ID}/settings/boosters",
+                 headers=HC, json={"color": "pink!"})
+check("boosters PATCH bad color → 400", r.status_code == 400)
+r = client.patch(f"/api/dashboard/guild/{GUILD_ID}/settings/boosters",
+                 headers=HC, json={"image_url": "ftp://x"})
+check("boosters PATCH bad image_url → 400", r.status_code == 400)
+r = client.patch(f"/api/dashboard/guild/{GUILD_ID}/settings/boosters",
+                 headers=HC, json={"milestone_counts": [0, 2]})
+check("boosters PATCH bad milestone list → 400", r.status_code == 400)
+r = client.patch(f"/api/dashboard/guild/{GUILD_ID}/settings/boosters",
+                 headers=HC, json={"enabled": "yes"})
+check("boosters PATCH wrong type → 400", r.status_code == 400)
+
+# role pickers never list managed roles (gateway fallback path)
+r = client.get(f"/api/dashboard/guild/{GUILD_ID}/resources", headers=H)
+res = r.get_json()
+check("role picker filters managed + above-bot roles (DASH-36)",
+      [ro["name"] for ro in res["roles"]] == ["veloura", "midnight"],
+      str([ro["name"] for ro in res["roles"]]))
+
+# boosters actions queue correctly
+r = client.post(f"/api/dashboard/guild/{GUILD_ID}/action/booster_test",
+                headers=HC, json={})
+check("booster_test action queued", r.status_code == 200
+      and r.get_json()["queued"] is True)
+r = client.post(f"/api/dashboard/guild/{GUILD_ID}/action/booster_reset",
+                headers=HC, json={})
+check("booster_reset action queued", r.status_code == 200
+      and r.get_json()["queued"] is True)
+_qtypes = []
+while dashboard_action_queue.qsize():
+    item = dashboard_action_queue.get_nowait()
+    _qtypes.append(item["type"])
+check("booster action payloads well-formed",
+      _qtypes == ["booster_test", "booster_reset"], str(_qtypes))
+
+# persisted to the JSON fallback store
+bdata = json.load(open("data/booster_settings.json")).get(GUILD_ID, {})
+check("boosters written to JSON fallback",
+      bdata.get("channel_id") == "100"
+      and bdata.get("booster_role_id") == "201"
+      and bdata.get("milestone_counts") == [2, 7, 14, 25]
+      and bdata.get("milestone_last") == 2,
+      str(bdata)[:200])
 
 print("== actions ==")
 r = client.post(f"/api/dashboard/guild/{GUILD_ID}/action/qotd_post_now",

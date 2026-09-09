@@ -3,10 +3,10 @@
 
 Loads EVERY active cog (the main.py loader semantics) into a real
 discord.py tree, verifies:
-  * all cogs load (46 expected with setup_wizard)
+  * all cogs load (47 expected after PHASE O added cogs/boosters.py)
   * /setup exists with manage_guild gating
   * /help still registers (the cog was edited)
-  * root command count sanity (70 expected incl. /setup)
+  * root command count sanity (74 expected after PHASE O /boosters)
   * help.py home embed renders with and without SUPPORT_SERVER_URL
 """
 import asyncio
@@ -48,14 +48,23 @@ async def main():
                 loaded += 1
             except Exception as e:
                 failed.append((filename, f"{type(e).__name__}: {e}"))
-    check(f"all cogs load ({loaded})", loaded >= 46 and not failed,
+    check(f"all cogs load ({loaded})", loaded >= 47 and not failed,
           f"failed: {failed}")
-    check("setup_wizard counted", loaded == 46, f"got {loaded}")
+    check("booster cog counted", loaded == 47, f"got {loaded}")
 
     cmds = {c.name: c for c in bot.tree.get_commands()}
     check("/setup in tree", "setup" in cmds)
     check("/help in tree", "help" in cmds)
-    check("root count is 70", len(cmds) == 70, f"got {len(cmds)}")
+    check("/boosters in tree (PHASE O)", "boosters" in cmds)
+    boosters_group = cmds.get("boosters")
+    check("/boosters has exactly 4 subcommands",
+          boosters_group is not None
+          and len(getattr(boosters_group, "commands", [])) == 4,
+          f"got {len(getattr(boosters_group, 'commands', []))}")
+    # cogs-only tree: main.py's 3 hybrid roots (ping/uptime/botinfo) are
+    # NOT loaded here, so 71 here + 3 = 74 canonical top-level
+    check("root count is 71 in the cogs-only tree (74 canonical with "
+          "main.py hybrids)", len(cmds) == 71, f"got {len(cmds)}")
 
     # /setup permission gating
     sp = cmds.get("setup")

@@ -61,6 +61,7 @@ _COG_CLASS_NAMES = {
     "starboard": "Starboard",
     "ai_automod": "AIAutoMod",
     "custom_commands": "CustomCommands",
+    "boosters": "Boosters",
 }
 
 
@@ -210,6 +211,70 @@ async def execute_dashboard_action(bot, action: dict) -> dict:
             return {"ok": False, "detail": "giveaway already ended"}
         await cog._end_giveaway(gw, force=True)
         return {"ok": True, "detail": f"giveaway {gw_id} ended"}
+
+    # ── PHASE O — booster live actions ───────────────────────────────
+    if atype == "booster_test":
+        cog = bot.get_cog("Boosters")
+        if cog is None:
+            return {"ok": False, "detail": "Boosters cog not loaded"}
+        try:
+            config = await cog.get_config(guild.id)
+        except Exception as e:
+            return {"ok": False, "detail": f"settings load failed: {e}"}
+        channel = cog._get_channel(guild, config)
+        if channel is None:
+            return {"ok": False, "detail": "booster channel not configured/missing"}
+        # the requester is the preview member (falls back to the owner
+        # for dashboards whose user left the guild). The test path ONLY
+        # renders + sends the announcement — no premium_since changes,
+        # no achievements, no role changes, no milestone state.
+        member = guild.get_member(int(user_id)) if user_id.isdigit() else None
+        if member is None:
+            member = guild.owner
+        if member is None:
+            return {"ok": False, "detail": "no preview member available"}
+        try:
+            ok = await cog._send_announcement(channel, config, member, guild)
+        except Exception as e:
+            return {"ok": False, "detail": f"send failed: {e}"}
+        return {"ok": bool(ok),
+                "detail": f"test announcement sent to #{channel.name}"}
+
+    if atype == "booster_reset":
+        cog = bot.get_cog("Boosters")
+        if cog is None:
+            return {"ok": False, "detail": "Boosters cog not loaded"}
+        from utils.db import (
+            BOOSTER_DEFAULT_MESSAGE, BOOSTER_DEFAULT_MILESTONE_MESSAGE,
+            BOOSTER_DEFAULT_FOOTER, BOOSTER_DEFAULT_MILESTONE_COUNTS,
+        )
+        try:
+            payload = {
+                "enabled": False,
+                "channel_id": None,
+                "message": BOOSTER_DEFAULT_MESSAGE,
+                "embed_mode": "embed",
+                "color": "#FFC0CB",
+                "image_url": None,
+                "thumbnail_mode": "member",
+                "footer": BOOSTER_DEFAULT_FOOTER,
+                "booster_role_id": None,
+                "auto_role": False,
+                "remove_role_on_unboost": True,
+                "milestone_enabled": True,
+                "milestone_message": BOOSTER_DEFAULT_MILESTONE_MESSAGE,
+                "milestone_counts": list(BOOSTER_DEFAULT_MILESTONE_COUNTS),
+                "milestone_last": 0,
+            }
+            # baseline against the RESET state (last=0) — not the
+            # pre-reset high-water mark — so historical thresholds
+            # never replay after a reset
+            payload.update(
+                cog._baseline_milestones({"milestone_last": 0}, guild))
+            await cog._save_settings(guild, payload)
+        except Exception as e:
+            return {"ok": False, "detail": f"reset failed: {e}"}
+        return {"ok": True, "detail": "booster settings reset to defaults"}
 
     if atype == "reload_cog":
         import re

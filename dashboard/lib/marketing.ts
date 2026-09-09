@@ -110,7 +110,7 @@ export function redditShareUrl(url: string, title: string): string {
 }
 
 /** Numeric command count shown across marketing copy. */
-export const COMMAND_COUNT = 169;  // PHASE N.1: canonical (utils/command_counts.py) — 73 top-level roots + subcommands
+export const COMMAND_COUNT = 173;  // PHASE O: canonical (utils/command_counts.py) — 74 top-level roots + subcommands
 
 export const FEATURES_OVERVIEW = [
   { title: 'ai chat & memory', tag: 'she remembers you' },

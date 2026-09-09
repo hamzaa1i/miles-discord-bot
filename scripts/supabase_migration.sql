@@ -506,3 +506,37 @@ GRANT ALL ON public.ai_provider_usage TO anon;
 ALTER TABLE public.ai_provider_usage DISABLE ROW LEVEL SECURITY;
 
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO anon;
+
+-- ─── PHASE O — SERVER BOOSTER SYSTEM (/boosters) ────────────────────
+-- Per-guild booster configuration for cogs/boosters.py:
+--   announcement (channel/message/embed_mode/color/image_url/
+--   thumbnail_mode/footer), booster role management (booster_role_id/
+--   auto_role/remove_role_on_unboost), milestones (milestone_enabled/
+--   milestone_message/milestone_counts + milestone_last high-water
+--   mark so a threshold is announced once, EVER — restarts and boost
+--   churn can never repost it).
+-- updated_at is written by the code as an ISO-8601 UTC string
+-- (TIMESTAMPTZ-safe boundary — the Phase N.1 22007 lesson).
+-- milestone_counts is a JSONB array of ints (default [2, 7, 14] =
+-- Discord boost-level boundaries; admins can add 5/10/20/25/50/100…).
+CREATE TABLE IF NOT EXISTS public.booster_settings (
+  guild_id TEXT PRIMARY KEY,
+  enabled BOOLEAN DEFAULT FALSE,
+  channel_id TEXT,
+  message TEXT,
+  embed_mode TEXT DEFAULT 'embed',
+  color TEXT DEFAULT '#FFC0CB',
+  image_url TEXT,
+  thumbnail_mode TEXT DEFAULT 'member',
+  footer TEXT,
+  booster_role_id TEXT,
+  auto_role BOOLEAN DEFAULT FALSE,
+  remove_role_on_unboost BOOLEAN DEFAULT TRUE,
+  milestone_enabled BOOLEAN DEFAULT TRUE,
+  milestone_message TEXT,
+  milestone_counts JSONB DEFAULT '[2,7,14]'::jsonb,
+  milestone_last INTEGER DEFAULT 0,
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+GRANT ALL ON public.booster_settings TO anon;
+ALTER TABLE public.booster_settings DISABLE ROW LEVEL SECURITY;

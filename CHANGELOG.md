@@ -7,6 +7,27 @@ api mirror lives at `GET /api/changelog`, the rss feed at
 `/changelog.rss`, and the pretty page at [/changelog](/changelog).
 
 
+## [v1.2.0] — 2026-09-10
+
+> highlights: phase o — complete server booster system · configurable announcements (text/embed/hybrid) with template variables · hierarchy-safe booster role management · once-ever persisted milestones · dedicated dashboard module + live preview · one new root group /boosters
+
+phase o — the booster system. when a member boosts, aurelia can now post a beautiful configurable announcement, grant an optional booster role, celebrate milestone thresholds exactly once, and log everything privately — all per guild, coexisting cleanly with the first_boost achievement.
+
+### features
+- boost detection via the authoritative `premium_since` transition — nickname changes, role changes, discord system messages and aurelia's own role-assignment echo never trigger a false announcement; a 30s idempotency cache absorbs duplicate member updates
+- configurable booster announcements: text / embed / hybrid (split at `---`, same convention as welcome), custom color, banner image, footer template, thumbnail (member avatar / server icon / none), and safe `.replace()`-only template variables (`{user}` `{user.name}` `{user.display_name}` `{user.id}` `{user.avatar}` `{server}` `{server.id}` `{server.icon}` `{boostcount}` `{boostlevel}`) — unbalanced braces can never crash rendering
+- optional booster role: granted on boost when auto_role is on, removed on unboost (cleanup keeps running even with announcements off); hierarchy-checked (never at/above aurelia's top role, never managed/integration roles incl. discord's native Server Booster role), failures logged, no Administrator required
+- milestones: default thresholds 2 · 7 · 14 (discord boost-level boundaries), configurable to natural counts (5, 10, 20, 25, 50, 100…); announced once when crossed upward, persisted high-water mark (`milestone_last`) so restarts and boost churn can never repost; enabling the module pins the baseline to the current count so historical thresholds never replay
+- `/boosters` — ONE new root group with four subcommands (config · show · test · reset), all Manage Guild: 14 config settings in one command, confirmation-button reset, and a test command that only renders and posts the announcement (never fakes a boost, never awards first_boost, never touches roles/milestones)
+- boost/unboost events logged to the guild's existing log channel (member, count, role result, announcement result) — no new log channel requirement; unboost is deliberately quiet (no public goodbye)
+- dashboard boosters module (`/servers/[guildId]/boosters`): announcement editor, embed mode/color/image/footer/thumbnail, live role pickers (managed roles filtered server-side), auto-role + remove-on-unboost toggles, milestone thresholds, live preview with the server's real boost count, safe test action and reset action — all through the authenticated/CSRF-audited module API
+- `booster_settings` supabase table (+ json fallback, defaults filled, iso-8601 updated_at at the timestamptz boundary) and dashboard-side patch validation (channel exists + text-like, role exists + not managed + below bot, mode/color/url/milestone-list whitelists)
+
+### improvements
+- command counts: 47 cogs · 74 top-level commands/groups · 173 total invokable paths (discord 100-limit headroom 26) — canonical helper updated across startup log, /botinfo, public stats, docs/landing copy and tests
+- the first_boost "supporter" achievement remains owned by the achievements module and is permanent; /toggledms governs private dms only and never suppresses the public booster announcement
+- 40 phase o regression tests (scripts/test_phase_o.py) + dashboard api boosters checks — mock events only, no real boosts performed
+
 ## [v1.1.1] — 2026-09-08
 
 > highlights: phase n.1 live repair — ai output safety (the glm meta-leak can never reach discord) · gemini afc disabled on ordinary generation · honest provider health states (configured ≠ healthy) · one-response cooldown fix · /toggledms governs every passive dm · time-capsule 22007 timestamp fix · canonical command counts

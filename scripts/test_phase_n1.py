@@ -41,8 +41,10 @@ The 27 required Phase N.1 regressions:
   CAP 25 due -> unlocked                 -> terminal state
   CAP 26 JSON fallback format            -> floats preserved
 
-  CNT 27 canonical command counts        -> 46 cogs / 73 top-level / 169
-         total invokable, consistent across every current surface
+  CNT 27 canonical command counts        -> 47 cogs / 74 top-level / 173
+         total invokable (PHASE O: /boosters added one root group;
+         pre-O values were 46/73/169), consistent across every
+         current surface
 
 Run:  python3 scripts/test_phase_n1.py
 """
@@ -774,23 +776,27 @@ def test_counts():
     print("\n── command counts: one canonical number everywhere ──")
     from utils.command_counts import count_commands_static
     c = count_commands_static()
-    check("CNT-27 canonical: 46 cogs / 73 top-level / 169 invokable "
+    # PHASE O — /boosters added one root group (+4 subcommands), so the
+    # canonical count moved from 46/73/169 to 47/74/173. The helper is
+    # still the ONE source; this test pins whatever the current tree
+    # actually builds.
+    check("CNT-27 canonical: 47 cogs / 74 top-level / 173 invokable "
           "(Discord 100-limit respected)",
-          c["cogs"] == 46 and c["top_level"] == 73
-          and c["total_invokable"] == 169
+          c["cogs"] == 47 and c["top_level"] == 74
+          and c["total_invokable"] == 173
           and c["top_level_headroom"] >= 0,
           f"got {c['cogs']}/{c['top_level']}/{c['total_invokable']}")
 
     marketing = open("dashboard/lib/marketing.ts",
                      encoding="utf-8").read()
-    check("CNT-27b dashboard COMMAND_COUNT == 169 (was 168)",
-          "COMMAND_COUNT = 169" in marketing)
+    check("CNT-27b dashboard COMMAND_COUNT == 173 (phase O canonical)",
+          "COMMAND_COUNT = 173" in marketing)
 
     docs_data = open("dashboard/lib/docs-commands-data.ts",
                      encoding="utf-8").read()
     check("CNT-27c docs dataset count matches its own entries "
           "(documented roots)",
-          "export const DOCS_COMMAND_COUNT = 72;" in docs_data)
+          "export const DOCS_COMMAND_COUNT = 73;" in docs_data)
 
     cmds_md = open("COMMANDS.md", encoding="utf-8").read()
     check("CNT-27d COMMANDS.md documents /toggledms and "
@@ -806,10 +812,14 @@ def test_counts():
     check("CNT-27f public /api/stats exposes command_counts",
           "command_counts" in pub_src and "count_commands_static" in pub_src)
     changelog = open("CHANGELOG.md", encoding="utf-8").read()
+    # PHASE O — v1.2.0 (boosters) now sits above v1.1.1; the intent of
+    # this check (entries preserved, newest-first, n.1 block intact)
+    # is unchanged, the old [:2500] window just assumed v1.1.1 was top.
     check("CNT-27g Phase N.1 changelog entry exists (history NOT "
           "rewritten — new entry only)",
           "## [v1.1.1]" in changelog
-          and "phase n.1" in changelog.lower()[:2500]
+          and "phase n.1" in changelog.lower()
+          and changelog.index("[v1.2.0]") < changelog.index("[v1.1.1]")
           and changelog.index("[v1.1.1]") < changelog.index("[v1.1.0]"))
 
 

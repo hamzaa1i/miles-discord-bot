@@ -242,6 +242,20 @@ export const MODULE_DOCS: ModuleDoc[] = [
     commands: ['/bump remind'],
   },
   {
+    slug: 'boosters',
+    title: 'boosters',
+    tagline: 'celebrate every boost',
+    description:
+      'a complete booster system: an aesthetic announcement the moment someone boosts (text / embed / hybrid, custom color, banner image, template variables), an optional booster role granted and quietly cleaned up, and milestone cards when the server crosses a boost threshold — posted once, ever. the /boosters test command previews the announcement safely, and /toggledms never suppresses it (it governs private DMs, not public announcements).',
+    commands: ['/boosters config', '/boosters show', '/boosters test', '/boosters reset'],
+    notes: [
+      'detection uses the premium_since transition — role changes, nicknames and Discord system messages never trigger a false announcement.',
+      'milestones persist a high-water mark, so restarts and boost churn can never repost the same threshold.',
+      'unboost is quiet by design: no public goodbye, the booster role is simply removed (if configured).',
+      'the first_boost achievement stays owned by the achievements module — both features fire independently, once each.',
+    ],
+  },
+  {
     slug: 'rules',
     title: 'rules',
     tagline: 'rules & agreement role',

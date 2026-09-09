@@ -462,6 +462,17 @@ export const DOCS_COMMANDS: DocsCategory[] = [
         subcommands: [],
       },
       {
+        name: '/boosters',
+        isGroup: true,
+        permission: 'Manage Guild',
+        isNew: true,
+        description: 'A complete booster system: announcements when someone boosts, an optional booster role, and milestone cards at boost thresholds — each posted once, ever. Detection uses the \`premium_since\` transition, so nickname changes, role changes and Discord system messages never trigger a false announcement. Boost events are also logged to the server\'s existing log channel. **/boosters config** — configure any setting. Parameters: \`color\` · \`image\` · \`thumbnail\` · \`footer\` · \`booster_role\` · \`auto_role\` · \`remove_role_on_unboost\` · \`milestone_toggle\` · \`milestones\` · \`milestone_message\` · \`toggle\` milestone list (\`reset\` restores defaults) roles incl. Discord\'s native Server Booster role are rejected, as are roles at/above Aurelia\'s top role) Examples: \`\`\` /boosters config setting:channel channel:#boosting /boosters config setting:message value:thank you {user} ♡ /boosters config setting:embed_mode value:hybrid /boosters config setting:color value:#FFC0CB /boosters config setting:booster_role role:@booster /boosters config setting:auto_role value:on /boosters config setting:remove_role_on_unboost value:on /boosters config setting:milestone_toggle value:on /boosters config setting:milestones value:2,7,14,25,50 /boosters config setting:toggle value:on \`\`\` Example response: "✅ booster channel set to #boosting — booster announcements **enabled**." **/boosters show** — rich overview of the current config: announcements, role, milestones, this server\'s actual boost count/level, a message preview and the full tag list. **/boosters test** — safely preview the announcement (renders it with YOU as the preview member in the configured channel). Never fakes a boost, never awards the first_boost achievement, never changes the boost count, never touches roles or milestone state. **/boosters reset** — reset ALL booster settings to defaults (confirmation button; only booster settings — achievements and actual Discord roles are untouched). Template variables (safe replace, never \`.format()\`): \`{user}\` \`{user.name}\` \`{user.display_name}\` \`{user.id}\` \`{user.avatar}\` \`{server}\` \`{server.id}\` \`{server.icon}\` \`{boostcount}\` \`{boostlevel}\` — plus literal \`\\n\` for newlines and \`---\` for hybrid mode (before = text, after = embed). Milestones: default thresholds \`2, 7, 14\` (Discord boost-level boundaries); announced once when crossed upward, persisted so restarts and boost churn never repost. Unboost is quiet — no public goodbye, the booster role is simply removed (if configured). \`/toggledms\` governs private DMs only and never suppresses the public announcement. The first_boost "supporter" achievement stays owned by \`/achievements\` and is permanent.',
+        params: [],
+        examples: [],
+        other: ['\`setting\` (choice, required): \`channel\` · \`message\` · \`embed_mode\` ·', '\`value\` (string, optional): text / mode / hex color / URL / \`on\`/\`off\` /', '\`channel\` (optional — for the channel setting)', '\`role\` (optional — for the booster_role setting; managed/integration'],
+        subcommands: [],
+      },
+      {
         name: '/confess',
         isGroup: true,
         permission: '',
@@ -995,4 +1006,4 @@ export const DOCS_COMMANDS: DocsCategory[] = [
   },
 ];
 
-export const DOCS_COMMAND_COUNT = 72;
+export const DOCS_COMMAND_COUNT = 73;
