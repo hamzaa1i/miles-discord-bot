@@ -15,7 +15,7 @@
  * server-side.
  */
 
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import { useParams } from 'next/navigation';
 import { useModuleSettings } from '@/lib/useModuleSettings';
 import { useAuth } from '@/lib/auth';
@@ -77,7 +77,14 @@ function normalizeColor(raw: string): string {
   return m ? `#${m[1]}` : '#FFC0CB';
 }
 
-function substitute(template: string, ctx: { username: string; serverName: string; boostcount: number; avatar: string }): string {
+interface PreviewContext {
+  username: string;
+  serverName: string;
+  boostcount: number;
+  avatar: string;
+}
+
+function substitute(template: string, ctx: PreviewContext): string {
   return String(template ?? '')
     .replaceAll('{user}', `@${ctx.username}`)
     .replaceAll('{user.name}', ctx.username)
@@ -92,12 +99,42 @@ function substitute(template: string, ctx: { username: string; serverName: strin
     .replaceAll('\\n', '\n');
 }
 
+/**
+ * Pure preview computation — deliberately NOT memoized.
+ *
+ * It only runs once settings are loaded, it is a handful of string
+ * replaces (cheap), and putting a useMemo here would place a hook
+ * below the loading/error early-returns: the loading render would call
+ * 8 hooks while the loaded render calls 9, React would throw
+ * "Rendered more hooks than during the previous render" (minified
+ * React error #310) and the whole page crashes in production.
+ */
+function buildPreview(
+  rawMessage: string,
+  rawFooter: string,
+  mode: string,
+  ctx: PreviewContext,
+): { content: string | null; body: string; footer: string } {
+  const full = substitute(rawMessage, ctx);
+  const footer = substitute(rawFooter, ctx);
+  let content: string | null = null;
+  let body: string = full;
+  if (mode === 'text') {
+    content = full;
+  } else if (mode === 'hybrid' && full.includes('---')) {
+    const [before, after] = full.split('---');
+    content = before.trim();
+    body = after.trim();
+  }
+  return { content, body, footer };
+}
+
 export default function BoostersPage() {
   const params = useParams<{ guildId: string }>();
   const gid = String(params.guildId);
   const { user } = useAuth();
   const toast = useToast();
-  const { resources } = useGuild();
+  const { resources, overview } = useGuild();
   const ms = useModuleSettings(gid, 'boosters', DEFAULTS);
   const [tab, setTab] = useState('announcement');
   const [testing, setTesting] = useState(false);
@@ -112,8 +149,8 @@ export default function BoostersPage() {
 
   const previewCtx = {
     username: user?.display_name ?? 'a kind booster',
-    serverName: 'your server',
-    boostcount: resources?.boost_count ?? 7,
+    serverName: overview?.name ?? 'your server',
+    boostcount: resources?.boost_count ?? overview?.boost_count ?? 7,
     avatar: user?.avatar ?? defaultAvatar(user?.id ?? '0'),
   };
 
@@ -157,21 +194,7 @@ export default function BoostersPage() {
   const image = String(s.image_url ?? '') || null;
   const color = normalizeColor(String(s.color ?? '#FFC0CB'));
 
-  const preview = useMemo(() => {
-    const full = substitute(rawMessage, previewCtx);
-    const footer = substitute(rawFooter, previewCtx);
-    let content: string | null = null;
-    let body: string = full;
-    if (mode === 'text') {
-      content = full;
-    } else if (mode === 'hybrid' && full.includes('---')) {
-      const [before, after] = full.split('---');
-      content = before.trim();
-      body = after.trim();
-    }
-    return { content, body, footer };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rawMessage, rawFooter, mode, previewCtx.boostcount, previewCtx.username]);
+  const preview = buildPreview(rawMessage, rawFooter, mode, previewCtx);
 
   return (
     <>

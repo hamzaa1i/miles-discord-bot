@@ -50,6 +50,14 @@ class FakeChannel:
         self.type = ctype
         self.category_id = category
 
+    def permissions_for(self, member):
+        # gateway-fallback path of the channel serializer calls this —
+        # the fake bot can see/send in every fake channel (matches the
+        # fake guild's guild_permissions), so pickers populate in
+        # --serve browser runs
+        import discord
+        return discord.Permissions(view_channel=True, send_messages=True)
+
 
 class FakeMember:
     def __init__(self, uid, name, status="online"):
