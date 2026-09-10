@@ -121,8 +121,15 @@ _rl_map: dict = {}
 def _rate_ok(ip: str, is_get: bool) -> bool:
     limit = _RATE_LIMIT_GET if is_get else _RATE_LIMIT_MUTATION
     now = time.time()
+    # PHASE O.2 — separate sliding windows per (ip, class). The old
+    # single per-IP window made the mutation check trip at 60 TOTAL
+    # requests (gets + mutations together), so a user browsing pages
+    # while saving config got a misleading 429 long before 60 actual
+    # mutations. Reads and mutations are independent workloads — count
+    # them independently, matching the documented 150/60 intent.
+    key = (ip, "get" if is_get else "mut")
     with _rl_lock:
-        window = _rl_map.setdefault(ip, deque())
+        window = _rl_map.setdefault(key, deque())
         while window and now - window[0] > _RATE_WINDOW:
             window.popleft()
         if len(window) >= limit:
@@ -464,13 +471,21 @@ def require_api(fn):
             return fn(*args, **kwargs)
         except Exception as e:
             logger.error(f"[dashboard] {request.path} failed: {e}", exc_info=True)
-            # Live-testing lesson: a bare "internal error" hides the actual
-            # cause (e.g. the Asset-serialization bug below shipped invisibly
-            # for a whole round). The dashboard audience is guild managers +
-            # the bot owner, so surfacing the exception type + message makes
-            # the next failure self-describing. Full trace stays in bot.log.
-            detail = f"{type(e).__name__}: {e}"[:200]
-            return _auth_error(500, f"internal error ({detail})")
+            # PHASE O.2 — raw Python exception text must NOT leak to
+            # dashboard users: production surfaced "TypeError: int()
+            # argument must be..." to guild managers. The full type +
+            # message + traceback stays in bot.log; the client gets a
+            # clean, actionable message plus a short error ref that is
+            # logged alongside the detail so the owner can correlate a
+            # user report with the exact log line. Validation errors
+            # (400s) are intentional and still carry their own messages.
+            err_ref = secrets.token_hex(4)
+            logger.error("[dashboard] error ref %s: %s: %s",
+                         err_ref, type(e).__name__, str(e)[:300])
+            return _auth_error(
+                500,
+                f"couldn't complete that — please refresh and try again "
+                f"(ref {err_ref})")
     return wrapper
 
 
@@ -924,9 +939,30 @@ def _validate_boosters_targets(guild, body: dict):
         channel = guild.get_channel(int(cid)) if str(cid).isdigit() else None
         if channel is None:
             return "channel not found in this server"
-        ctype = int(getattr(channel, "type", 0) or 0)
-        if ctype not in (0, 5, 15, 16):
-            return "booster announcements need a text channel"
+        # PHASE O.2 — channel.type is a discord.ChannelType enum member
+        # (NOT IntEnum) in discord.py 2.x, so a bare int(channel.type)
+        # raised TypeError and 500'd every real Save Changes. Normalize
+        # through the shared central helper instead; unknown/future
+        # types normalize to None and are rejected, never aliased to
+        # "text". Announcement targets: text (0), news (5), forum (15),
+        # media (16) — the same intentional set the frontend picker
+        # offers; voice/stage/category/thread targets are refused.
+        ctype = _channel_type_int(getattr(channel, "type", None), default=None)
+        if ctype is None or ctype not in (0, 5, 15, 16):
+            return "booster announcements need a text channel aurelia can post in"
+        # Defense in depth: the pickers filter bot_can_send, but a
+        # hand-crafted PATCH (or a permission change after load) must
+        # also be refused here rather than failing at announcement time.
+        me = getattr(guild, "me", None)
+        perms = None
+        if me is not None:
+            try:
+                perms = channel.permissions_for(me)
+            except Exception:
+                perms = None    # unresolvable -> don't guess, cog re-checks at runtime
+        if perms is not None and not bool(getattr(perms, "send_messages", False)):
+            return ("selected channel is not available or aurelia "
+                    "cannot send there")
     rid = body.get("booster_role_id")
     if rid is not None:
         if not str(rid).strip():
@@ -1471,21 +1507,41 @@ def _perms_from_overwrites(guild, overwrites) -> "discord.Permissions":
     return base
 
 
-def _channel_type_int(t) -> int:
-    """Discord channel type as a plain int.
+def _channel_type_int(t, default=0) -> int | None:
+    """Discord channel type as a JSON-safe plain int (or `default`).
 
-    discord.py 2.x's ChannelType is a plain Enum (NOT IntEnum) —
-    int(ChannelType.text) raises TypeError. This was the live-testing
-    root cause for every channel picker showing empty: the old endpoint
-    swallowed that error per channel and returned [].
+    This is the CENTRAL channel-type normalizer for the whole dashboard
+    API. discord.py 2.x's ChannelType is a plain Enum (NOT IntEnum) —
+    its members are `_EnumValue_ChannelType` instances and
+    int(ChannelType.text) raises
+        TypeError: int() argument must be a string, a bytes-like object
+        or a real number, not '_EnumValue_ChannelType'
+    which is exactly the Phase O.2 production save crash: the boosters
+    PATCH validator cast channel.type directly and every real
+    "Save Changes" 500'd with the raw exception leaked to the client.
+
+    The wire int lives on `.value`. Accepts:
+      * discord.ChannelType enum members        -> int(t.value)
+      * raw ints (REST payloads / already-safe) -> t
+      * numeric strings                          -> int(t)
+      * None / bools / unparseable               -> `default`
+
+    Callers pick the failure mode: display/serialization passes
+    default=0 (unknown just renders generically); strict validation
+    passes default=None so unknown/future types are REJECTED instead
+    of silently aliasing to "text".
     """
-    try:
-        return int(t.value)
-    except Exception:
+    value = getattr(t, "value", t)      # enum member -> wire int
+    if isinstance(value, bool):         # bool is an int subclass — never a channel type
+        return default
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
         try:
-            return int(t)
-        except Exception:
-            return 0
+            return int(value)
+        except ValueError:
+            return default
+    return default
 
 
 def _live_guild_channels(guild):
@@ -1508,12 +1564,15 @@ def _live_guild_channels(guild):
             overwrites = c.get("permission_overwrites") or []
             perms = _perms_from_overwrites(guild, overwrites)
             parent_id = c.get("parent_id")
+            # REST payloads already carry the wire int, but normalize
+            # through the shared helper anyway so this path can never
+            # diverge from the enum-aware gateway fallback below.
+            ctype = _channel_type_int(c.get("type", 0) or 0)
             channels.append({
                 "id": str(c.get("id", "")),
                 "name": str(c.get("name", "")),
-                "type": int(c.get("type", 0) or 0),
-                "type_name": _CHANNEL_TYPE_NAMES.get(
-                    int(c.get("type", 0) or 0), "text"),
+                "type": ctype,
+                "type_name": _CHANNEL_TYPE_NAMES.get(ctype, "text"),
                 "position": int(c.get("position", 0) or 0),
                 "parent_id": str(parent_id) if parent_id else None,
                 "parent_name": (

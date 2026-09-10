@@ -25,6 +25,13 @@ export function useModuleSettings(gid: string, module: string, defaults?: Settin
   const [verifying, setVerifying] = useState(false);
   const defaultsRef = useRef<Settings | undefined>(defaults);
   defaultsRef.current = defaults;
+  /** Live mirrors of settings/saved — patch() must read the values at
+   * CALL time (not closure-capture time) to snapshot unsaved edits made
+   * in earlier events before its async response lands. */
+  const settingsRef = useRef<Settings | null>(null);
+  const savedRef = useRef<Settings | null>(null);
+  settingsRef.current = settings;
+  savedRef.current = saved;
 
   useEffect(() => {
     let cancelled = false;
@@ -67,16 +74,61 @@ export function useModuleSettings(gid: string, module: string, defaults?: Settin
     setSettings((s) => (s ? { ...s, ...patch } : s));
   }, []);
 
+  /**
+   * PATCH settings and reconcile local + server state.
+   *
+   * PHASE O.2 — state-preservation semantics: the server response is
+   * AUTHORITATIVE for the fields this patch covers, but a partial
+   * immediate patch (the enable toggle sends only {enabled}) must not
+   * discard unrelated unsaved local edits (selected channel, drafted
+   * message, picked role…). Before the request we snapshot every dirty
+   * key NOT included in the patch; after the response those keys are
+   * re-applied on top of the fresh server state so they stay dirty and
+   * Save can still commit them.
+   *
+   * Consequences:
+   *  - fields in the patch body always take the server's value (the
+   *    server may normalize, e.g. milestone_last pinning);
+   *  - fields the server changed that were NOT locally dirty are
+   *    accepted as-is (fresh server state, no stale echo);
+   *  - fields both locally-dirty AND server-changed keep the local
+   *    value: the user's edit stays visible and unsaved — last write
+   *    wins on Save, exactly the pre-existing save() contract;
+   *  - saved always mirrors the true server state, so dirty/revert
+   *    remain honest.
+   *
+   * opts.preserveDirty=false (used by resetDefaults) drops the
+   * snapshot so a reset really yields a clean state.
+   */
   const patch = useCallback(
-    async (patchObj: Settings): Promise<Settings | null> => {
+    async (
+      patchObj: Settings,
+      opts: { preserveDirty?: boolean } = {},
+    ): Promise<Settings | null> => {
+      const preserveDirty = opts.preserveDirty !== false;
       setSaving(true);
       setError(null);
+      const before = settingsRef.current;
+      const prevSaved = savedRef.current;
+      const preserved: Settings = {};
+      if (preserveDirty && before && prevSaved) {
+        const patchKeys = new Set(Object.keys(patchObj));
+        for (const k of Object.keys(before)) {
+          if (
+            !patchKeys.has(k) &&
+            JSON.stringify(before[k]) !== JSON.stringify(prevSaved[k])
+          ) {
+            preserved[k] = before[k];
+          }
+        }
+      }
       try {
         const res = await endpoints.patchSettings(gid, module, patchObj);
         const merged = { ...(defaultsRef.current ?? {}), ...res.settings };
-        setSettings(merged);
         setSaved(merged);
-        return merged;
+        const next = { ...merged, ...preserved };
+        setSettings(next);
+        return next;
       } catch (e) {
         const msg = e instanceof ApiRequestError ? e.message : 'save failed';
         setError(msg);
@@ -111,7 +163,11 @@ export function useModuleSettings(gid: string, module: string, defaults?: Settin
 
   const resetDefaults = useCallback(async (): Promise<boolean> => {
     if (!defaultsRef.current) return false;
-    return (await patch({ ...defaultsRef.current })) !== null;
+    // a reset must produce a CLEAN defaults state — do not preserve
+    // dirty fields through it
+    return (
+      await patch({ ...defaultsRef.current }, { preserveDirty: false })
+    ) !== null;
   }, [patch]);
 
   const dirty =

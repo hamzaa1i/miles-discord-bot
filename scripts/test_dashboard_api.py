@@ -20,6 +20,8 @@ import sys
 import types
 from datetime import datetime, timezone
 
+import discord
+
 REPO = "/home/z/my-project/miles-discord-bot"
 os.chdir(REPO)
 sys.path.insert(0, REPO)
@@ -45,18 +47,30 @@ class FakeRole:
 
 
 class FakeChannel:
-    def __init__(self, cid, name, ctype=0, category=None, position=0):
+    """Channel stand-in whose `.type` is a REAL discord.ChannelType
+    member — the PHASE O.2 lesson: the old harness set `.type` to a
+    plain int, so the boosters PATCH validator's int(channel.type)
+    worked in tests while raising TypeError on every real guild
+    object in production. Real discord.py 2.x channels carry enum
+    members (`_EnumValue_ChannelType`); this harness now models that
+    faithfully, including unknown-future enum-like values via
+    `ctype=future(99)`."""
+
+    def __init__(self, cid, name, ctype=None, category=None, position=0,
+                 can_send=True):
         self.id, self.name, self.position = int(cid), name, position
-        self.type = ctype
+        # default: a real text-channel enum member, exactly like
+        # discord.TextChannel.type in discord.py 2.7.1
+        self.type = discord.ChannelType.text if ctype is None else ctype
         self.category_id = category
+        self.can_send = can_send
 
     def permissions_for(self, member):
         # gateway-fallback path of the channel serializer calls this —
-        # the fake bot can see/send in every fake channel (matches the
-        # fake guild's guild_permissions), so pickers populate in
-        # --serve browser runs
-        import discord
-        return discord.Permissions(view_channel=True, send_messages=True)
+        # the fake bot can see every fake channel; can_send models
+        # Send Messages overwrites (False = the locked channel case)
+        return discord.Permissions(
+            view_channel=True, send_messages=self.can_send)
 
 
 class FakeMember:
@@ -95,9 +109,24 @@ class FakeGuild:
         self.members = [FakeMember(USER_ID, "volc"),
                         FakeMember("999", "sleepy")]
         self.channels = [
-            FakeChannel("100", "general", 0, None, 0),
-            FakeChannel("101", "off-topic", 0, None, 1),
-            FakeChannel("102", "vc-lounge", 2, None, 0),
+            # REAL discord.py ChannelType enum members — the production
+            # representation (see FakeChannel docstring)
+            FakeChannel("100", "general", discord.ChannelType.text),
+            FakeChannel("101", "announcements", discord.ChannelType.news),
+            FakeChannel("102", "vc-lounge", discord.ChannelType.voice),
+            FakeChannel("103", "boosting", discord.ChannelType.text),
+            FakeChannel("104", "forum-board", discord.ChannelType.forum),
+            FakeChannel("105", "media-gallery", discord.ChannelType.media),
+            FakeChannel("106", "stage", discord.ChannelType.stage_voice),
+            FakeChannel("107", "archive", discord.ChannelType.category),
+            # unknown/future channel type: a value discord.py 2.7.1 does
+            # not know yet — must fail SAFE (rejected), never accepted
+            # nor a 500
+            FakeChannel("108", "future-channel",
+                        types.SimpleNamespace(value=99)),
+            # text channel the bot CANNOT send in (Send Messages denied)
+            FakeChannel("109", "locked", discord.ChannelType.text,
+                        can_send=False),
         ]
         self.roles = [
             FakeRole("200", "@everyone", default=True, position=0),
@@ -200,6 +229,17 @@ dapi.verify_guild_permission_detailed = _fake_verify_detailed
 
 app = Flask(__name__)
 dapi.init_dashboard_api(app)
+
+
+# PHASE O.2 — synthetic internal-error route (registered BEFORE any
+# request is dispatched; Flask locks setup after the first request).
+# Raises the exact production TypeError so the suite can prove the
+# require_api wrapper sanitizes unexpected exceptions (Part 7).
+@app.route("/api/dashboard/__boom__")
+@dapi.require_api
+def _synthetic_boom():
+    raise TypeError("int() argument must be a string, a bytes-like object "
+                    "or a real number, not '_EnumValue_ChannelType'")
 
 SERVE = "--serve" in sys.argv
 if SERVE:
@@ -443,6 +483,116 @@ check("boosters written to JSON fallback",
       and bdata.get("milestone_counts") == [2, 7, 14, 25]
       and bdata.get("milestone_last") == 2,
       str(bdata)[:200])
+
+print("== PHASE O.2 — real discord.py ChannelType regression ==")
+# ── 1. the harness now models production: real enum members ─────────
+_real_ch = fake_guild.get_channel(100)
+check("FakeChannel.type is a REAL ChannelType enum member",
+      type(_real_ch.type).__name__ == "_EnumValue_ChannelType"
+      and _real_ch.type is discord.ChannelType.text
+      and _real_ch.type.value == 0
+      and isinstance(_real_ch.type.value, int),
+      f"type={type(_real_ch.type).__name__} value={getattr(_real_ch.type, 'value', None)!r}")
+
+# ── 2. PROOF the old implementation raises the exact production error ─
+# This is the verbatim old expression from _validate_boosters_targets
+# (pre-O.2):   ctype = int(getattr(channel, "type", 0) or 0)
+_old_expr_raised = None
+try:
+    int(getattr(_real_ch, "type", 0) or 0)      # ← the OLD code
+except TypeError as e:
+    _old_expr_raised = str(e)
+check("OLD int(channel.type) raises the production TypeError",
+      _old_expr_raised is not None
+      and "_EnumValue_ChannelType" in _old_expr_raised,
+      f"raised: {_old_expr_raised!r}")
+
+# ── 3. the central normalizer handles every real representation ─────
+check("shared _channel_type_int normalizes real enums to JSON-safe ints",
+      dapi._channel_type_int(discord.ChannelType.text, default=None) == 0
+      and dapi._channel_type_int(discord.ChannelType.news, default=None) == 5
+      and dapi._channel_type_int(discord.ChannelType.voice, default=None) == 2
+      and dapi._channel_type_int(discord.ChannelType.category, default=None) == 4
+      and dapi._channel_type_int(discord.ChannelType.forum, default=None) == 15
+      and dapi._channel_type_int(discord.ChannelType.media, default=None) == 16
+      and dapi._channel_type_int("5") == 5
+      and dapi._channel_type_int(None, default=None) is None)
+
+# ── 4. the exact production flow: PATCH a real-enum channel → 200 ───
+# (with the OLD code this was the 500 "internal error (TypeError: …)")
+r = client.patch(f"/api/dashboard/guild/{GUILD_ID}/settings/boosters",
+                 headers=HC, json={"channel_id": "103"})
+check("BOOSTERS SAVE with real ChannelType.text channel → 200",
+      r.status_code == 200
+      and r.get_json()["settings"]["channel_id"] == "103",
+      str(r.get_json())[:200])
+check("no internal-error/TypeError text in the save response",
+      "error" not in r.get_json(), str(r.get_json())[:120])
+
+# ── 5. valid announcement channel types are accepted ────────────────
+r = client.patch(f"/api/dashboard/guild/{GUILD_ID}/settings/boosters",
+                 headers=HC, json={"channel_id": "101"})
+check("announcement (news, type 5) channel accepted → 200",
+      r.status_code == 200
+      and r.get_json()["settings"]["channel_id"] == "101")
+r = client.patch(f"/api/dashboard/guild/{GUILD_ID}/settings/boosters",
+                 headers=HC, json={"channel_id": "104"})
+check("forum channel (type 15) accepted → 200 (intentional)",
+      r.status_code == 200)
+r = client.patch(f"/api/dashboard/guild/{GUILD_ID}/settings/boosters",
+                 headers=HC, json={"channel_id": "105"})
+check("media channel (type 16) accepted → 200 (intentional)",
+      r.status_code == 200)
+
+# ── 6. non-sendable / non-text targets are REJECTED cleanly (400) ───
+for cid, label in (("102", "voice"), ("106", "stage"),
+                   ("107", "category"), ("108", "unknown/future type")):
+    r = client.patch(f"/api/dashboard/guild/{GUILD_ID}/settings/boosters",
+                     headers=HC, json={"channel_id": cid})
+    err = r.get_json().get("error", "")
+    check(f"{label} channel → clean 400, never a 500",
+          r.status_code == 400 and "text channel" in err,
+          f"{r.status_code}: {err[:120]}")
+
+r = client.patch(f"/api/dashboard/guild/{GUILD_ID}/settings/boosters",
+                 headers=HC, json={"channel_id": "109"})
+err = r.get_json().get("error", "")
+check("non-sendable channel → clean 400 with actionable message",
+      r.status_code == 400 and "cannot send" in err,
+      f"{r.status_code}: {err[:120]}")
+
+r = client.patch(f"/api/dashboard/guild/{GUILD_ID}/settings/boosters",
+                 headers=HC, json={"channel_id": "55555"})
+check("unknown channel id → clean 400",
+      r.status_code == 400
+      and "not found" in r.get_json().get("error", ""))
+
+# ── 7. listing never leaks raw enum objects into JSON ────────────────
+r = client.get(f"/api/dashboard/guild/{GUILD_ID}/resources", headers=H)
+res = r.get_json()
+check("all resource channel types serialize as plain ints",
+      r.status_code == 200
+      and len(res["channels"]) >= 10
+      and all(isinstance(c["type"], int) and not isinstance(c["type"], bool)
+              for c in res["channels"]),
+      str([c["type"] for c in res.get("channels", [])])[:200])
+check("locked channel flagged not-sendable for the pickers",
+      any(c["name"] == "locked" and c["bot_can_send"] is False
+          for c in res["channels"]))
+
+# ── 8. sanitized internal errors (PHASE O.2 Part 7) ─────────────────
+# route registered at app-init time above; raise the exact production
+# exception shape and check what the wrapper actually returns
+r = client.get("/api/dashboard/__boom__", headers=H)
+_boom = r.get_json()
+check("unexpected exceptions → sanitized 500 (no raw Python text)",
+      r.status_code == 500
+      and "TypeError" not in _boom.get("error", "")
+      and "_EnumValue" not in _boom.get("error", "")
+      and "int()" not in _boom.get("error", "")
+      and "ref" in _boom.get("error", "")
+      and "refresh" in _boom.get("error", ""),
+      str(_boom))
 
 print("== actions ==")
 r = client.post(f"/api/dashboard/guild/{GUILD_ID}/action/qotd_post_now",

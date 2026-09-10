@@ -160,7 +160,9 @@ export default function BoostersPage() {
       await endpoints.action(gid, action, {});
       toast.push(successMsg, 'success');
       if (action === 'booster_reset') {
-        await ms.patch({ ...DEFAULTS });
+        // a reset must land on a clean defaults state — do not preserve
+        // dirty fields through it (PHASE O.2 hook option)
+        await ms.patch({ ...DEFAULTS }, { preserveDirty: false });
       }
     } catch (e) {
       toast.push(e instanceof ApiRequestError ? e.message : 'action failed', 'error');
